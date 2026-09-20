@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
+import manga_scan.ingest as ingest_module
 import manga_scan.rotation_detection as rotation_module
 from manga_scan.config import Config
 from manga_scan.ingest import set_rotation
@@ -86,6 +87,149 @@ def test_rotation_detection_warns_when_extra_samples_fail(monkeypatch):
     assert result["sample_times"] == [0.0]
     assert result["sample_count"] == 1
     assert result["confidence"] == 0.55
+
+
+def _rotation_project(tmp_path, cover):
+    project = tmp_path / "scan"
+    (project / "source").mkdir(parents=True)
+    frame = np.zeros((60, 120, 3), np.uint8)
+    save_image(project / "source/cover_frame.png", frame)
+    save_image(project / "source/cover_preview.png", frame)
+    save_image(project / "source/reference_frame.png", frame)
+    save_image(project / "source/reference_preview.png", frame)
+    config = Config(
+        auto_rotation=True,
+        rotation=0,
+        hand_backend="none",
+        finger_repair=False,
+    )
+    manifest = {
+        "status": "ready",
+        "config": config.to_dict(),
+        "warnings": [],
+        "rotation_detection": {
+            "rotation": 0,
+            "confidence": 0.5,
+            "source": "page_geometry",
+            "confirmed": False,
+        },
+        "cover": cover,
+        "reference": {
+            "frame": "source/reference_frame.png",
+            "preview": "source/reference_preview.png",
+            "confirmed": False,
+        },
+        "message": "基準にする見開きフレームを選んでください",
+    }
+    save_manifest(project, manifest)
+    write_json(project / "config.resolved.json", config.to_dict())
+    return project
+
+
+def test_manual_rotation_redetects_automatic_cover(tmp_path, monkeypatch):
+    old_roi = [[0.2, 0.1], [0.8, 0.1], [0.8, 0.9], [0.2, 0.9]]
+    project = _rotation_project(
+        tmp_path,
+        {
+            "status": "ready",
+            "frame": "source/cover_frame.png",
+            "preview": "source/cover_preview.png",
+            "roi": old_roi,
+            "detection": {"detected": True, "confidence": 0.8, "source": "auto"},
+        },
+    )
+    detected_roi = [[0.1, 0.2], [0.9, 0.2], [0.9, 0.8], [0.1, 0.8]]
+    seen = {}
+
+    def detect(image):
+        seen["shape"] = image.shape[:2]
+        return {"detected": True, "confidence": 0.9, "roi": detected_roi}
+
+    monkeypatch.setattr(ingest_module, "detect_cover_quad", detect)
+
+    updated = set_rotation(project, 90)
+
+    assert seen["shape"] == (120, 60)
+    assert updated["cover"]["status"] == "ready"
+    assert updated["cover"]["detection"]["source"] == "auto"
+    expected = ingest_module.rotate_roi(detected_roi, 270).tolist()
+    np.testing.assert_allclose(updated["cover"]["roi"], expected)
+
+
+def test_manual_rotation_retries_previously_failed_auto_cover(tmp_path, monkeypatch):
+    project = _rotation_project(
+        tmp_path,
+        {
+            "status": "frame_selected",
+            "frame": "source/cover_frame.png",
+            "preview": "source/cover_preview.png",
+            "roi": None,
+            "detection": {"detected": False, "confidence": 0.3, "source": "auto"},
+        },
+    )
+    detected_roi = [[0.1, 0.2], [0.9, 0.2], [0.9, 0.8], [0.1, 0.8]]
+    monkeypatch.setattr(
+        ingest_module,
+        "detect_cover_quad",
+        lambda _image: {"detected": True, "confidence": 0.9, "roi": detected_roi},
+    )
+
+    updated = set_rotation(project, 90)
+
+    assert updated["cover"]["status"] == "ready"
+    assert updated["cover"]["detection"]["source"] == "auto"
+    assert updated["cover"]["roi"] is not None
+    assert updated["message"] == "基準にする見開きフレームを選んでください"
+
+
+def test_manual_rotation_preserves_user_edited_cover_crop(tmp_path, monkeypatch):
+    roi = [[0.2, 0.1], [0.8, 0.1], [0.8, 0.9], [0.2, 0.9]]
+    project = _rotation_project(
+        tmp_path,
+        {
+            "status": "ready",
+            "frame": "source/cover_frame.png",
+            "preview": "source/cover_preview.png",
+            "roi": roi,
+            "detection": {"detected": False, "confidence": 0.0, "source": "manual"},
+        },
+    )
+    monkeypatch.setattr(
+        ingest_module,
+        "detect_cover_quad",
+        lambda _image: pytest.fail("manual crop must not be replaced"),
+    )
+
+    updated = set_rotation(project, 90)
+
+    assert updated["cover"]["roi"] == roi
+    assert updated["cover"]["detection"]["source"] == "manual"
+
+
+def test_manual_rotation_returns_failed_auto_cover_to_manual_crop(tmp_path, monkeypatch):
+    roi = [[0.2, 0.1], [0.8, 0.1], [0.8, 0.9], [0.2, 0.9]]
+    project = _rotation_project(
+        tmp_path,
+        {
+            "status": "ready",
+            "frame": "source/cover_frame.png",
+            "preview": "source/cover_preview.png",
+            "roi": roi,
+            "detection": {"detected": True, "confidence": 0.8, "source": "auto"},
+        },
+    )
+    monkeypatch.setattr(
+        ingest_module,
+        "detect_cover_quad",
+        lambda _image: {"detected": False, "confidence": 0.3, "roi": None},
+    )
+
+    updated = set_rotation(project, 90)
+
+    assert updated["cover"]["status"] == "frame_selected"
+    assert updated["cover"]["roi"] is None
+    assert updated["cover"]["detection"]["source"] == "auto"
+    assert "4点で指定" in updated["message"]
 
 
 def test_manual_rotation_refreshes_setup_previews(tmp_path):
