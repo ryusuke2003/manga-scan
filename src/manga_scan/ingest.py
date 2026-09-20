@@ -7,6 +7,7 @@ import cv2
 from .config import Config
 from .cover_detect import detect_cover_quad
 from .perspective import rotate_roi, validate_roi
+from .reference_candidates import scan_reference_candidates
 from .rotation_detection import detect_video_rotation
 from .split import rotate_image
 from .spread_detect import detect_reference_spread, draw_reference_spread
@@ -110,6 +111,47 @@ def _setup_time(manifest, value):
     return timestamp
 
 
+def _refresh_reference_candidates(project, manifest, cfg):
+    reference = manifest.setdefault("reference", {})
+    if reference.get("confirmed"):
+        return
+    cover = manifest.get("cover") or {}
+    if cover.get("status") not in ("ready", "skipped"):
+        return
+    if not manifest.get("source") or not manifest.get("metadata"):
+        reference["candidates"] = []
+        return
+
+    start_time = float(cover.get("time", 0.0)) if cover.get("status") == "ready" else 0.0
+    try:
+        candidates = scan_reference_candidates(
+            manifest["source"],
+            manifest["metadata"],
+            cfg,
+            start_time=start_time,
+            limit=5,
+        )
+    except (OSError, RuntimeError, ValueError, cv2.error) as exc:
+        reference["candidates"] = []
+        reference["candidate_search_error"] = str(exc)
+        return
+
+    reference.pop("candidate_search_error", None)
+    directory = project / "source/reference_candidates"
+    if directory.exists():
+        shutil.rmtree(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    public = []
+    for index, candidate in enumerate(candidates, 1):
+        record = {key: value for key, value in candidate.items() if key != "_frame"}
+        preview_path = f"source/reference_candidates/candidate_{index:02d}.jpg"
+        save_image(project / preview_path, candidate["_frame"], quality=88)
+        record["preview"] = preview_path
+        public.append(record)
+    reference["candidates"] = public
+
+
 def _detect_cover_for_rotation(image, rotation):
     displayed = rotate_image(image, rotation)
     detection = detect_cover_quad(displayed)
@@ -151,6 +193,8 @@ def set_setup_frame(project, kind, time, confirm=False):
                 roi=roi,
                 detection=detection,
             )
+            if confirm and status == "ready":
+                _refresh_reference_candidates(project, manifest, cfg)
             manifest["message"] = (
                 "表紙の外周を自動検出しました"
                 if status == "ready"
@@ -284,6 +328,7 @@ def set_rotation(project, rotation):
         ]
         _refresh_setup_previews(project, manifest, rotation)
         _refresh_auto_cover_detection(project, manifest, cfg)
+        _refresh_reference_candidates(project, manifest, cfg)
         write_json(project / "config.resolved.json", cfg.to_dict())
         save_manifest(project, manifest)
         return manifest
@@ -297,6 +342,8 @@ def skip_cover(project):
             raise ValueError("Project already processed")
         cover = manifest.setdefault("cover", {})
         cover.update(status="skipped", roi=None)
+        cfg = Config.from_dict(manifest["config"])
+        _refresh_reference_candidates(project, manifest, cfg)
         manifest["message"] = "基準にする見開きフレームを選んでください"
         save_manifest(project, manifest)
         return manifest
@@ -314,6 +361,8 @@ def set_cover_roi(project, roi):
         cover["roi"] = validate_roi(roi).tolist()
         cover["status"] = "ready"
         cover["detection"] = {"detected": False, "confidence": 0.0, "source": "manual"}
+        cfg = Config.from_dict(manifest["config"])
+        _refresh_reference_candidates(project, manifest, cfg)
         manifest["message"] = "基準にする見開きフレームを選んでください"
         save_manifest(project, manifest)
         return manifest

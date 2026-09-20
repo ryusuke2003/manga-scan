@@ -80,6 +80,35 @@ describe('frontend helpers', () => {
     expect(onConfirm).toHaveBeenCalledWith(10);
   });
 
+  it('previews a suggested reference frame when its thumbnail is selected', () => {
+    const onPreview = vi.fn();
+    render(React.createElement(FrameSelector, {
+      step: '04 / 見開き基準フレーム',
+      title: '基準フレーム',
+      description: 'desc',
+      imageUrl: '/frame-1.png',
+      time: 1,
+      duration: 20,
+      busy: false,
+      confirmLabel: 'このフレームを基準にする →',
+      onPreview,
+      onConfirm: vi.fn(),
+      candidates: [
+        {
+          time: 4.2,
+          confidence: 0.84,
+          preview: 'source/reference_candidates/candidate_01.jpg',
+          imageUrl: '/candidate-1.jpg',
+        },
+      ],
+    }));
+
+    expect(screen.getByText('候補フレーム')).toBeTruthy();
+    expect(screen.getByText(/見開き 84%/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /見開き候補 4.2秒/ }));
+    expect(onPreview).toHaveBeenCalledWith(4.2);
+  });
+
   it('does not treat an out-of-range timestamp as the current preview', () => {
     render(React.createElement(FrameSelector, {
       step: '02 / 表紙フレーム（任意）',

@@ -70,6 +70,10 @@ export default function App() {
       rotation={manifest.config.rotation}
       rotationDetection={manifest.rotation_detection}
       onRotation={scanner.rotation}
+      candidates={(reference?.candidates ?? []).map(candidate => ({
+        ...candidate,
+        imageUrl: fileUrl(project, candidate.preview, revision),
+      }))}
       notice={coverStatus === 'ready' && <div className="auto-detection-notice">
         <span>{coverHadManualCrop ? '表紙の外周を設定済み' : `表紙の外周を自動検出済み · 信頼度 ${Math.round((cover.detection?.confidence ?? 0) * 100)}%`}</span>
         <button type="button" disabled={busy} onClick={scanner.editCoverRoi}>外周を修正</button>
