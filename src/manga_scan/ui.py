@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from flask import Flask, abort, jsonify, request, send_file
 
 from .config import Config
-from .ingest import create_project
+from .ingest import create_project, set_cover_roi, set_setup_frame, skip_cover
 from .pipeline import edit, run
 from .storage import project_lock, read_manifest
 
@@ -121,6 +121,32 @@ def create_app(projects, config=None):
             name = "scan-" + uuid.uuid4().hex[:10]
             manifest = create_project(data["video"], root / name, cfg)
             return jsonify(id=name, manifest=manifest)
+        finally:
+            guard.release()
+
+    @app.post("/api/projects/<name>/setup")
+    def setup_project(name):
+        project = project_path(name)
+        if not guard.acquire(blocking=False):
+            return jsonify(error="処理中です"), 409
+        try:
+            data = request.get_json()
+            action = data.pop("action")
+            if action == "cover_frame":
+                manifest = set_setup_frame(
+                    project, "cover", data["time"], confirm=bool(data.get("confirm"))
+                )
+            elif action == "skip_cover":
+                manifest = skip_cover(project)
+            elif action == "cover_roi":
+                manifest = set_cover_roi(project, data["roi"])
+            elif action == "reference_frame":
+                manifest = set_setup_frame(
+                    project, "reference", data["time"], confirm=bool(data.get("confirm"))
+                )
+            else:
+                raise ValueError("Unknown setup action")
+            return jsonify(manifest)
         finally:
             guard.release()
 
