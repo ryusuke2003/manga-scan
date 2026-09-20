@@ -24,7 +24,7 @@ FlipScanを含む参照アプリのソースコードをコピー・翻訳・移
 | Flask | [BSD-3-Clause](https://github.com/pallets/flask/blob/main/LICENSE.txt) | loopback UI |
 | ReportLab | [BSD](https://www.reportlab.com/opensource/) / インストール配布物のLICENSE.txt | JPEGパススルー、PNG画素保持PDF |
 | MediaPipe（hands extra） | Apache-2.0 | 手検出 |
-| React / React DOM | [MIT](https://github.com/facebook/react/blob/main/LICENSE) | Web UI |
+| React / React DOM | [MIT](https://github.com/react/react/blob/main/LICENSE) | Web UI |
 | Vite | [MIT](https://github.com/vitejs/vite/blob/main/packages/vite/LICENSE.md) | フロントの開発サーバー・build。公開パッケージにはMIT以外の許容ライセンスのbundled dependencyも含む |
 | @vitejs/plugin-react | [MIT](https://github.com/vitejs/vite-plugin-react/blob/main/LICENSE) | React/Vite build（開発時） |
 | Vitest / React Testing Library / jsdom（開発のみ） | [MIT](https://github.com/vitest-dev/vitest/blob/main/LICENSE) / [MIT](https://github.com/testing-library/react-testing-library/blob/main/LICENSE) / [MIT](https://github.com/jsdom/jsdom/blob/main/LICENSE.txt) | フロントエンドテスト |
