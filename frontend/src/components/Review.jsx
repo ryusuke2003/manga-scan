@@ -4,7 +4,33 @@ import { rotateNormalizedRoi } from '../rotation.js';
 import RoiSelector from './RoiSelector.jsx';
 import VideoTimeline from './VideoTimeline.jsx';
 
-const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', glare_overlap: '反射・白飛び', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い', finger_repair_incomplete: '指の補修が不完全', occlusion_repair_incomplete: '遮蔽補修が不完全', source_frame_clipped: '元動画の画面端に接触・見切れを確認', page_contour_low_confidence: 'ページ外周の検出が不確か' };
+const labels = {
+  low_sharpness: '鮮鋭度が低い',
+  hand_detection_disabled: '手の検出が無効',
+  hand_overlap: '手の重なり',
+  glare_overlap: '反射・白飛び',
+  high_motion: '動きが大きい',
+  page_quad_uncertain: '外周を確認',
+  underexposed: '暗い',
+  interval_gap: '時間間隔が長い',
+  duplicate_suspected: '重複候補',
+  manual_frame: '手動追加',
+  manual_frame_motion_unmeasured: '動き未評価',
+  dewarp_low_confidence: '湾曲補正の信頼度が低い',
+  finger_repair_incomplete: '指の補修が不完全',
+  occlusion_repair_incomplete: '遮蔽補修が不完全',
+  source_frame_clipped: '元動画の画面端に接触・見切れを確認',
+  page_contour_low_confidence: 'ページ外周の検出が不確か',
+  final_edge_crop_suspected: '完成画像: ページ端を確認',
+  final_dewarp_line_regression: '完成画像: 湾曲補正後の直線を確認',
+  final_unresolved_finger: '完成画像: 指の未補修',
+  final_finger_repair_residual: '完成画像: 指補修境界を確認',
+  final_background_fill_large: '完成画像: 白背景補正範囲が大きい',
+  final_glare_residual: '完成画像: 反射が残っている',
+  final_duplicate_suspected: '完成画像: 前ページとほぼ同一',
+  final_near_blank_white: '完成画像: ほぼ真っ白',
+  final_near_blank_black: '完成画像: ほぼ真っ黒',
+};
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
 const pageSideLabel = side => ({ cover: '表紙', spread: '見開き', right: '右ページ', left: '左ページ' }[side] || side);
 const repairTitle = repair => repair?.occlusion_kinds?.includes('glare') ? '遮蔽補修' : '指補修';
@@ -81,8 +107,67 @@ export function localAlignmentSummary(repair) {
 }
 
 const needsReview = page => Boolean(
-  page?.suspect?.length || page?.finger_repair?.unresolved_mask
+  page?.suspect?.length
+  || page?.final_quality?.reasons?.length
+  || page?.finger_repair?.unresolved_mask
 );
+
+const reviewCategories = [
+  {
+    label: '指補修',
+    reasons: ['finger_repair_incomplete', 'final_unresolved_finger', 'final_finger_repair_residual'],
+  },
+  {
+    label: 'ページ輪郭',
+    reasons: ['page_quad_uncertain', 'page_contour_low_confidence', 'source_frame_clipped', 'final_edge_crop_suspected'],
+  },
+  {
+    label: '反射',
+    reasons: ['glare_overlap', 'final_glare_residual'],
+  },
+  {
+    label: 'dewarp異常',
+    reasons: ['dewarp_low_confidence', 'final_dewarp_line_regression'],
+  },
+  {
+    label: '重複疑い',
+    reasons: ['duplicate_suspected', 'final_duplicate_suspected'],
+  },
+  {
+    label: '仕上げ異常',
+    reasons: ['final_background_fill_large', 'final_near_blank_white', 'final_near_blank_black'],
+  },
+  {
+    label: '入力品質',
+    reasons: ['low_sharpness', 'hand_detection_disabled', 'hand_overlap', 'high_motion', 'underexposed', 'interval_gap', 'manual_frame', 'manual_frame_motion_unmeasured'],
+  },
+];
+
+const pageReasons = page => Array.from(new Set([
+  ...(page?.suspect || []),
+  ...(page?.final_quality?.reasons || []),
+]));
+
+const categoryMatchesPage = (category, page) => {
+  const current = pageReasons(page);
+  if (category.reasons.some(reason => current.includes(reason))) return true;
+  if (!current.includes('occlusion_repair_incomplete')) return false;
+  const kinds = page?.finger_repair?.occlusion_kinds || [];
+  if (category.label === '指補修') return kinds.includes('finger');
+  if (category.label === '反射') return kinds.includes('glare');
+  return false;
+};
+
+export function qualityReviewSummary(pages = []) {
+  const enabled = pages.filter(page => page.enabled);
+  return {
+    total: enabled.filter(needsReview).length,
+    categories: reviewCategories.map(category => ({
+      label: category.label,
+      count: enabled.filter(page => categoryMatchesPage(category, page)).length,
+    })).filter(category => category.count > 0),
+  };
+}
 
 const backgroundFillLabel = fill => {
   if (!fill || fill.mode === 'preserve') return '';
@@ -179,11 +264,18 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
     : manifest.pdf_stale
       ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。'
       : '現在のページ順・画質でPDFを出力済みです。';
+  const qualitySummary = qualityReviewSummary(manifest.pages);
   return <section>
     <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(needsReview).length}</h2></div>
       <div className="row"><button className="primary" aria-busy={exporting ? 'true' : undefined} disabled={busy || !enabled.length} onClick={() => onEdit('export')}>{exportLabel}</button>
         {pdfReady && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
     <p className="muted">{exportStatus}</p>
+    {qualitySummary.total > 0 && <div className="panel final-quality-summary" aria-label="最終品質チェック">
+      <strong>要確認 {qualitySummary.total}件</strong>
+      <div className="final-quality-counts">
+        {qualitySummary.categories.map(category => <span key={category.label}>{category.label} {category.count}</span>)}
+      </div>
+    </div>}
     <VideoTimeline
       manifest={manifest}
       busy={busy}
@@ -201,6 +293,10 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
+      {page.final_quality?.reasons?.length > 0 && <div className="dewarp-meta">
+        <span>完成画像QA: {reasons(page.final_quality.reasons)}</span>
+        {page.final_quality.adjacent_duplicate && <p className="muted">前ページ {page.final_quality.adjacent_duplicate.other_page_id} と類似 · SSIM {(page.final_quality.adjacent_duplicate.ssim * 100).toFixed(1)}%</p>}
+      </div>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
         <span>{repairTitle(page.finger_repair)}: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? repairCleanLabel(page.finger_repair) : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'}{fingerRepairCoverageSummary(page.finger_repair) ? ` · ${fingerRepairCoverageSummary(page.finger_repair)}` : ''}{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
         {page.finger_repair.unresolved_mask && <p className="muted">要確認: 未補修領域が残っています。文字・コマ線・網点・指の輪郭に不自然さがないか確認してください。</p>}
