@@ -6,7 +6,7 @@ OpenCV 4.14.0、MediaPipe 0.10.35。依存の全バージョンは
 
 ## 自動テスト
 
-`python -m pytest -q`: **36 passed**。
+2026-09-20のMacローカル検証では `python -m pytest -q`: **36 passed**。現在のリポジトリではReact/Vite側のsmoke testとbuild検証も追加している。
 
 - ROI内motionの同一/変化、連続静止、末尾flush、短い静止の棄却。
 - 候補が時間区間の前半/後半へ分散すること。
@@ -21,11 +21,21 @@ OpenCV 4.14.0、MediaPipe 0.10.35。依存の全バージョンは
 - 候補切替で除外状態を維持、左右交換、手動追加、PDF再出力。
 - 60/120/240fps入力でも解析を10fpsに制限。
 - 回転メタデータ、可変fps、4K候補の元解像度取得。
-- localhost UIのHost制限、Origin検査、変更操作のtoken、静的配信。
+- localhost UIのHost制限、Origin検査、変更操作のtoken、Vite生成アセットの静的配信。
 
-`ruff check src tests scripts`、Python compileall、JavaScript `node --check` も成功。
-React/Viteは `npm --prefix frontend test` と `npm --prefix frontend run build` をCIで検証しています。
-GitHub Actionsのmain run #26では、macOS / Ubuntu × Python 3.12 / 3.14 の4ジョブがすべて成功しました。
+フロントエンドには、ローカルファイルURLのエンコードとROI座標正規化のsmoke testがある。
+通常の検証順は次の通り。
+
+```bash
+npm --prefix frontend test
+npm --prefix frontend run build
+python -m pytest -q
+ruff check src tests scripts
+```
+
+PythonのUI統合テストは、Viteの`index.html`が参照するハッシュ付き`/static/assets/...`を実際にFlaskから取得できることを確認する。そのためpytest前にfrontend buildが必要。
+
+GitHub Actionsはpush / pull requestで、Ubuntu・macOS × Python 3.12・3.14を実行する。各jobでNode 22をセットアップし、フロントのtest/build後にPythonのlint/testを行う。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
 
 ## M5上のローカル実行
 

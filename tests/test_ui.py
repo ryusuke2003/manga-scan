@@ -26,12 +26,17 @@ def test_local_ui_token_origin_host_and_static_assets(tmp_path):
     )
     assert client.get("/api/state", headers={"Host": "evil.example"}).status_code == 400
     assert client.get("/files/missing/../../etc/passwd").status_code == 404
-
-    project = tmp_path / "existing"
-    project.mkdir()
-    (project / "manifest.json").write_text("{}")
-    assert client.get("/files/existing/pages/missing.png").status_code == 404
-
     assert (
         client.post("/api/projects", json={}, headers={"X-Manga-Token": token}).status_code == 400
     )
+
+
+def test_missing_file_in_existing_project_returns_404(tmp_path):
+    project = tmp_path / "scan-test"
+    project.mkdir()
+    (project / "manifest.json").write_text(
+        '{"source": "/tmp/book.mp4", "status": "ready", "pages": []}\n'
+    )
+
+    client = create_app(tmp_path).test_client()
+    assert client.get("/files/scan-test/pages/missing.png").status_code == 404

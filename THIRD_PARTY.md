@@ -24,13 +24,18 @@ FlipScanを含む参照アプリのソースコードをコピー・翻訳・移
 | Flask | [BSD-3-Clause](https://github.com/pallets/flask/blob/main/LICENSE.txt) | loopback UI |
 | ReportLab | [BSD](https://www.reportlab.com/opensource/) / インストール配布物のLICENSE.txt | JPEGパススルー、PNG画素保持PDF |
 | MediaPipe（hands extra） | Apache-2.0 | 手検出 |
-| pytest / Ruff / pypdf（開発のみ） | MIT / MIT / BSD-3-Clause | テスト、静的検査、PDFの検査 |
+| React / React DOM | [MIT](https://github.com/react/react/blob/main/LICENSE) | Web UI |
+| Vite | [MIT](https://github.com/vitejs/vite/blob/main/packages/vite/LICENSE.md) | フロントの開発サーバー・build。公開パッケージにはMIT以外の許容ライセンスのbundled dependencyも含む |
+| @vitejs/plugin-react | [MIT](https://github.com/vitejs/vite-plugin-react/blob/main/LICENSE) | React/Vite build（開発時） |
+| Vitest / React Testing Library / jsdom（開発のみ） | [MIT](https://github.com/vitest-dev/vitest/blob/main/LICENSE) / [MIT](https://github.com/testing-library/react-testing-library/blob/main/LICENSE) / [MIT](https://github.com/jsdom/jsdom/blob/main/LICENSE.txt) | フロントエンドテスト |
+| pytest / Ruff / pypdf（開発のみ） | MIT / MIT / BSD-3-Clause | Pythonテスト、静的検査、PDFの検査 |
 
 MediaPipeの推移依存にはNumPy、OpenCV contrib、Matplotlib（PSF系）、absl-py（Apache-2.0）、
 flatbuffers（Apache-2.0）、sounddevice（MIT）、CFFI（MIT）、certifi（MPL-2.0）等があります。
 音声機能・カメラ・マイクは本アプリでは呼び出しません。
 FlaskのWerkzeug/Jinja2/MarkupSafe等、PillowやOpenCV wheel内のネイティブライブラリにも
-それぞれ条件があります。`requirements-macos-arm64.lock.txt` に検証時の解決結果を保存します。
+それぞれ条件があります。フロント側もVite/Rollup等の推移依存を持ちます。
+`requirements-macos-arm64.lock.txt` はPython側の検証時解決結果を保存するもので、npm依存のlockfileではありません。
 全推移依存がMIT/Apache/BSDだけという主張はしません。再配布用アプリを作る場合は、
 実際に含めるwheel・FFmpegビルド・モデルに対応した通知とライセンス文書を同梱してください。
 
