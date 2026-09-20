@@ -58,6 +58,6 @@ main{min-width:0}
 .review-viewer-bar button.active{background:#edf2ed;color:var(--green);border-color:#edf2ed}
 .review-viewer-bar button:disabled{opacity:.3}
 .review-viewer-stage{flex:1;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:18px}
-.review-viewer-stage img{display:block;max-width:100%;height:auto;object-fit:contain;transform-origin:top center}
+.review-viewer-stage img{display:block;max-width:none;height:auto;object-fit:contain;transform-origin:top center}
 .review-viewer-help{margin:0;padding:8px 16px;text-align:center;font-size:10px;color:#bac4bf;background:#1f2724}
 @media(max-width:760px){.candidate-rescan{grid-template-columns:1fr 1fr}.candidate-rescan>div,.candidate-rescan>button,.candidate-rescan>span{grid-column:1/-1}.review-viewer-bar{align-items:stretch;flex-direction:column}.review-viewer-bar .row{justify-content:center}}
