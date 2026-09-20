@@ -9,6 +9,7 @@ const FALLBACK_CONFIG = {
   candidate_selection_mode: 'spread',
   grayscale: false,
   rotation: 0,
+  auto_rotation: true,
   refine_quad: false,
   perspective_mode: 'spread',
   page_contour_min_confidence: 0.5,
@@ -129,6 +130,12 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
     customized.current = true;
     setConfig(current => applyCorrectionPreset(current, name));
   };
+  const changeRotation = value => {
+    customized.current = true;
+    setConfig(current => value === 'auto'
+      ? { ...current, auto_rotation: true }
+      : { ...current, auto_rotation: false, rotation: Number(value) });
+  };
   const preset = correctionPresetForConfig(config);
 
   return <section className="panel">
@@ -171,7 +178,7 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
       <details className="advanced-settings">
         <summary>補正の詳細設定</summary>
         <div className="advanced-grid">
-          <label>画像の向き<select value={config.rotation} onChange={event => change('rotation', Number(event.target.value))}><option value={0}>そのまま</option><option value={90}>右へ90°</option><option value={180}>180°</option><option value={270}>左へ90°</option></select></label>
+          <label>画像の向き<select value={config.auto_rotation ? 'auto' : String(config.rotation)} onChange={event => changeRotation(event.target.value)}><option value="auto">自動判定 / プレビューで確認</option><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></label>
           <label className="setting-check"><input type="checkbox" checked={config.refine_quad} onChange={event => change('refine_quad', event.target.checked)} /><span><strong>見開き外周を自動微調整</strong><small>手動ROIの内側だけで外周を微調整します。</small></span></label>
           <label>左右別の台形補正<select value={config.perspective_mode} onChange={event => change('perspective_mode', event.target.value)}><option value="spread">従来方式 / 見開き全体</option><option value="per_page">左右ページを別々に補正</option></select></label>
           {config.perspective_mode === 'per_page' && <label>ページ輪郭の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.page_contour_min_confidence} onChange={event => change('page_contour_min_confidence', Number(event.target.value))} /></label>}
