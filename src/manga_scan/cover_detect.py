@@ -69,6 +69,18 @@ def _axis_lines(raw_lines, width, height):
     return horizontal, vertical
 
 
+def _boundary_line_count(quad, width, height):
+    """Count candidate sides that hug the image boundary."""
+    return sum(
+        (
+            np.all(quad[[0, 3], 0] < width * 0.01),
+            np.all(quad[[1, 2], 0] > width * 0.99),
+            np.all(quad[[0, 1], 1] < height * 0.01),
+            np.all(quad[[2, 3], 1] > height * 0.99),
+        )
+    )
+
+
 def detect_cover_quad(image, min_confidence=0.62):
     """Find an upright book-cover outline as normalized TL/TR/BR/BL points.
 
@@ -144,14 +156,7 @@ def detect_cover_quad(image, min_confidence=0.62):
             area_score = min(area_ratio / 0.3, 1.0)
             aspect_score = math.exp(-abs(math.log(aspect / 0.72)))
             rank_score = sum(math.exp(-line[3] / 160) for line in (top, bottom, left, right)) / 4
-            boundary_lines = sum(
-                (
-                    np.all(quad[:, 0] < width * 0.01),
-                    np.all(quad[:, 0] > width * 0.99),
-                    np.all(quad[:, 1] < height * 0.01),
-                    np.all(quad[:, 1] > height * 0.99),
-                )
-            )
+            boundary_lines = _boundary_line_count(quad, width, height)
             preliminary = (
                 0.28 * area_score
                 + 0.20 * aspect_score
