@@ -557,6 +557,45 @@ def conceal_unresolved_fingers(image, unresolved_mask, mode="paper"):
     return result, (remaining.astype(np.uint8) * 255), info
 
 
+def _local_alignment_metadata(components):
+    local_components = []
+    max_shift = 0.0
+    for component in components:
+        local_donors = [
+            donor for donor in component.get("donors", [])
+            if donor.get("method") == "local"
+        ]
+        if not local_donors:
+            continue
+        representative = max(
+            local_donors,
+            key=lambda donor: float(donor.get("dx", 0.0)) ** 2
+            + float(donor.get("dy", 0.0)) ** 2,
+        )
+        dx = float(representative.get("dx", 0.0))
+        dy = float(representative.get("dy", 0.0))
+        shift = float(np.hypot(dx, dy))
+        max_shift = max(max_shift, shift)
+        local_components.append(
+            {
+                "component_id": component.get("component_id"),
+                "donor_candidate_id": representative.get("candidate_id"),
+                "dx": round(dx, 3),
+                "dy": round(dy, 3),
+                "score": representative.get("local_score"),
+                "coverage": component.get("coverage", 0.0),
+                "applied": True,
+            }
+        )
+    if not local_components:
+        return None
+    return {
+        "component_count": len(local_components),
+        "max_shift_px": round(max_shift, 3),
+        "components": local_components,
+    }
+
+
 def repair_finger_regions(
     target,
     target_mask,
@@ -716,7 +755,7 @@ def repair_finger_regions(
     )
     coverage = 1.0 - float(np.count_nonzero(unresolved) / total)
     status = "complete" if coverage >= min_coverage else "incomplete"
-    return result, {
+    metadata = {
         "status": status,
         "coverage": round(coverage, 4),
         "donor_coverage": round(donor_coverage, 4),
@@ -724,5 +763,9 @@ def repair_finger_regions(
         "alignment_scores": alignment_scores,
         "components": components_info,
         "fallback": fallback_info,
-    }, unresolved
+    }
+    local_alignment = _local_alignment_metadata(components_info)
+    if local_alignment is not None:
+        metadata["local_alignment"] = local_alignment
+    return result, metadata, unresolved
 
