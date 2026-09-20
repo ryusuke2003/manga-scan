@@ -47,6 +47,7 @@ class Config:
     white_target: int = 245
     white_strength: float = 0.6
     rotation: int = 0
+    auto_rotation: bool = True
     dewarp_mode: str = "manual"
     dewarp_strength: float = 0.0
     dewarp_max_strength: float = 0.25
