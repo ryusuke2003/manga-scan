@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { request } from './api.js';
 
+export function didJobFinish(wasBusy, job) {
+  return Boolean(wasBusy && !job.busy);
+}
+
 export default function useScanner() {
   const [project, setProject] = useState(null);
   const [manifest, setManifest] = useState(null);
@@ -11,6 +15,7 @@ export default function useScanner() {
   const [revision, setRevision] = useState(0);
   const manifestJSON = useRef('');
   const mutation = useRef(false);
+  const jobBusy = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -20,13 +25,15 @@ export default function useScanner() {
         const next = await request('/api/state', { signal: controller.signal });
         const data = project ? await request(`/api/projects/${encodeURIComponent(project)}`, { signal: controller.signal }) : null;
         if (controller.signal.aborted || mutation.current) return;
+        const finished = didJobFinish(jobBusy.current, next.job);
+        jobBusy.current = next.job.busy;
         setServer(next);
         const serialized = JSON.stringify(data);
         if (serialized !== manifestJSON.current) {
           manifestJSON.current = serialized;
           setManifest(data);
-          setRevision(value => value + 1);
         }
+        if (finished) setRevision(value => value + 1);
         if (next.job.error && next.job.project === project) setError(next.job.error);
       } catch (err) {
         if (err.name !== 'AbortError' && !controller.signal.aborted) setError(err.message);
@@ -53,7 +60,10 @@ export default function useScanner() {
     setError('');
     try {
       const result = await request(path, { body, token: server.token });
-      if (result.started) setServer(value => ({ ...value, job: { busy: true, project } }));
+      if (result.started) {
+        jobBusy.current = true;
+        setServer(value => ({ ...value, job: { busy: true, project, error: null } }));
+      }
       onSuccess?.(result);
       return result;
     } catch (err) {
