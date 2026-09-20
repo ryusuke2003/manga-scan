@@ -96,6 +96,14 @@ def test_delete_project_requires_token_and_removes_only_project(tmp_path):
     assert client.get("/api/projects/scan-delete").status_code == 404
     assert not any(item["id"] == "scan-delete" for item in client.get("/api/state").json["projects"])
 
+    repeated = client.post(
+        "/api/projects/scan-delete/delete",
+        json={},
+        headers={"X-Manga-Token": token},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json == {"deleted": "scan-delete", "already_deleted": True}
+
 
 def test_delete_project_returns_conflict_when_project_lock_is_busy(tmp_path, monkeypatch):
     project = tmp_path / "scan-busy"
