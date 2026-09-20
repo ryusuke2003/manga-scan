@@ -456,16 +456,39 @@ def rectify_spread_pages(
         spread["page_contour_debug"] = debug_path
 
         if detection["detected"] or detection.get("manual_sides"):
-            spread["perspective_mode_used"] = "per_page"
             spread["spine_px"] = spine_position(rectified, ratio, cfg.split_mode)
-            return warp_detected_pages(image, detection)
+            warped = warp_detected_pages(image, detection)
+            if force_manual_page and cfg.perspective_mode != "per_page":
+                fallback_sides, spine = split_spread(
+                    rectified,
+                    ratio,
+                    cfg.split_mode,
+                    cfg.gutter_fraction,
+                )
+                spread["spine_px"] = spine
+                applied_manual_sides = [
+                    side
+                    for side in manual_sides
+                    if _page_override(spread, side).get("page_quad_mode") == "manual"
+                ]
+                for side in applied_manual_sides:
+                    fallback_sides[side] = warped[side]
+                spread["perspective_mode_used"] = "mixed_manual"
+                spread["manual_page_sides"] = applied_manual_sides
+                return fallback_sides
+
+            spread["perspective_mode_used"] = "per_page"
+            spread.pop("manual_page_sides", None)
+            return warped
 
         spread["perspective_mode_used"] = "spread_fallback"
+        spread.pop("manual_page_sides", None)
         extra = spread.setdefault("extra_suspect", [])
         if "page_contour_low_confidence" not in extra:
             extra.append("page_contour_low_confidence")
     else:
         spread["perspective_mode_used"] = "spread"
+        spread.pop("manual_page_sides", None)
         spread.pop("page_contours", None)
         spread.pop("page_contour_debug", None)
 
@@ -499,8 +522,16 @@ def candidate_page_hand_mask(project, data, side, cfg):
         extra = boundary_finger_mask(page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding)
         return page_mask | extra
 
+    perspective_mode_used = state.get("perspective_mode_used")
+    page_uses_detected_quad = (
+        perspective_mode_used == "per_page"
+        or (
+            perspective_mode_used == "mixed_manual"
+            and side in set(state.get("manual_page_sides", []))
+        )
+    )
     if (
-        state.get("perspective_mode_used") == "per_page"
+        page_uses_detected_quad
         and (state.get("page_contours") or {}).get("detected")
     ):
         output_sizes = {
