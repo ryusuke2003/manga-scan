@@ -12,7 +12,6 @@ from .quality_safety import normalize_expected_page_count, refresh_review_safety
 from .split import enhance_page, rotate_image
 from .storage import save_image, save_manifest, write_json
 
-
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
