@@ -62,7 +62,7 @@ source .venv/bin/activate
 python -m pip install -e '.[hands]'
 ```
 
-通常利用では `dev` 依存は不要です。テストや開発をする場合だけ後述の開発手順を使ってください。
+通常利用では `dev` 依存は不要です。開発やテストを行う場合は、[開発・テストガイド](docs/development.md) を参照してください。
 
 ### 4. React/Viteフロントをビルド
 
