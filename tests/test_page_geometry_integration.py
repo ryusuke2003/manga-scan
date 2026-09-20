@@ -77,7 +77,7 @@ def test_default_spread_mode_is_pixel_compatible_and_skips_detection(tmp_path):
     image = synthetic_spread()
     rectified = warp_roi(image, REFERENCE)
     spread = {"id": "spread_0003", "extra_suspect": []}
-    cfg = Config(hand_backend="none", finger_repair=False)
+    cfg = Config(hand_backend="none", finger_repair=False, perspective_mode="spread")
     expected, expected_spine = split_spread(
         rectified,
         cfg.spine_ratio,
