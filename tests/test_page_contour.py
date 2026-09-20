@@ -206,8 +206,8 @@ def test_consensus_page_quads_rejects_shifted_outlier():
     detections.append(
         _page_detection(
             99,
-            left + np.asarray([0.12, 0], np.float32),
-            right + np.asarray([0.12, 0], np.float32),
+            left + np.asarray([0.06, 0], np.float32),
+            right + np.asarray([0.06, 0], np.float32),
             left_confidence=0.99,
             right_confidence=0.99,
         )
