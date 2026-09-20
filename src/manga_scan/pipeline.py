@@ -519,7 +519,12 @@ def render_spread(project, manifest, spread):
                     grid = f"debug/dewarp/{spread['id']}_{side}_remap.png"
                     save_image(
                         project / grid,
-                        dewarp_debug_grid(data["sides"][side].shape, side, estimate["strength"]),
+                        dewarp_debug_grid(
+                            data["sides"][side].shape,
+                            side,
+                            estimate["strength"],
+                            estimate.get("strength_profile"),
+                        ),
                     )
                     dewarp["debug_grid"] = grid
 
