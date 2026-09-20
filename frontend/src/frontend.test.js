@@ -25,12 +25,12 @@ describe('frontend helpers', () => {
   });
 
   it('detects long timeline gaps as missing-page candidates', () => {
-    const spreads = [2, 4, 6, 10, 12].map((time, index) => ({
+    const spreads = [2, 4, 6, 10, 12].map((start, index) => ({
       id: `spread_${index + 1}`,
-      start: time - 0.3,
-      end: time + 0.3,
+      start,
+      end: start + 0.6,
       selected: 0,
-      candidates: [{ id: 0, time }],
+      candidates: [{ id: 0, time: start + 0.3 }],
     }));
     const missing = detectMissingPageCandidates(spreads);
     expect(missing).toHaveLength(1);
