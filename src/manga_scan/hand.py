@@ -184,6 +184,7 @@ def temporal_transient_mask(image, roi, peers, target_mask=None, padding=0.015):
 
     target_mask = _resize_mask(target_mask, image.shape)
     aligned_peers = []
+    aligned_masks = []
     for peer in peers:
         peer_image = peer.get("image")
         if not isinstance(peer_image, np.ndarray) or peer_image.ndim != 3:
@@ -198,20 +199,28 @@ def temporal_transient_mask(image, roi, peers, target_mask=None, padding=0.015):
         if aligned is None:
             continue
         aligned_image, aligned_mask = aligned
-        sanitized = aligned_image.copy()
-        sanitized[aligned_mask > 0] = image[aligned_mask > 0]
-        aligned_peers.append(sanitized)
+        aligned_peers.append(aligned_image)
+        aligned_masks.append(aligned_mask > 0)
 
     if len(aligned_peers) < _TEMPORAL_MIN_PEERS:
         return result
 
     stack = np.stack(aligned_peers).astype(np.float32)
-    median = np.median(stack, axis=0).astype(np.uint8)
+    invalid = np.stack(aligned_masks)
+    valid_count = np.count_nonzero(~invalid, axis=0)
+    image_mask = np.repeat(invalid[:, :, :, None], 3, axis=3)
+    masked_stack = np.ma.array(stack, mask=image_mask)
+    median = np.ma.median(masked_stack, axis=0).data
+    median[valid_count == 0] = image[valid_count == 0]
+    median = np.clip(median, 0, 255).astype(np.uint8)
+
     gray_stack = np.stack(
         [cv2.cvtColor(peer, cv2.COLOR_BGR2GRAY) for peer in aligned_peers]
     ).astype(np.float32)
-    gray_median = np.median(gray_stack, axis=0)
-    peer_mad = np.median(np.abs(gray_stack - gray_median), axis=0)
+    masked_gray = np.ma.array(gray_stack, mask=invalid)
+    gray_median = np.ma.median(masked_gray, axis=0)
+    deviations = np.ma.abs(masked_gray - gray_median)
+    peer_mad = np.ma.median(deviations, axis=0).filled(255.0)
 
     target_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
     median_lab = cv2.cvtColor(median, cv2.COLOR_BGR2LAB).astype(np.float32)
@@ -221,6 +230,7 @@ def temporal_transient_mask(image, roi, peers, target_mask=None, padding=0.015):
     candidate = (
         (delta >= _TEMPORAL_DIFF_THRESHOLD)
         & (peer_mad <= _TEMPORAL_PEER_MAD_THRESHOLD)
+        & (valid_count >= 2)
         & (page > 0)
     ).astype(np.uint8)
     candidate = cv2.morphologyEx(
