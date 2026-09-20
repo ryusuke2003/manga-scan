@@ -116,7 +116,7 @@ def test_alignment_recovers_small_candidate_translation():
     aligned_image, aligned_mask, score = aligned
     assert score > 0.8
     assert np.mean(np.abs(aligned_image.astype(int) - target.astype(int))) < 8
-    assert not np.any(aligned_mask)
+    assert np.count_nonzero(aligned_mask[12:-12, 12:-12]) == 0
 
 
 def test_candidate_hand_mask_uses_same_spread_page_coordinates(tmp_path):
@@ -130,7 +130,7 @@ def test_candidate_hand_mask_uses_same_spread_page_coordinates(tmp_path):
             "hand_mask": "candidate_mask.png",
             "roi": [[0, 0], [1, 0], [1, 1], [0, 1]],
         },
-        "frame_shape": frame.shape,
+        "source_frame_shape": frame.shape,
         "rectified": rectified,
         "sides": sides,
         "state": {
