@@ -57,6 +57,12 @@ export default function useScanner() {
     setRefresh(value => value + 1);
   }
 
+  function syncManifest(data) {
+    manifestJSON.current = JSON.stringify(data);
+    setManifest(data);
+    setRevision(value => value + 1);
+  }
+
   async function perform(path, body, onSuccess) {
     if (mutation.current || server.job.busy || !server.token) return;
     mutation.current = true;
@@ -79,6 +85,12 @@ export default function useScanner() {
     }
   }
 
+  const setup = (action, params = {}) => perform(
+    `/api/projects/${encodeURIComponent(project)}/setup`,
+    { action, ...params },
+    syncManifest,
+  );
+
   return {
     project, manifest, server, error, revision,
     busy: pending || server.job.busy || !server.token,
@@ -88,6 +100,10 @@ export default function useScanner() {
     deleteProject: id => perform(`/api/projects/${encodeURIComponent(id)}/delete`, {}, () => {
       if (id === project) selectProject(null);
     }),
+    coverFrame: (time, confirm = false) => setup('cover_frame', { time, confirm }),
+    skipCover: () => setup('skip_cover'),
+    coverRoi: roi => setup('cover_roi', { roi }),
+    referenceFrame: (time, confirm = false) => setup('reference_frame', { time, confirm }),
     start: roi => perform(`/api/projects/${encodeURIComponent(project)}/run`, { roi }),
     edit: (action, params = {}) => perform(`/api/projects/${encodeURIComponent(project)}/edit`, { action, ...params }),
   };
