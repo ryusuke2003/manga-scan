@@ -80,7 +80,12 @@ def test_manual_rotation_refreshes_setup_previews(tmp_path):
     frame[:, 60:] = (220, 80, 20)
     save_image(project / "source/first_frame.png", frame)
     save_image(project / "source/first_frame_preview.png", frame)
-    config = Config(auto_rotation=True, rotation=0, hand_backend="none")
+    config = Config(
+        auto_rotation=True,
+        rotation=0,
+        hand_backend="none",
+        finger_repair=False,
+    )
     manifest = {
         "status": "ready",
         "config": config.to_dict(),
