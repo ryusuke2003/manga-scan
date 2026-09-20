@@ -140,6 +140,30 @@ export default function useScanner() {
     syncManifest,
   );
 
+  async function cancelProcessing() {
+    if (
+      !project
+      || !server.token
+      || !server.job?.busy
+      || server.job.project !== project
+      || server.job.action !== 'process'
+      || server.job.cancel_requested
+    ) return;
+    setError('');
+    try {
+      await request(
+        `/api/projects/${encodeURIComponent(project)}/cancel`,
+        { body: {}, token: server.token },
+      );
+      setServer(value => ({
+        ...value,
+        job: { ...value.job, cancel_requested: true },
+      }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return {
     project, manifest, server, error, revision,
     busy: pending || server.job.busy || !server.token,
@@ -162,6 +186,7 @@ export default function useScanner() {
     referenceFrame: (time, confirm = false) => setup('reference_frame', { time, confirm }),
     rotation: rotation => setup('rotation', { rotation }),
     start: roi => perform(`/api/projects/${encodeURIComponent(project)}/run`, { roi }),
+    cancelProcessing,
     edit: (action, params = {}) => perform(`/api/projects/${encodeURIComponent(project)}/edit`, { action, ...params }),
   };
 }

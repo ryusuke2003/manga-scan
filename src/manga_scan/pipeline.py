@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import json
 import logging
 import math
 import time
@@ -28,6 +29,7 @@ from .page_contour import detect_page_quads
 from .page_detect import refine_quad
 from .page_turns import analyze_page_turns
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
+from .processing_control import ProcessingCancelled, clear_cancel_request, raise_if_cancelled
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
@@ -1053,6 +1055,41 @@ def _apply_page_history(manifest, direction):
     return True
 
 
+def _interval_records(path):
+    data = json.loads(Path(path).read_text())
+    if not isinstance(data, list):
+        raise ValueError("Invalid processing checkpoint intervals")
+    return data
+
+
+def _load_score_rows(project):
+    path = Path(project) / "debug/scores.csv"
+    if not path.is_file():
+        return []
+    with path.open(newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _write_score_rows(project, rows):
+    if not rows:
+        return
+    path = Path(project) / "debug/scores.csv"
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _resume_previous_spreads(project, manifest, cfg):
+    previous = []
+    for spread in manifest.get("spreads", []):
+        if spread.get("duplicate_of"):
+            continue
+        thumbnail = selected_spread_preview(project, spread, cfg)
+        previous.append((spread["id"], thumbnail))
+    return previous[-cfg.dedupe_window :]
+
+
 def run(project, roi=None):
     project = Path(project).resolve()
     with project_lock(project):
@@ -1060,7 +1097,22 @@ def run(project, roi=None):
         if manifest["status"] == "complete":
             raise ValueError("Project already processed. Use review edits or create a new project")
         cfg = Config.from_dict(manifest["config"])
-        manifest["roi"] = validate_roi(roi if roi is not None else manifest["roi"]).tolist()
+        previous_roi = manifest.get("roi")
+        requested_roi = validate_roi(roi if roi is not None else previous_roi).tolist()
+        checkpoint = manifest.get("processing_checkpoint") or {}
+        interval_path = project / "debug/intervals.json"
+        same_roi = previous_roi is not None and np.allclose(
+            np.asarray(previous_roi, dtype=np.float32),
+            np.asarray(requested_roi, dtype=np.float32),
+            atol=1e-6,
+        )
+        resume = bool(
+            manifest.get("status") == "cancelled"
+            and same_roi
+            and checkpoint.get("motion_analysis_complete")
+            and interval_path.is_file()
+        )
+        manifest["roi"] = requested_roi
         reference = manifest.get("reference") or {}
         analysis_start = float(reference.get("time", 0)) if reference.get("confirmed") else 0.0
         detector = HandDetector(cfg)  # Fail before expensive analysis if hand support is missing.
@@ -1070,97 +1122,189 @@ def run(project, roi=None):
         LOG.setLevel(logging.INFO)
         started = time.monotonic()
         try:
-            manifest.update(
-                status="processing",
-                spreads=[],
-                pages=[],
-                pdf_stale=True,
-                page_turn_analysis=None,
-            )
             manifest.pop("error", None)
-            cover_page = render_cover(project, manifest)
-            if cover_page:
-                manifest["pages"].append(cover_page)
-            update(project, manifest, 0, "低解像度で動きを解析中")
             if cfg.hand_backend == "mediapipe":
                 manifest["hand_model_sha256"] = hashlib.sha256(
                     Path(cfg.hand_model).read_bytes()
                 ).hexdigest()
-            h = manifest["metadata"]["display_height"]
-            w = manifest["metadata"]["display_width"]
-            width = min(cfg.analysis_width, w)
-            size = (width, max(2, round(h * width / w)))
-            fps = min(cfg.video_sample_fps, manifest["metadata"]["fps"] or cfg.video_sample_fps)
-            manifest["analysis_fps"] = fps
-            machine = StableDetector(cfg.stable_frames, cfg.motion_threshold, cfg.turn_threshold)
-            segments, previous, motion_samples = [], None, []
-            with (project / "debug/motion.csv").open("w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["index", "time", "motion", "sharpness", "state"])
-                for index, timestamp, frame in sample_frames(
-                    manifest["source"], fps, size, cfg.hwaccel, start_time=analysis_start
-                ):
-                    cropped = warp_roi(frame, manifest["roi"])
-                    motion = motion_score(previous, cropped) if previous is not None else 1.0
-                    sample = Sample(index, timestamp, motion, sharpness(cropped))
-                    motion_samples.append(sample)
-                    complete = machine.push(sample)
-                    if complete:
-                        segments.append(complete)
-                    writer.writerow([index, timestamp, motion, sample.sharpness, machine.state])
-                    previous = cropped
-                    if cfg.save_lowres:
-                        save_image(project / f"frames_lowres/{index:08d}.jpg", frame)
-                    if index % max(1, round(fps * 2)) == 0:
-                        update(
-                            project,
-                            manifest,
-                            min(
-                                0.4,
-                                0.4
-                                * max(0.0, timestamp - analysis_start)
-                                / max(0.001, manifest["metadata"]["duration"] - analysis_start),
-                            ),
-                            f"動き解析 {timestamp:.1f}s / {manifest['metadata']['duration']:.1f}s",
-                        )
-            tail = machine.finish()
-            if tail:
-                segments.append(tail)
-            if not segments:
-                raise ValueError(
-                    "No stable intervals found. Hold pages longer, tune motion_threshold/stable_frames, or add frames manually"
+
+            if resume:
+                interval_records = _interval_records(interval_path)
+                completed_spreads = int(checkpoint.get("completed_spreads", 0))
+                if not 0 <= completed_spreads <= len(interval_records):
+                    raise ValueError("Invalid processing checkpoint")
+                expected_ids = [
+                    f"spread_{index + 1:04d}" for index in range(completed_spreads)
+                ]
+                current_ids = [
+                    spread["id"] for spread in manifest.get("spreads", [])
+                ]
+                if current_ids != expected_ids:
+                    raise ValueError(
+                        "Processing checkpoint does not match completed spreads"
+                    )
+                manifest.update(
+                    status="processing",
+                    pdf_stale=True,
+                    message="中断地点から再開しています",
                 )
-            page_turn_analysis = analyze_page_turns(
-                motion_samples,
-                segments,
-                cfg.motion_threshold,
-                cfg.turn_threshold,
-                fps,
-            )
-            manifest["page_turn_analysis"] = page_turn_analysis
-            write_json(project / "debug/page_turns.json", page_turn_analysis)
-            write_json(
-                project / "debug/intervals.json",
-                [
+                previous_spreads = _resume_previous_spreads(
+                    project,
+                    manifest,
+                    cfg,
+                )
+                score_rows = _load_score_rows(project)
+                update(
+                    project,
+                    manifest,
+                    0.4 + 0.55 * completed_spreads / max(1, len(interval_records)),
+                    f"中断地点から再開 {completed_spreads} / {len(interval_records)} 見開き",
+                )
+            else:
+                manifest.update(
+                    status="processing",
+                    spreads=[],
+                    pages=[],
+                    pdf_stale=True,
+                    page_turn_analysis=None,
+                    processing_checkpoint={
+                        "motion_analysis_complete": False,
+                        "completed_spreads": 0,
+                    },
+                )
+                _clear_page_history(manifest)
+                cover_page = render_cover(project, manifest)
+                if cover_page:
+                    manifest["pages"].append(cover_page)
+                update(project, manifest, 0, "低解像度で動きを解析中")
+                h = manifest["metadata"]["display_height"]
+                w = manifest["metadata"]["display_width"]
+                width = min(cfg.analysis_width, w)
+                size = (width, max(2, round(h * width / w)))
+                fps = min(cfg.video_sample_fps, manifest["metadata"]["fps"] or cfg.video_sample_fps)
+                manifest["analysis_fps"] = fps
+                machine = StableDetector(
+                    cfg.stable_frames,
+                    cfg.motion_threshold,
+                    cfg.turn_threshold,
+                )
+                segments, previous, motion_samples = [], None, []
+                with (project / "debug/motion.csv").open("w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["index", "time", "motion", "sharpness", "state"])
+                    for index, timestamp, frame in sample_frames(
+                        manifest["source"],
+                        fps,
+                        size,
+                        cfg.hwaccel,
+                        start_time=analysis_start,
+                    ):
+                        raise_if_cancelled(project)
+                        cropped = warp_roi(frame, manifest["roi"])
+                        motion = (
+                            motion_score(previous, cropped)
+                            if previous is not None
+                            else 1.0
+                        )
+                        sample = Sample(
+                            index,
+                            timestamp,
+                            motion,
+                            sharpness(cropped),
+                        )
+                        motion_samples.append(sample)
+                        complete = machine.push(sample)
+                        if complete:
+                            segments.append(complete)
+                        writer.writerow(
+                            [
+                                index,
+                                timestamp,
+                                motion,
+                                sample.sharpness,
+                                machine.state,
+                            ]
+                        )
+                        previous = cropped
+                        if cfg.save_lowres:
+                            save_image(
+                                project / f"frames_lowres/{index:08d}.jpg",
+                                frame,
+                            )
+                        if index % max(1, round(fps * 2)) == 0:
+                            update(
+                                project,
+                                manifest,
+                                min(
+                                    0.4,
+                                    0.4
+                                    * max(0.0, timestamp - analysis_start)
+                                    / max(
+                                        0.001,
+                                        manifest["metadata"]["duration"]
+                                        - analysis_start,
+                                    ),
+                                ),
+                                (
+                                    f"動き解析 {timestamp:.1f}s / "
+                                    f"{manifest['metadata']['duration']:.1f}s"
+                                ),
+                            )
+                tail = machine.finish()
+                if tail:
+                    segments.append(tail)
+                if not segments:
+                    raise ValueError(
+                        "No stable intervals found. Hold pages longer, tune "
+                        "motion_threshold/stable_frames, or add frames manually"
+                    )
+                page_turn_analysis = analyze_page_turns(
+                    motion_samples,
+                    segments,
+                    cfg.motion_threshold,
+                    cfg.turn_threshold,
+                    fps,
+                )
+                manifest["page_turn_analysis"] = page_turn_analysis
+                write_json(project / "debug/page_turns.json", page_turn_analysis)
+                interval_records = [
                     {
-                        "start": s[0].time,
-                        "end": s[-1].time,
-                        "sample_count": len(s),
+                        "start": segment[0].time,
+                        "end": segment[-1].time,
+                        "sample_count": len(segment),
                         "candidates": [
-                            asdict(c) for c in choose_candidates(s, cfg.candidates_per_spread)
+                            asdict(candidate_sample)
+                            for candidate_sample in choose_candidates(
+                                segment,
+                                cfg.candidates_per_spread,
+                            )
                         ],
                     }
-                    for s in segments
-                ],
-            )
-            previous_spreads = []
-            gaps = np.diff([s[0].time for s in segments])
+                    for segment in segments
+                ]
+                write_json(interval_path, interval_records)
+                manifest["processing_checkpoint"] = {
+                    "motion_analysis_complete": True,
+                    "completed_spreads": 0,
+                }
+                save_manifest(project, manifest)
+                raise_if_cancelled(project)
+                previous_spreads = []
+                score_rows = []
+                completed_spreads = 0
+
+            gaps = np.diff([item["start"] for item in interval_records])
             typical_gap = float(np.median(gaps)) if len(gaps) else 0
-            score_rows = []
-            for i, segment in enumerate(segments):
+            for i in range(completed_spreads, len(interval_records)):
+                raise_if_cancelled(project)
+                interval = interval_records[i]
+                candidate_samples = [
+                    Sample(**sample) for sample in interval["candidates"]
+                ]
                 spread_id = f"spread_{i + 1:04d}"
                 records = []
-                for j, sample in enumerate(choose_candidates(segment, cfg.candidates_per_spread)):
+                for j, sample in enumerate(candidate_samples):
+                    raise_if_cancelled(project)
                     records.append(
                         candidate(project, manifest, cfg, detector, spread_id, j, sample)
                     )
@@ -1243,8 +1387,8 @@ def run(project, roi=None):
 
                 spread = {
                     "id": spread_id,
-                    "start": segment[0].time,
-                    "end": segment[-1].time,
+                    "start": interval["start"],
+                    "end": interval["end"],
                     "candidates": records,
                     "selected": selected,
                     "selected_pages": selected_pages,
@@ -1265,23 +1409,47 @@ def run(project, roi=None):
                 if not spread.get("duplicate_of"):
                     previous_spreads.append((spread_id, thumbnail))
                     previous_spreads = previous_spreads[-cfg.dedupe_window :]
+                raise_if_cancelled(project)
                 pages = render_spread(project, manifest, spread)
                 manifest["spreads"].append(spread)
                 manifest["pages"].extend(pages)
+                _write_score_rows(project, score_rows)
+                manifest["processing_checkpoint"] = {
+                    "motion_analysis_complete": True,
+                    "completed_spreads": i + 1,
+                }
                 update(
                     project,
                     manifest,
-                    0.4 + 0.55 * (i + 1) / len(segments),
-                    f"候補評価・補正 {i + 1} / {len(segments)} 見開き",
+                    0.4 + 0.55 * (i + 1) / len(interval_records),
+                    (
+                        f"候補評価・補正 {i + 1} / "
+                        f"{len(interval_records)} 見開き"
+                    ),
                 )
-            with (project / "debug/scores.csv").open("w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(score_rows[0]))
-                writer.writeheader()
-                writer.writerows(score_rows)
+                raise_if_cancelled(project)
+
+            raise_if_cancelled(project)
             update(project, manifest, 0.97, "PDF / CBZを生成中")
             build_exports(project, manifest)
-            manifest.update(status="complete", elapsed_seconds=round(time.monotonic() - started, 2))
+            manifest.pop("processing_checkpoint", None)
+            clear_cancel_request(project)
+            manifest.update(
+                status="complete",
+                elapsed_seconds=round(time.monotonic() - started, 2),
+            )
             update(project, manifest, 1, "完了 — 要確認ページを確認してください")
+            return manifest
+        except ProcessingCancelled:
+            clear_cancel_request(project)
+            manifest.pop("error", None)
+            manifest.update(
+                status="cancelled",
+                message="処理を中断しました。続きから再開できます",
+                pdf_stale=True,
+            )
+            save_manifest(project, manifest)
+            LOG.info("Processing cancelled at a safe checkpoint")
             return manifest
         except BaseException as exc:
             manifest.update(
