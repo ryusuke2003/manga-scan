@@ -5,6 +5,7 @@ Macで撮影した漫画の動画から、**机などの背景を除いた左右
 - Python / OpenCV / FFmpeg / MediaPipeで画像処理
 - React + ViteのローカルWeb UI
 - ページめくり中を避け、静止した候補からベストフレームを選択
+- 任意で左右ページの外周を自動検出し、各ページを別々に台形補正
 - 任意で低周波の照明ムラ・緩い影をページ単位に補正
 - 手の重なり、ブレ、重複候補などを「要確認」として表示
 - 候補切替、除外/復元、ページ順、左右交換、分割位置を後から修正可能
@@ -288,12 +289,19 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 | 別ページが1区間になる | `turn_threshold` を下げる |
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
+| 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
+| 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
 | ページの端/中央が緩く暗い | `illumination_correction=true`。強すぎる場合は `illumination_strength` を0.4〜0.7へ下げる |
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_strength=0.0`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
+
+ページ別台形補正はデフォルトでは従来互換の `perspective_mode="spread"` です。
+`"per_page"` にすると元フレーム上で左右ページの外周を自動検出し、左右を別々の射影変換で補正します。
+両ページの輪郭confidenceが閾値に届かない見開きは `page_contour_low_confidence` として要確認にし、従来の「見開き全体を補正 → 左右分割」へ自動fallbackします。
+検出quadとconfidenceはmanifestに残り、`debug/page_contours/` に確認画像を保存します。
 
 照明ムラ補正はデフォルトOFFです。ON時はページ単位の低周波な明るさだけを均し、二値化や背景除去は行いません。
 黒ベタや網点への影響が気になる場合は `illumination_strength` を下げるかOFFにしてください。
