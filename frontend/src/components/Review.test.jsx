@@ -38,6 +38,7 @@ it('labels whole pages and offers layout switching and crop correction', () => {
   expect(screen.getByText((_text, node) => node.tagName === 'P'
     && node.textContent.includes('左右ページから外周を自動検出 · 信頼度 86%'))).toBeTruthy();
   expect(screen.getByText('外周を確認・調整')).toBeTruthy();
+  expect(screen.getByText('外周を自動検出し直す')).toBeTruthy();
   expect(screen.getByText('検出結果 ↗')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('この見開きの出力形式'), { target: { value: 'split' } });
   expect(onEdit).toHaveBeenCalledWith('output_layout', { spread_id: 's', layout: 'split' });
