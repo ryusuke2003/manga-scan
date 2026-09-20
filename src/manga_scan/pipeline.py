@@ -12,6 +12,7 @@ import numpy as np
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
+from .finger_repair import repair_finger_regions
 from .hand import HandDetector
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads, draw_page_quads
@@ -52,11 +53,16 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     save_image(project / f"{base}.png", image)
     save_image(project / f"{base}_hand_mask.png", mask)
     rectified = warp_roi(image, roi)
-    save_image(project / f"{base}_spread.png", rectified)
+    preview = f"{base}_spread.png"
+    save_image(project / preview, rectified)
+    review_preview = preview
+    if cfg.rotation:
+        review_preview = f"{base}_spread_review.png"
+        save_image(project / review_preview, rotate_image(rectified, cfg.rotation))
 
     if cfg.candidate_selection_mode == "per_page":
         rectified_mask = (
-            warp_roi(mask, roi)
+            warp_roi(mask, roi, interpolation=cv2.INTER_NEAREST)
             if overlap is not None
             else np.zeros(rectified.shape[:2], np.uint8)
         )
@@ -82,7 +88,8 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
         "id": number,
         "time": sample.time,
         "path": f"{base}.png",
-        "preview": f"{base}_spread.png",
+        "preview": preview,
+        "review_preview": review_preview,
         "hand_mask": f"{base}_hand_mask.png",
         "roi": roi,
         "metrics": metrics,
@@ -225,6 +232,78 @@ def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
     return sides
 
 
+def candidate_page_hand_mask(project, data, side, cfg):
+    chosen = data["chosen"]
+    mask_path = chosen.get("hand_mask")
+    if not mask_path:
+        return None
+    mask = cv2.imread(str(project / mask_path), cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        return None
+
+    source_height, source_width = data["source_frame_shape"][:2]
+    full_mask = cv2.resize(
+        mask,
+        (source_width, source_height),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    rotated_mask = rotate_image(full_mask, cfg.rotation)
+    state = data["state"]
+    if (
+        state.get("perspective_mode_used") == "per_page"
+        and (state.get("page_contours") or {}).get("detected")
+    ):
+        output_sizes = {
+            name: (page.shape[1], page.shape[0])
+            for name, page in data["sides"].items()
+        }
+        return warp_detected_pages(
+            rotated_mask,
+            state["page_contours"],
+            output_sizes=output_sizes,
+            interpolation=cv2.INTER_NEAREST,
+        )[side]
+
+    rectified_mask = rotate_image(
+        warp_roi(
+            full_mask,
+            chosen["roi"],
+            interpolation=cv2.INTER_NEAREST,
+        ),
+        cfg.rotation,
+    )
+    spine = state.get("spine_px")
+    if spine is None:
+        spine = spine_position(
+            data["rectified"],
+            state.get("spine_ratio", cfg.spine_ratio),
+            cfg.split_mode,
+        )
+    gutter = round(rectified_mask.shape[1] * cfg.gutter_fraction / 2)
+    left_end = max(1, spine - gutter)
+    right_start = min(rectified_mask.shape[1] - 1, spine + gutter)
+    return (
+        rectified_mask[:, :left_end]
+        if side == "left"
+        else rectified_mask[:, right_start:]
+    )
+
+
+def _finger_donor_candidates(spread, side, selected_id):
+    def rank(candidate):
+        metrics = candidate.get("page_metrics", {}).get(side, candidate.get("metrics", {}))
+        overlap = metrics.get("hand_overlap")
+        return (
+            1.0 if overlap is None else float(overlap),
+            -float(metrics.get("score", 0.0)),
+        )
+
+    return sorted(
+        (candidate for candidate in spread["candidates"] if candidate["id"] != selected_id),
+        key=rank,
+    )
+
+
 def render_spread(project, manifest, spread):
     cfg = Config.from_dict(manifest["config"])
     selected_pages = spread.get("selected_pages") or {
@@ -249,9 +328,12 @@ def render_spread(project, manifest, spread):
         rectified = rotate_image(warp_roi(source_image, chosen["roi"]), cfg.rotation)
         image = rotate_image(source_image, cfg.rotation)
         roi = rotate_roi(chosen["roi"], cfg.rotation)
+        use_spread_state = (
+            same_candidate and candidate_id == selected_pages["left"]
+        )
         state = (
             spread
-            if same_candidate
+            if use_spread_state
             else {
                 "id": f"{spread['id']}_candidate_{candidate_id:02d}",
                 "spine_ratio": spread.get("spine_ratio", cfg.spine_ratio),
@@ -264,6 +346,7 @@ def render_spread(project, manifest, spread):
             "rectified": rectified,
             "sides": sides,
             "state": state,
+            "source_frame_shape": source_image.shape,
         }
         return cache[candidate_id]
 
@@ -351,6 +434,57 @@ def render_spread(project, manifest, spread):
         selected_source = f"selected/{spread['id']}_{side}.png"
         save_image(project / selected_source, source_page)
 
+        finger_repair = {"status": "disabled", "coverage": 0.0, "donors": []}
+        if cfg.finger_repair:
+            target_mask = candidate_page_hand_mask(project, data, side, cfg)
+            if target_mask is None:
+                finger_repair = {
+                    "status": "unavailable",
+                    "coverage": 0.0,
+                    "donors": [],
+                }
+            elif np.any(target_mask > 127):
+                target_mask_path = f"debug/finger_repair/{spread['id']}_{side}_target.png"
+                save_image(project / target_mask_path, target_mask)
+
+                def donor_pages():
+                    for donor_record in _finger_donor_candidates(
+                        spread,
+                        side,
+                        selected_pages[side],
+                    )[:5]:
+                        donor_data = load_candidate(donor_record["id"])
+                        donor_mask = candidate_page_hand_mask(
+                            project, donor_data, side, cfg
+                        )
+                        if donor_mask is None:
+                            continue
+                        yield {
+                            "candidate_id": donor_record["id"],
+                            "image": donor_data["sides"][side],
+                            "mask": donor_mask,
+                        }
+
+                source_page, finger_repair, unresolved = repair_finger_regions(
+                    source_page,
+                    target_mask,
+                    donor_pages(),
+                    min_coverage=cfg.finger_repair_min_coverage,
+                )
+                finger_repair["target_mask"] = target_mask_path
+                if np.any(unresolved):
+                    unresolved_path = (
+                        f"debug/finger_repair/{spread['id']}_{side}_unresolved.png"
+                    )
+                    save_image(project / unresolved_path, unresolved)
+                    finger_repair["unresolved_mask"] = unresolved_path
+            else:
+                finger_repair = {
+                    "status": "clean",
+                    "coverage": 1.0,
+                    "donors": [],
+                }
+
         dewarp = {"mode": cfg.dewarp_mode, "applied": False, "status": "off"}
         manual_dewarp = 0.0
         if cfg.dewarp_mode == "manual":
@@ -428,6 +562,10 @@ def render_spread(project, manifest, spread):
         )
         if dewarp.get("status") == "low_confidence":
             page_suspect.append("dewarp_low_confidence")
+        if finger_repair["status"] in ("complete", "clean"):
+            page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
+        elif finger_repair["status"] in ("incomplete", "unavailable"):
+            page_suspect.append("finger_repair_incomplete")
         pages.append(
             {
                 "id": f"{spread['id']}_{side}",
@@ -440,9 +578,23 @@ def render_spread(project, manifest, spread):
                 "candidate_time": chosen["time"],
                 "enabled": not bool(spread.get("duplicate_of")),
                 "suspect": list(dict.fromkeys(page_suspect)),
+                "finger_repair": finger_repair,
                 "dewarp": dewarp,
             }
         )
+    if cfg.finger_repair:
+        incomplete = any(
+            page.get("finger_repair", {}).get("status") in ("incomplete", "unavailable")
+            for page in pages
+        )
+        if incomplete:
+            spread["suspect"] = list(
+                dict.fromkeys(spread.get("suspect", []) + ["finger_repair_incomplete"])
+            )
+        else:
+            spread["suspect"] = [
+                reason for reason in spread.get("suspect", []) if reason != "hand_overlap"
+            ]
     manifest["pdf_stale"] = True
     return pages
 

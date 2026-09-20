@@ -23,6 +23,8 @@ class Config:
     hand_backend: str = "mediapipe"
     hand_model: str = "models/hand_landmarker.task"
     hand_padding: float = 0.015
+    finger_repair: bool = False
+    finger_repair_min_coverage: float = 0.9
     duplicate_hash_distance: int = 4
     duplicate_ssim: float = 0.985
     duplicate_suspect_ssim: float = 0.94
@@ -96,6 +98,7 @@ class Config:
             "quad_max_shift": (0, 0.1),
             "page_contour_min_confidence": (0, 1),
             "hand_padding": (0, 0.1),
+            "finger_repair_min_coverage": (0, 1),
             "dewarp_strength": (0, 0.6),
             "dewarp_max_strength": (0, 0.35),
             "dewarp_min_confidence": (0, 1),
@@ -126,6 +129,8 @@ class Config:
         }.items():
             if getattr(self, name) not in choices:
                 raise ValueError(f"{name}: expected one of {choices}")
+        if self.finger_repair and self.hand_backend != "mediapipe":
+            raise ValueError("finger_repair requires hand_backend='mediapipe'")
         if self.turn_threshold < self.motion_threshold:
             raise ValueError("turn_threshold must be >= motion_threshold")
         if self.duplicate_suspect_ssim > self.duplicate_ssim:

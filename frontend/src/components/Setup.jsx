@@ -5,6 +5,7 @@ const FALLBACK_CONFIG = {
   image_format: 'png',
   jpeg_quality: 92,
   hand_backend: 'mediapipe',
+  finger_repair: false,
   candidate_selection_mode: 'spread',
   grayscale: false,
   rotation: 0,
@@ -143,7 +144,12 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
         <label>読む順番<select value={config.reading_order} onChange={event => change('reading_order', event.target.value)}><option value="rtl">右 → 左（日本漫画）</option><option value="ltr">左 → 右</option></select></label>
         <label>ページ画像<select value={config.image_format} onChange={event => change('image_format', event.target.value)}><option value="png">PNG / 可逆圧縮</option><option value="jpeg">JPEG / 小さいサイズ</option></select></label>
         <label>JPEG品質<input type="number" min="1" max="100" required value={config.jpeg_quality} onChange={event => change('jpeg_quality', Number(event.target.value))} /></label>
-        <label>手の検出<select value={config.hand_backend} onChange={event => change('hand_backend', event.target.value)}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
+        <label>手の検出<select value={config.hand_backend} onChange={event => {
+          const backend = event.target.value;
+          change('hand_backend', backend);
+          if (backend === 'none') change('finger_repair', false);
+        }}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
+        <label className="setting-check"><input type="checkbox" checked={config.finger_repair} disabled={config.hand_backend === 'none'} onChange={event => change('finger_repair', event.target.checked)} /><span><strong>別フレームから指を補修</strong><small>同じページの別時刻に写っている実画素だけで指領域を置き換えます。</small></span></label>
         <label>候補フレーム選択<select value={config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位 / 従来</option><option value="per_page">左右ページ別</option></select></label>
       </div>
       <label className="checkbox"><input type="checkbox" checked={config.grayscale} onChange={event => change('grayscale', event.target.checked)} /> グレースケールで保存</label>

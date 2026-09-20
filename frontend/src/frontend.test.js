@@ -156,6 +156,25 @@ describe('frontend helpers', () => {
     expect(correctionPresetForConfig(applyCorrectionPreset(standard, 'scan'))).toBe('scan');
   });
 
+  it('submits opt-in finger repair from setup', () => {
+    const onCreate = vi.fn();
+    render(React.createElement(Setup, {
+      busy: false,
+      defaults: buildInitialConfig(),
+      onChoose: vi.fn(),
+      onCreate,
+    }));
+    fireEvent.change(screen.getByLabelText('動画のローカルパス'), {
+      target: { value: '/tmp/book.mp4' },
+    });
+    fireEvent.click(screen.getByLabelText(/別フレームから指を補修/));
+    fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
+    expect(onCreate).toHaveBeenCalledWith(
+      '/tmp/book.mp4',
+      expect.objectContaining({ finger_repair: true }),
+    );
+  });
+
   it('submits rotation as a numeric config value from the setup form', () => {
     const onCreate = vi.fn();
     render(React.createElement(Setup, { busy: false, defaults: buildInitialConfig(), onChoose: vi.fn(), onCreate }));
