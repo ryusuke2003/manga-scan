@@ -16,7 +16,12 @@ from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
 from .hand import HandDetector, boundary_finger_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
-from .page_contour import detect_page_quads, draw_page_quads, spread_quad_from_page_quads
+from .page_contour import (
+    consensus_page_quads,
+    detect_page_quads,
+    draw_page_quads,
+    spread_quad_from_page_quads,
+)
 from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
 from .perspective import rotate_roi, validate_roi, warp_roi
@@ -34,6 +39,8 @@ from .storage import project_lock, read_manifest, save_image, save_manifest, wri
 from .video import extract_frame, sample_frames
 
 LOG = logging.getLogger("manga_scan")
+
+PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
 
 
 def update(project, manifest, progress, message):
@@ -194,7 +201,56 @@ def render_cover(project, manifest):
     }
 
 
-def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
+def detect_spread_page_consensus(project, spread, cfg, anchor_ids=None):
+    """Estimate page quads from all saved candidates for one spread.
+
+    Candidate preview frames are already analysis-resolution images, so this
+    adds no extra video seeks. Each frame is evaluated independently and the
+    page_contour module rejects geometric outliers before combining corners.
+    """
+
+    detections = []
+    overrides = spread.get("roi_overrides", {})
+    for record in spread.get("candidates", []):
+        path = record.get("path")
+        if not path:
+            continue
+        image = cv2.imread(str(project / path), cv2.IMREAD_COLOR)
+        if image is None:
+            continue
+        upright = rotate_image(image, cfg.rotation)
+        override = overrides.get(str(record["id"]))
+        source_roi = override if override is not None else record["roi"]
+        roi = rotate_roi(source_roi, cfg.rotation).tolist()
+        detection = detect_page_quads(
+            upright,
+            roi,
+            spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
+            min_confidence=cfg.page_contour_min_confidence,
+        )
+        detection["candidate_id"] = record["id"]
+        detections.append(detection)
+
+    if not detections:
+        return None
+    return consensus_page_quads(
+        detections,
+        min_confidence=cfg.page_contour_min_confidence,
+        max_corner_deviation=PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION,
+        anchor_ids=anchor_ids,
+    )
+
+
+def rectify_spread_pages(
+    project,
+    image,
+    rectified,
+    chosen_roi,
+    spread,
+    cfg,
+    page_detection=None,
+    consensus_sides=None,
+):
     """Choose per-page perspective correction or the legacy spread fallback."""
 
     ratio = spread.get("spine_ratio", cfg.spine_ratio)
@@ -207,12 +263,29 @@ def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
                 (cfg.analysis_width, max(2, round(image.shape[0] * scale))),
                 interpolation=cv2.INTER_AREA,
             )
-        detection = detect_page_quads(
-            detection_image,
-            chosen_roi,
-            spine_ratio=ratio,
-            min_confidence=cfg.page_contour_min_confidence,
-        )
+        detection = None
+        if page_detection is None or consensus_sides:
+            detection = detect_page_quads(
+                detection_image,
+                chosen_roi,
+                spine_ratio=ratio,
+                min_confidence=cfg.page_contour_min_confidence,
+            )
+        if page_detection is not None:
+            if consensus_sides:
+                detection = dict(detection)
+                for side in consensus_sides:
+                    detection[side] = page_detection[side]
+                detection["confidence"] = min(
+                    detection["left"]["confidence"],
+                    detection["right"]["confidence"],
+                )
+                detection["detected"] = (
+                    detection["left"]["detected"] and detection["right"]["detected"]
+                )
+                detection["consensus"] = page_detection.get("consensus", {})
+            else:
+                detection = page_detection
         spread["page_contours"] = detection
         debug_path = f"debug/page_contours/{spread['id']}.jpg"
         save_image(project / debug_path, draw_page_quads(image, detection))
@@ -371,7 +444,7 @@ def _persist_finger_repair_component_debug(project, repair, stem):
     return repair
 
 
-def _whole_spread_geometry(source, record, spread, cfg):
+def _whole_spread_geometry(source, record, spread, cfg, page_detection=None):
     """Resolve one upright spread crop from manual or per-page outer corners."""
     upright = rotate_image(source, cfg.rotation)
     override = spread.get("roi_overrides", {}).get(str(record["id"]))
@@ -401,12 +474,14 @@ def _whole_spread_geometry(source, record, spread, cfg):
             (cfg.analysis_width, max(2, round(upright.shape[0] * scale))),
             interpolation=cv2.INTER_AREA,
         )
-    detection = detect_page_quads(
-        detection_image,
-        reference,
-        spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
-        min_confidence=cfg.page_contour_min_confidence,
-    )
+    detection = page_detection
+    if detection is None:
+        detection = detect_page_quads(
+            detection_image,
+            reference,
+            spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
+            min_confidence=cfg.page_contour_min_confidence,
+        )
     crop["detection"] = detection
     crop["confidence"] = detection["confidence"]
     if detection["detected"]:
@@ -428,6 +503,17 @@ def _render_whole_spread(project, manifest, spread, cfg):
         "spine_px_by_side",
     ):
         spread.pop(key, None)
+    selected_id = spread["selected"]
+    page_consensus = (
+        detect_spread_page_consensus(
+            project,
+            spread,
+            cfg,
+            {"left": selected_id, "right": selected_id},
+        )
+        if cfg.refine_quad
+        else None
+    )
     cache = {}
 
     def load(candidate_id):
@@ -435,7 +521,13 @@ def _render_whole_spread(project, manifest, spread, cfg):
             return cache[candidate_id]
         record = _candidate_by_id(spread, candidate_id)
         source = extract_frame(manifest["source"], record["time"], hwaccel=cfg.hwaccel)
-        upright, roi, crop = _whole_spread_geometry(source, record, spread, cfg)
+        upright, roi, crop = _whole_spread_geometry(
+            source,
+            record,
+            spread,
+            cfg,
+            page_detection=page_consensus if candidate_id == selected_id else None,
+        )
         page = warp_roi(upright, roi)
         background_mask = None
         detection = crop.get("detection")
@@ -626,6 +718,11 @@ def render_spread(project, manifest, spread):
     }
     spread["selected_pages"] = selected_pages
     same_candidate = selected_pages["left"] == selected_pages["right"]
+    page_consensus = (
+        detect_spread_page_consensus(project, spread, cfg, selected_pages)
+        if cfg.perspective_mode == "per_page"
+        else None
+    )
     base_extra_suspect = [
         reason
         for reason in spread.get("extra_suspect", [])
@@ -658,7 +755,24 @@ def render_spread(project, manifest, spread):
             }
         )
         state["manual_roi"] = override is not None
-        sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
+        consensus_sides = [
+            side
+            for side in ("left", "right")
+            if selected_pages[side] == candidate_id
+        ]
+        if page_consensus is not None and consensus_sides:
+            sides = rectify_spread_pages(
+                project,
+                image,
+                rectified,
+                roi,
+                state,
+                cfg,
+                page_detection=page_consensus,
+                consensus_sides=consensus_sides,
+            )
+        else:
+            sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
         cache[candidate_id] = {
             "chosen": chosen,
             "rectified": rectified,

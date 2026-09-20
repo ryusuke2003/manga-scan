@@ -24,7 +24,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py`: ユーザー指定の見開きROIを外側へ広げない保守的な外周微調整。
-- `page_contour.py`: 見開き内の左右ページ外周を個別検出し、confidence付きquadを返す。低confidence時は既存ROI分割へfallback。
+- `page_contour.py`: 見開き内の左右ページ外周を各候補フレームで個別検出し、外れ値を除いたconfidence加重consensus quadを返す。片側が指や影で欠けたフレームも別候補で補完し、低confidence時は既存ROI分割へfallback。
 - `page_warp.py`: 左右ページquadを独立した `warpPerspective` で長方形化する。
 - `perspective.py`: ROI検証、見開き射影変換、90°単位のROI回転。
 - `split.py`: 設定回転、背の推定、左右分割、自動湾曲推定、左右別の保守的remap、白背景正規化、グレースケール、コントラスト。
@@ -84,8 +84,7 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 元解像度の再取得は実際に採用された候補IDだけに限定し、左右が同じ候補なら1回、異なる候補なら最大2回。
 manifestには後方互換用の `selected` に加えて `selected_pages.left/right` を保存し、各pageにも
 `candidate_id` / `candidate_time` を記録する。レビューUIでは左右片側だけ候補を差し替えられる。
-`perspective_mode="per_page"` も同時に有効な場合は、採用された各候補フレームごとにページ輪郭検出と
-左右別射影変換を行う。左右が別候補なら輪郭・fallback状態も `*_by_side` としてmanifestへ保持する。
+`perspective_mode="per_page"` も同時に有効な場合は、同じ見開きの候補フレーム群からページ輪郭のconsensusを作り、採用ページ側へ反映して左右別射影変換を行う。左右が別候補なら選択側だけconsensusを上書きし、他方はその候補自身の輪郭を維持する。輪郭・fallback状態も `*_by_side` としてmanifestへ保持する。
 
 レビューUIの動画タイムラインは各見開きの区間と採用候補時刻を動画全体へ配置する。
 欠落候補の判定には候補選択位置の揺れを使わず、重複除外済み見開きの安定区間開始時刻 `spread.start` を使う。

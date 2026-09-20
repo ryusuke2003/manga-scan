@@ -263,6 +263,189 @@ def detect_page_quads(
     return result
 
 
+def _quad_distance(first, second):
+    return float(np.mean(np.linalg.norm(first - second, axis=1)))
+
+
+def _consensus_inlier_indices(samples, max_corner_deviation, anchor_id=None):
+    """Pick the largest mutually-close quad cluster, then trim residual outliers."""
+
+    count = len(samples)
+    if count <= 1:
+        return list(range(count))
+
+    quads = [sample["quad"] for sample in samples]
+    distances = np.zeros((count, count), dtype=np.float32)
+    for i in range(count):
+        for j in range(i + 1, count):
+            distance = _quad_distance(quads[i], quads[j])
+            distances[i, j] = distance
+            distances[j, i] = distance
+
+    best = None
+    best_key = None
+    for i in range(count):
+        cluster = np.flatnonzero(distances[i] <= max_corner_deviation).tolist()
+        ids = {samples[index]["candidate_id"] for index in cluster}
+        confidence = sum(samples[index]["confidence"] for index in cluster)
+        key = (len(cluster), int(anchor_id in ids), confidence)
+        if best_key is None or key > best_key:
+            best = cluster
+            best_key = key
+
+    if len(best) < 3:
+        return best
+
+    cluster_quads = np.stack([quads[index] for index in best])
+    median_quad = np.median(cluster_quads, axis=0)
+    residuals = np.asarray(
+        [_quad_distance(quads[index], median_quad) for index in best],
+        dtype=np.float32,
+    )
+    median_residual = float(np.median(residuals))
+    mad = float(np.median(np.abs(residuals - median_residual)))
+    robust_limit = max(0.004, median_residual + 3.0 * 1.4826 * mad)
+    robust_limit = min(float(max_corner_deviation), robust_limit)
+    refined = [
+        index
+        for index, residual in zip(best, residuals)
+        if float(residual) <= robust_limit + 1e-9
+    ]
+    return refined if len(refined) >= 2 else best
+
+
+def consensus_page_quads(
+    detections,
+    *,
+    min_confidence=0.5,
+    max_corner_deviation=0.04,
+    anchor_ids=None,
+):
+    """Combine page detections from several candidate frames.
+
+    Each side is combined independently so one frame may contribute only the
+    page boundary that is visible there. A RANSAC-like largest-cluster step and
+    median/MAD trimming reject shifted outlines; the remaining corners are
+    averaged with contour confidence as the weight. With a single usable
+    detection this intentionally behaves like the existing one-frame path.
+    """
+
+    detections = list(detections)
+    if not detections:
+        raise ValueError("detections must contain at least one result")
+    if not 0 <= float(min_confidence) <= 1:
+        raise ValueError("min_confidence must be 0..1")
+    if not 0 < float(max_corner_deviation) <= 0.5:
+        raise ValueError("max_corner_deviation must be 0..0.5")
+    anchor_ids = anchor_ids or {}
+
+    result = {}
+    source_ids = [
+        detection.get("candidate_id", index)
+        for index, detection in enumerate(detections)
+    ]
+
+    for side in ("left", "right"):
+        fallback_detection = next(
+            (
+                detection
+                for index, detection in enumerate(detections)
+                if detection.get("candidate_id", index) == anchor_ids.get(side)
+            ),
+            detections[0],
+        )
+        fallback = fallback_detection.get(side, {})
+        fallback_quad = np.asarray(fallback.get("quad"), dtype=np.float32)
+        if fallback_quad.shape != (4, 2) or not np.isfinite(fallback_quad).all():
+            raise ValueError("each detection must contain valid left/right quads")
+
+        samples = []
+        for index, detection in enumerate(detections):
+            data = detection.get(side, {})
+            if not isinstance(data, dict) or not data.get("detected"):
+                continue
+            quad = np.asarray(data.get("quad"), dtype=np.float32)
+            try:
+                confidence = float(data.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if (
+                quad.shape != (4, 2)
+                or not np.isfinite(quad).all()
+                or (quad < 0).any()
+                or (quad > 1).any()
+                or not math.isfinite(confidence)
+                or confidence <= 0
+            ):
+                continue
+            samples.append(
+                {
+                    "candidate_id": detection.get("candidate_id", index),
+                    "quad": quad,
+                    "confidence": confidence,
+                    "touches_frame": bool(data.get("touches_frame")),
+                }
+            )
+
+        if not samples:
+            result[side] = {
+                "quad": fallback_quad.tolist(),
+                "confidence": round(float(fallback.get("confidence", 0.0)), 4),
+                "detected": False,
+                "touches_frame": False,
+                "consensus_count": 0,
+                "consensus_candidate_ids": [],
+                "consensus_outlier_ids": [],
+            }
+            continue
+
+        inlier_indices = _consensus_inlier_indices(
+            samples,
+            float(max_corner_deviation),
+            anchor_ids.get(side),
+        )
+        inliers = [samples[index] for index in inlier_indices]
+        weights = np.asarray(
+            [max(sample["confidence"], 1e-6) for sample in inliers],
+            dtype=np.float64,
+        )
+        quads = np.stack([sample["quad"] for sample in inliers]).astype(np.float64)
+        selected_quad = np.average(quads, axis=0, weights=weights).astype(np.float32)
+        confidence = float(
+            np.average(
+                np.asarray([sample["confidence"] for sample in inliers], dtype=np.float64),
+                weights=weights,
+            )
+        )
+        detected = confidence >= float(min_confidence)
+        if not detected:
+            selected_quad = fallback_quad
+
+        inlier_ids = [sample["candidate_id"] for sample in inliers]
+        all_ids = [sample["candidate_id"] for sample in samples]
+        result[side] = {
+            "quad": selected_quad.tolist(),
+            "confidence": round(confidence, 4),
+            "detected": bool(detected),
+            "touches_frame": bool(
+                detected and any(sample["touches_frame"] for sample in inliers)
+            ),
+            "consensus_count": len(inliers),
+            "consensus_candidate_ids": inlier_ids,
+            "consensus_outlier_ids": [
+                candidate_id for candidate_id in all_ids if candidate_id not in set(inlier_ids)
+            ],
+        }
+
+    result["confidence"] = min(result["left"]["confidence"], result["right"]["confidence"])
+    result["detected"] = result["left"]["detected"] and result["right"]["detected"]
+    result["consensus"] = {
+        "candidate_count": len(detections),
+        "candidate_ids": source_ids,
+    }
+    return result
+
+
 def spread_quad_from_page_quads(result):
     """Build one spread crop from the outer corners of two detected pages.
 
@@ -301,6 +484,8 @@ def draw_page_quads(image, result):
         cv2.polylines(canvas, [quad], True, color, 2, cv2.LINE_AA)
         x, y = quad[0]
         label = f"{side} {data['confidence']:.2f}"
+        if data.get("consensus_count"):
+            label += f" n={data['consensus_count']}"
         if not data["detected"]:
             label += " fallback"
         cv2.putText(
