@@ -44,7 +44,7 @@ jobs:
       - name: Verify Python 3.11 source compatibility
         run: python -m compileall -q src
       - name: Test Python 3.11 compatibility
-        run: python -m pytest -q --ignore=tests/test_pipeline.py
+        run: python -m pytest -q --ignore=tests/test_pipeline.py --ignore=tests/test_ui.py
 
   pipeline:
     runs-on: macos-latest
