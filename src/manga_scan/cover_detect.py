@@ -69,7 +69,14 @@ def _axis_lines(raw_lines, width, height):
     return horizontal, vertical
 
 
-def detect_cover_quad(image, min_confidence=0.62):
+def detect_cover_quad(
+    image,
+    min_confidence=0.62,
+    *,
+    area_range=(0.06, 0.78),
+    aspect_range=(0.35, 1.25),
+    target_aspect=0.72,
+):
     """Find an upright book-cover outline as normalized TL/TR/BR/BL points.
 
     The setup preview has already applied the selected video rotation, so the
@@ -83,6 +90,13 @@ def detect_cover_quad(image, min_confidence=0.62):
         raise ValueError("image must be at least 32x32")
     if not 0 <= float(min_confidence) <= 1:
         raise ValueError("min_confidence must be 0..1")
+    area_min, area_max = map(float, area_range)
+    aspect_min, aspect_max = map(float, aspect_range)
+    target_aspect = float(target_aspect)
+    if not 0 < area_min < area_max <= 1:
+        raise ValueError("area_range must satisfy 0 < min < max <= 1")
+    if not 0 < aspect_min < aspect_max or target_aspect <= 0:
+        raise ValueError("aspect range/target must be positive")
 
     scale = min(1.0, 1000 / max(image.shape[:2]))
     working = (
@@ -135,14 +149,14 @@ def detect_cover_quad(image, min_confidence=0.62):
             ).any():
                 continue
             area_ratio = abs(float(cv2.contourArea(quad))) / image_area
-            if not 0.06 <= area_ratio <= 0.78:
+            if not area_min <= area_ratio <= area_max:
                 continue
             lengths = np.linalg.norm(np.roll(quad, -1, axis=0) - quad, axis=1)
             aspect = float((lengths[0] + lengths[2]) / max(lengths[1] + lengths[3], 1))
-            if not 0.35 <= aspect <= 1.25:
+            if not aspect_min <= aspect <= aspect_max:
                 continue
             area_score = min(area_ratio / 0.3, 1.0)
-            aspect_score = math.exp(-abs(math.log(aspect / 0.72)))
+            aspect_score = math.exp(-abs(math.log(aspect / target_aspect)))
             rank_score = sum(math.exp(-line[3] / 160) for line in (top, bottom, left, right)) / 4
             boundary_lines = sum(
                 (
