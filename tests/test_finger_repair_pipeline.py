@@ -29,18 +29,29 @@ def _repair_metadata(status="complete", coverage=1.0, donor_coverage=1.0):
         "alignment_scores": [0.9312, 0.8876],
         "components": [
             {
-                "candidate_id": 1,
-                "local_score": 0.96,
-                "dx": 2.0,
-                "dy": -1.0,
-                "coverage": 0.58,
-            },
-            {
-                "candidate_id": 2,
-                "local_score": 0.91,
-                "dx": -1.0,
-                "dy": 1.0,
-                "coverage": 0.42,
+                "component_id": 1,
+                "area": 480,
+                "coverage": 1.0,
+                "donors": [
+                    {
+                        "candidate_id": 1,
+                        "method": "local",
+                        "local_score": 0.96,
+                        "dx": 2.0,
+                        "dy": -1.0,
+                        "context_residual": 0.031,
+                        "coverage": 0.58,
+                    },
+                    {
+                        "candidate_id": 2,
+                        "method": "local",
+                        "local_score": 0.91,
+                        "dx": -1.0,
+                        "dy": 1.0,
+                        "context_residual": 0.044,
+                        "coverage": 0.42,
+                    },
+                ],
             },
         ],
         "fallback": {
@@ -161,7 +172,8 @@ def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monke
     assert repair["donor_coverage"] == 1.0
     assert repair["donors"] == [1, 2]
     assert repair["alignment_scores"] == [0.9312, 0.8876]
-    assert [component["candidate_id"] for component in repair["components"]] == [1, 2]
+    assert repair["components"][0]["component_id"] == 1
+    assert [entry["candidate_id"] for entry in repair["components"][0]["donors"]] == [1, 2]
     assert repair["fallback"]["mode"] == "preserve"
     assert repair["target_mask"].endswith("_whole_target.png")
     assert "unresolved_mask" not in repair
@@ -206,7 +218,8 @@ def test_split_output_keeps_components_unresolved_and_multiple_donors(tmp_path, 
     assert repair["donor_coverage"] == 0.62
     assert repair["donors"] == [1, 2]
     assert repair["alignment_scores"] == [0.9312, 0.8876]
-    assert len(repair["components"]) == 2
+    assert len(repair["components"]) == 1
+    assert [entry["candidate_id"] for entry in repair["components"][0]["donors"]] == [1, 2]
     assert repair["target_mask"].endswith("_right_target.png")
     assert repair["unresolved_mask"].endswith("_right_unresolved.png")
     assert repair["components_debug"].endswith("_right_components.json")
@@ -218,10 +231,40 @@ def test_split_output_keeps_components_unresolved_and_multiple_donors(tmp_path, 
     complete = pages[1]
     assert complete["finger_repair"]["status"] == "complete"
     assert complete["finger_repair"]["donors"] == [1, 2]
-    assert len(complete["finger_repair"]["components"]) == 2
+    assert len(complete["finger_repair"]["components"]) == 1
+    assert [
+        entry["candidate_id"]
+        for entry in complete["finger_repair"]["components"][0]["donors"]
+    ] == [1, 2]
     assert "hand_overlap" not in complete["suspect"]
     assert "finger_repair_incomplete" not in complete["suspect"]
     assert "finger_repair_incomplete" in spread["suspect"]
+
+
+def test_legacy_repair_metadata_without_components_remains_compatible(
+    tmp_path,
+    monkeypatch,
+):
+    _, _, manifest, spread = _fixture(tmp_path, monkeypatch, output_layout="spread")
+
+    def fake_repair(target, _target_mask, donors, **_kwargs):
+        assert [donor["candidate_id"] for donor in donors] == [1, 2]
+        metadata = _repair_metadata()
+        metadata.pop("components")
+        return target.copy(), metadata, np.zeros(target.shape[:2], np.uint8)
+
+    monkeypatch.setattr(pipeline, "repair_finger_regions", fake_repair)
+
+    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+    repair = page["finger_repair"]
+
+    assert repair["coverage"] == 1.0
+    assert repair["donor_coverage"] == 1.0
+    assert repair["donors"] == [1, 2]
+    assert repair["alignment_scores"] == [0.9312, 0.8876]
+    assert repair["fallback"]["mode"] == "preserve"
+    assert "components" not in repair
+    assert "components_debug" not in repair
 
 
 @pytest.mark.parametrize(
