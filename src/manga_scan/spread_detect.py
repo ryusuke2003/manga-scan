@@ -25,8 +25,14 @@ def detect_reference_spread(image, min_confidence=0.55):
     if not 0 <= float(min_confidence) <= 1:
         raise ValueError("min_confidence must be 0..1")
 
+    scale = min(1.0, 1000 / max(image.shape[:2]))
+    working = (
+        cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        if scale < 1
+        else image
+    )
     outline = detect_cover_quad(
-        image,
+        working,
         min_confidence=max(0.58, float(min_confidence)),
         area_range=(0.12, 0.96),
         aspect_range=(1.05, 3.2),
@@ -42,38 +48,47 @@ def detect_reference_spread(image, min_confidence=0.55):
             "stage": "outline",
         }
 
-    pages = detect_page_quads(
-        image,
-        outline["roi"],
-        spine_ratio=0.5,
-        min_confidence=float(min_confidence),
-    )
-    confidence = min(float(outline["confidence"]), float(pages["confidence"]))
-    if not pages["detected"]:
+    outline_roi = np.asarray(outline["roi"], dtype=np.float32)
+    center = outline_roi.mean(axis=0)
+    best_failure = None
+    successes = []
+    for expansion in (1.0, 1.04, 1.08, 1.12):
+        prior = np.clip(center + (outline_roi - center) * expansion, 0, 1)
+        try:
+            pages = detect_page_quads(
+                working,
+                prior,
+                spine_ratio=0.5,
+                min_confidence=float(min_confidence),
+            )
+        except ValueError:
+            continue
+        confidence = min(float(outline["confidence"]), float(pages["confidence"]))
+        if best_failure is None or confidence > best_failure[0]:
+            best_failure = (confidence, pages)
+        if not pages["detected"]:
+            continue
+        try:
+            roi = spread_quad_from_page_quads(pages)
+        except ValueError:
+            continue
+        successes.append((confidence, roi, pages))
+
+    if not successes:
+        confidence, pages = best_failure or (0.0, None)
         return {
             "detected": False,
-            "confidence": round(confidence, 4),
+            "confidence": round(float(confidence), 4),
             "roi": None,
             "outline": outline,
             "pages": pages,
-            "stage": "pages",
+            "stage": "pages" if pages is not None else "combined",
         }
 
-    try:
-        roi = spread_quad_from_page_quads(pages)
-    except ValueError:
-        return {
-            "detected": False,
-            "confidence": round(confidence, 4),
-            "roi": None,
-            "outline": outline,
-            "pages": pages,
-            "stage": "combined",
-        }
-
+    confidence, roi, pages = max(successes, key=lambda item: item[0])
     return {
         "detected": True,
-        "confidence": round(confidence, 4),
+        "confidence": round(float(confidence), 4),
         "roi": roi,
         "outline": outline,
         "pages": pages,
