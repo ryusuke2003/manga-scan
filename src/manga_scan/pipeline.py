@@ -381,7 +381,7 @@ def _finger_donor_candidates(spread, side, selected_id):
         overlap = metrics.get("hand_overlap")
         return (
             1.0 if overlap is None else float(overlap),
-            -float(metrics.get("score", 0.0)),
+            -float(metrics.get("selection_score", metrics.get("score", 0.0))),
         )
 
     return sorted(
@@ -587,7 +587,11 @@ def _render_whole_spread(project, manifest, spread, cfg):
 
             def donors():
                 records = sorted(
-                    spread["candidates"], key=lambda c: -c.get("metrics", {}).get("score", 0)
+                    spread["candidates"],
+                    key=lambda c: -c.get("metrics", {}).get(
+                        "selection_score",
+                        c.get("metrics", {}).get("score", 0),
+                    ),
                 )
                 for record in records:
                     if record["id"] == chosen["id"]:
@@ -1161,6 +1165,43 @@ def run(project, roi=None):
                     )
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
+
+                # Candidate scoring v2 is relative to this spread, so the values
+                # only exist after all candidates have been collected. Persist
+                # them back into candidate JSON and the debug CSV for inspection.
+                recent_rows = score_rows[-len(records):]
+                for record, row in zip(records, recent_rows):
+                    relative = record["metrics"].get("relative_quality", {})
+                    row.update(
+                        {
+                            "selection_score": record["metrics"].get("selection_score"),
+                            "relative_sharpness": relative.get("sharpness"),
+                            "relative_motion": relative.get("motion"),
+                            "relative_hand_overlap": relative.get("hand_overlap"),
+                            "relative_glare": relative.get("glare"),
+                            "relative_base_score": relative.get("base_score"),
+                            "glare": record["metrics"].get("glare"),
+                            "sharpness_median": record["metrics"].get("sharpness_median"),
+                            "sharpness_p10": record["metrics"].get("sharpness_p10"),
+                            "sharpness_worst": record["metrics"].get("sharpness_worst"),
+                            "left_selection_score": record["page_metrics"]["left"].get(
+                                "selection_score"
+                            ),
+                            "right_selection_score": record["page_metrics"]["right"].get(
+                                "selection_score"
+                            ),
+                            "left_glare": record["page_metrics"]["left"].get("glare"),
+                            "right_glare": record["page_metrics"]["right"].get("glare"),
+                            "left_sharpness_p10": record["page_metrics"]["left"].get(
+                                "sharpness_p10"
+                            ),
+                            "right_sharpness_p10": record["page_metrics"]["right"].get(
+                                "sharpness_p10"
+                            ),
+                        }
+                    )
+                    write_json(project / Path(record["path"]).with_suffix(".json"), record)
+
                 spread = {
                     "id": spread_id,
                     "start": segment[0].time,
