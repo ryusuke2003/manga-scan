@@ -9,7 +9,7 @@ from manga_scan.dedupe import compare, dhash, ssim
 from manga_scan.hand import overlap_from_landmarks
 from manga_scan.motion import Sample, StableDetector, choose_candidates, motion_score
 from manga_scan.page_detect import refine_quad
-from manga_scan.perspective import validate_roi, warp_roi
+from manga_scan.perspective import rotate_roi, validate_roi, warp_roi
 from manga_scan.score import composite_score, sharpness, suspect_reasons
 from manga_scan.split import (
     auto_dewarp_page,
@@ -18,6 +18,7 @@ from manga_scan.split import (
     enhance_page,
     estimate_curvature,
     normalize_white_background,
+    rotate_image,
     split_spread,
 )
 
@@ -141,6 +142,31 @@ def test_split_no_pixels_lost_on_odd_width():
     pages, spine = split_spread(image)
     assert spine in (79, 80)
     np.testing.assert_array_equal(np.concatenate([pages["left"], pages["right"]], axis=1), image)
+
+
+def test_rotate_before_split_uses_visual_left_and_right():
+    upright = np.empty((60, 120, 3), np.uint8)
+    upright[:, :60] = (20, 40, 220)
+    upright[:, 60:] = (220, 80, 20)
+    sideways = np.rot90(upright, 1).copy()
+
+    oriented = rotate_image(sideways, 90)
+    pages, spine = split_spread(oriented)
+
+    assert oriented.shape == upright.shape
+    assert spine == 60
+    np.testing.assert_array_equal(pages["left"][30, 30], (20, 40, 220))
+    np.testing.assert_array_equal(pages["right"][30, 30], (220, 80, 20))
+
+
+def test_rotate_roi_keeps_tl_tr_br_bl_order():
+    roi = [[0.1, 0.2], [0.8, 0.2], [0.8, 0.9], [0.1, 0.9]]
+    rotated = rotate_roi(roi, 90)
+    np.testing.assert_allclose(
+        rotated,
+        [[0.1, 0.1], [0.8, 0.1], [0.8, 0.8], [0.1, 0.8]],
+        atol=1e-6,
+    )
 
 
 def test_auto_spine_and_correction():
