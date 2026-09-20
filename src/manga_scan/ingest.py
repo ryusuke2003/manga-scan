@@ -2,8 +2,12 @@ import math
 import shutil
 from pathlib import Path
 
+import cv2
+
 from .config import Config
 from .perspective import validate_roi
+from .rotation_detection import detect_video_rotation
+from .split import rotate_image
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, probe
 
@@ -15,6 +19,24 @@ def create_project(video, project, config=None, copy_source=False):
     if project.exists() and any(project.iterdir()):
         raise ValueError("Project directory must be empty; choose a new directory")
     first = extract_frame(metadata["path"])
+    if config.auto_rotation:
+        rotation_detection = detect_video_rotation(
+            metadata["path"],
+            metadata,
+            first,
+            hwaccel=config.hwaccel,
+        )
+        config.rotation = rotation_detection["rotation"]
+    else:
+        rotation_detection = {
+            "rotation": config.rotation,
+            "confidence": 1.0,
+            "source": "manual",
+            "scores": {str(config.rotation): 1.0},
+            "sample_times": [0.0],
+        }
+    config.validate()
+    rotation_detection["confirmed"] = not config.auto_rotation
     project.mkdir(parents=True, exist_ok=True)
     for folder in ("source", "frames_lowres", "candidates", "selected", "pages", "debug", "output"):
         (project / folder).mkdir(exist_ok=True)
@@ -27,26 +49,37 @@ def create_project(video, project, config=None, copy_source=False):
     config.hand_model = str(Path(config.hand_model).expanduser().resolve())
     metadata["display_width"], metadata["display_height"] = first.shape[1], first.shape[0]
     save_image(project / "source/first_frame.png", first)
+    save_image(
+        project / "source/first_frame_preview.png",
+        rotate_image(first, config.rotation),
+    )
     warnings = (
         ["HDR input: MVP outputs 8-bit SDR without calibrated tone mapping; prefer SDR recording"]
         if metadata["hdr"]
         else []
     )
+    if config.auto_rotation and rotation_detection["confidence"] < 0.65:
+        warnings.append(
+            "画像向きの自動判定に自信がありません。プレビューを確認し、必要なら向きを変更してください"
+        )
     manifest = {
         "version": 2,
         "source": source,
         "metadata": metadata,
         "config": config.to_dict(),
+        "rotation_detection": rotation_detection,
         "roi": None,
         "cover": {
             "status": "pending",
             "time": 0.0,
             "frame": "source/first_frame.png",
+            "preview": "source/first_frame_preview.png",
             "roi": None,
         },
         "reference": {
             "time": 0.0,
             "frame": "source/first_frame.png",
+            "preview": "source/first_frame_preview.png",
             "confirmed": False,
         },
         "status": "ready",
@@ -83,11 +116,18 @@ def set_setup_frame(project, kind, time, confirm=False):
         cfg = Config.from_dict(manifest["config"])
         image = extract_frame(manifest["source"], timestamp, hwaccel=cfg.hwaccel)
         path = f"source/{kind}_frame.png"
+        preview_path = f"source/{kind}_preview.png"
         save_image(project / path, image)
+        save_image(project / preview_path, rotate_image(image, cfg.rotation))
 
         if kind == "cover":
             cover = manifest.setdefault("cover", {})
-            cover.update(status="frame_selected" if confirm else "pending", time=timestamp, frame=path)
+            cover.update(
+                status="frame_selected" if confirm else "pending",
+                time=timestamp,
+                frame=path,
+                preview=preview_path,
+            )
             cover["roi"] = None
             manifest["message"] = (
                 "表紙の外周を4点で指定してください"
@@ -96,13 +136,59 @@ def set_setup_frame(project, kind, time, confirm=False):
             )
         else:
             reference = manifest.setdefault("reference", {})
-            reference.update(time=timestamp, frame=path, confirmed=bool(confirm))
+            reference.update(
+                time=timestamp,
+                frame=path,
+                preview=preview_path,
+                confirmed=bool(confirm),
+            )
             manifest["roi"] = None
             manifest["message"] = (
                 "見開きの外周を4点で指定してください"
                 if confirm
                 else "基準にする見開きフレームを選んでください"
             )
+        save_manifest(project, manifest)
+        return manifest
+
+
+def _refresh_setup_previews(project, manifest, rotation):
+    for key in ("cover", "reference"):
+        item = manifest.get(key) or {}
+        frame_path = item.get("frame")
+        if not frame_path:
+            continue
+        frame = cv2.imread(str(project / frame_path))
+        if frame is None:
+            continue
+        preview_path = item.get("preview") or f"source/{key}_preview.png"
+        save_image(project / preview_path, rotate_image(frame, rotation))
+        item["preview"] = preview_path
+
+
+def set_rotation(project, rotation):
+    rotation = int(rotation)
+    if rotation not in (0, 90, 180, 270):
+        raise ValueError("rotation must be 0, 90, 180, or 270")
+    project = Path(project).resolve()
+    with project_lock(project):
+        manifest = read_manifest(project)
+        if manifest["status"] == "complete":
+            raise ValueError("Project already processed")
+        cfg = Config.from_dict(manifest["config"])
+        cfg.rotation = rotation
+        cfg.auto_rotation = False
+        cfg.validate()
+        manifest["config"] = cfg.to_dict()
+        detection = manifest.setdefault("rotation_detection", {})
+        detection.update(
+            rotation=rotation,
+            confidence=1.0,
+            source="manual",
+            confirmed=True,
+        )
+        _refresh_setup_previews(project, manifest, rotation)
+        write_json(project / "config.resolved.json", cfg.to_dict())
         save_manifest(project, manifest)
         return manifest
 
