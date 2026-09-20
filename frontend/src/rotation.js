@@ -8,5 +8,5 @@ export function rotateNormalizedRoi(points, rotation = 0) {
     return [y, 1 - x];
   });
   const shift = rotation / 90;
-  return rotated.slice(shift).concat(rotated.slice(0, shift));
+  return rotated.slice(-shift).concat(rotated.slice(0, -shift));
 }
