@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .background_fill import detected_spread_mask, fill_page_background
+from . import pipeline_render_helpers as render_helpers
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_cbz, export_pdf
@@ -18,14 +18,8 @@ from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
-from .page_contour import (
-    consensus_page_quads,
-    detect_page_quads,
-    draw_page_quads,
-    spread_quad_from_page_quads,
-)
+from .page_contour import detect_page_quads
 from .page_detect import refine_quad
-from .page_warp import warp_detected_pages
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
@@ -34,15 +28,25 @@ from .split import (
     dewarp_debug_grid,
     enhance_page,
     rotate_image,
-    spine_position,
     split_spread,
 )
+from .spread_render import render_whole_spread as _render_whole_spread_impl
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
+_finger_donor_candidates = render_helpers._finger_donor_candidates
+_page_override = render_helpers._page_override
+_page_render_settings = render_helpers._page_render_settings
+_persist_finger_repair_component_debug = render_helpers._persist_finger_repair_component_debug
+_union_occlusion_masks = render_helpers._union_occlusion_masks
+_whole_spread_geometry_impl = render_helpers._whole_spread_geometry
+candidate_page_glare_mask = render_helpers.candidate_page_glare_mask
+_candidate_page_hand_mask_impl = render_helpers.candidate_page_hand_mask
+_detect_spread_page_consensus_impl = render_helpers.detect_spread_page_consensus
+_rectify_spread_pages_impl = render_helpers.rectify_spread_pages
+
 LOG = logging.getLogger("manga_scan")
 
-PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
 
 
 def update(project, manifest, progress, message):
@@ -357,42 +361,12 @@ def render_cover(project, manifest):
 
 
 def detect_spread_page_consensus(project, spread, cfg, anchor_ids=None):
-    """Estimate page quads from all saved candidates for one spread.
-
-    Candidate preview frames are already analysis-resolution images, so this
-    adds no extra video seeks. Each frame is evaluated independently and the
-    page_contour module rejects geometric outliers before combining corners.
-    """
-
-    detections = []
-    overrides = spread.get("roi_overrides", {})
-    for record in spread.get("candidates", []):
-        path = record.get("path")
-        if not path:
-            continue
-        image = cv2.imread(str(project / path), cv2.IMREAD_COLOR)
-        if image is None:
-            continue
-        upright = rotate_image(image, cfg.rotation)
-        override = overrides.get(str(record["id"]))
-        source_roi = override if override is not None else record["roi"]
-        roi = rotate_roi(source_roi, cfg.rotation).tolist()
-        detection = detect_page_quads(
-            upright,
-            roi,
-            spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
-            min_confidence=cfg.page_contour_min_confidence,
-        )
-        detection["candidate_id"] = record["id"]
-        detections.append(detection)
-
-    if not detections:
-        return None
-    return consensus_page_quads(
-        detections,
-        min_confidence=cfg.page_contour_min_confidence,
-        max_corner_deviation=PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION,
+    return _detect_spread_page_consensus_impl(
+        project,
+        spread,
+        cfg,
         anchor_ids=anchor_ids,
+        detect_page_quads_fn=detect_page_quads,
     )
 
 
@@ -407,675 +381,54 @@ def rectify_spread_pages(
     consensus_sides=None,
     manual_sides=None,
 ):
-    """Choose per-page perspective correction or the legacy spread fallback."""
-
-    ratio = spread.get("spine_ratio", cfg.spine_ratio)
-    manual_sides = list(manual_sides or [])
-    force_manual_page = any(
-        _page_override(spread, side).get("page_quad_mode") == "manual"
-        for side in manual_sides
+    return _rectify_spread_pages_impl(
+        project,
+        image,
+        rectified,
+        chosen_roi,
+        spread,
+        cfg,
+        page_detection=page_detection,
+        consensus_sides=consensus_sides,
+        manual_sides=manual_sides,
+        detect_page_quads_fn=detect_page_quads,
     )
-    if (
-        cfg.perspective_mode == "per_page" or force_manual_page
-    ) and (not spread.get("manual_roi") or force_manual_page):
-        detection_image = image
-        if image.shape[1] > cfg.analysis_width:
-            scale = cfg.analysis_width / image.shape[1]
-            detection_image = cv2.resize(
-                image,
-                (cfg.analysis_width, max(2, round(image.shape[0] * scale))),
-                interpolation=cv2.INTER_AREA,
-            )
-        detection = None
-        if page_detection is None or consensus_sides:
-            detection = detect_page_quads(
-                detection_image,
-                chosen_roi,
-                spine_ratio=ratio,
-                min_confidence=cfg.page_contour_min_confidence,
-            )
-        if page_detection is not None:
-            if consensus_sides:
-                detection = dict(detection)
-                for side in consensus_sides:
-                    detection[side] = page_detection[side]
-                detection["confidence"] = min(
-                    detection["left"]["confidence"],
-                    detection["right"]["confidence"],
-                )
-                detection["detected"] = (
-                    detection["left"]["detected"] and detection["right"]["detected"]
-                )
-                detection["consensus"] = page_detection.get("consensus", {})
-            else:
-                detection = page_detection
-        detection = _apply_manual_page_quads(detection, spread, manual_sides)
-        spread["page_contours"] = detection
-        debug_path = f"debug/page_contours/{spread['id']}.jpg"
-        save_image(project / debug_path, draw_page_quads(image, detection))
-        spread["page_contour_debug"] = debug_path
-
-        if detection["detected"] or detection.get("manual_sides"):
-            spread["spine_px"] = spine_position(rectified, ratio, cfg.split_mode)
-            warped = warp_detected_pages(image, detection)
-            if force_manual_page and cfg.perspective_mode != "per_page":
-                fallback_sides, spine = split_spread(
-                    rectified,
-                    ratio,
-                    cfg.split_mode,
-                    cfg.gutter_fraction,
-                )
-                spread["spine_px"] = spine
-                applied_manual_sides = [
-                    side
-                    for side in manual_sides
-                    if _page_override(spread, side).get("page_quad_mode") == "manual"
-                ]
-                for side in applied_manual_sides:
-                    fallback_sides[side] = warped[side]
-                spread["perspective_mode_used"] = "mixed_manual"
-                spread["manual_page_sides"] = applied_manual_sides
-                return fallback_sides
-
-            spread["perspective_mode_used"] = "per_page"
-            spread.pop("manual_page_sides", None)
-            return warped
-
-        spread["perspective_mode_used"] = "spread_fallback"
-        spread.pop("manual_page_sides", None)
-        extra = spread.setdefault("extra_suspect", [])
-        if "page_contour_low_confidence" not in extra:
-            extra.append("page_contour_low_confidence")
-    else:
-        spread["perspective_mode_used"] = "spread"
-        spread.pop("manual_page_sides", None)
-        spread.pop("page_contours", None)
-        spread.pop("page_contour_debug", None)
-
-    sides, spine = split_spread(rectified, ratio, cfg.split_mode, cfg.gutter_fraction)
-    spread["spine_px"] = spine
-    return sides
 
 
 def candidate_page_hand_mask(project, data, side, cfg):
-    chosen = data["chosen"]
-    mask_path = chosen.get("hand_mask")
-    if not mask_path:
-        return None
-    mask = cv2.imread(str(project / mask_path), cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        return None
-
-    source_height, source_width = data["source_frame_shape"][:2]
-    full_mask = cv2.resize(
-        mask,
-        (source_width, source_height),
-        interpolation=cv2.INTER_NEAREST,
+    return _candidate_page_hand_mask_impl(
+        project,
+        data,
+        side,
+        cfg,
+        boundary_finger_mask_fn=boundary_finger_mask,
     )
-    rotated_mask = rotate_image(full_mask, cfg.rotation)
-    state = data["state"]
-
-    def supplement(page_mask):
-        # Re-evaluate the final page boundary, including newly recovered pixels
-        # outside an older candidate's ROI. Saved masks alone miss those fingers.
-        page = data["sides"][side]
-        extra = boundary_finger_mask(page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding)
-        return page_mask | extra
-
-    perspective_mode_used = state.get("perspective_mode_used")
-    page_uses_detected_quad = (
-        perspective_mode_used == "per_page"
-        or (
-            perspective_mode_used == "mixed_manual"
-            and side in set(state.get("manual_page_sides", []))
-        )
-    )
-    if (
-        page_uses_detected_quad
-        and (state.get("page_contours") or {}).get("detected")
-    ):
-        output_sizes = {
-            name: (page.shape[1], page.shape[0])
-            for name, page in data["sides"].items()
-        }
-        return supplement(warp_detected_pages(
-            rotated_mask,
-            state["page_contours"],
-            output_sizes=output_sizes,
-            interpolation=cv2.INTER_NEAREST,
-        )[side])
-
-    rectified_mask = rotate_image(
-        warp_roi(
-            full_mask,
-            chosen["roi"],
-            interpolation=cv2.INTER_NEAREST,
-        ),
-        cfg.rotation,
-    )
-    spine = state.get("spine_px")
-    if spine is None:
-        spine = spine_position(
-            data["rectified"],
-            state.get("spine_ratio", cfg.spine_ratio),
-            cfg.split_mode,
-        )
-    gutter = round(rectified_mask.shape[1] * cfg.gutter_fraction / 2)
-    left_end = max(1, spine - gutter)
-    right_start = min(rectified_mask.shape[1] - 1, spine + gutter)
-    return supplement(
-        rectified_mask[:, :left_end]
-        if side == "left"
-        else rectified_mask[:, right_start:]
-    )
-
-
-def _union_occlusion_masks(*masks):
-    """Return a 0/255 union mask while preserving the existing mask contract."""
-    available = [mask for mask in masks if mask is not None]
-    if not available:
-        return None
-    shape = available[0].shape[:2]
-    combined = np.zeros(shape, np.uint8)
-    for mask in available:
-        if mask.shape[:2] != shape:
-            mask = cv2.resize(
-                mask,
-                (shape[1], shape[0]),
-                interpolation=cv2.INTER_NEAREST,
-            )
-        combined[mask > 127] = 255
-    return combined
-
-
-def candidate_page_glare_mask(data, side, cfg):
-    """Detect glare in final page coordinates used by repair alignment."""
-    if not cfg.glare_repair:
-        return None
-    return detect_glare_mask(data["sides"][side])
-
-
-def _page_override(spread, side):
-    overrides = spread.get("page_overrides", {})
-    override = overrides.get(side, {})
-    return override if isinstance(override, dict) else {}
-
-
-def _page_render_settings(spread, side, cfg):
-    """Resolve project settings plus optional page-level Review overrides."""
-
-    override = _page_override(spread, side)
-    dewarp_override = override.get("dewarp")
-    if dewarp_override is None:
-        dewarp_enabled = (
-            cfg.dewarp_mode != "off"
-            and side not in set(spread.get("dewarp_disabled_sides", []))
-        )
-    else:
-        dewarp_enabled = bool(dewarp_override)
-
-    dewarp_mode = cfg.dewarp_mode if cfg.dewarp_mode != "off" else "auto"
-    if not dewarp_enabled:
-        dewarp_mode = "off"
-
-    manual_quad = override.get("manual_quad")
-    page_quad_mode = (
-        "manual"
-        if override.get("page_quad_mode") == "manual" and manual_quad is not None
-        else "auto"
-    )
-    return {
-        "dewarp": bool(dewarp_enabled),
-        "dewarp_mode": dewarp_mode,
-        "illumination_correction": bool(
-            override.get("illumination_correction", cfg.illumination_correction)
-        ),
-        "white_normalization": bool(
-            override.get("white_normalization", cfg.white_normalization)
-        ),
-        "page_quad_mode": page_quad_mode,
-        "manual_quad": manual_quad if page_quad_mode == "manual" else None,
-    }
-
-
-def _apply_manual_page_quads(detection, spread, sides=None):
-    """Overlay validated page-level manual quads on automatic detection."""
-
-    if detection is None:
-        return detection
-    active_sides = set(sides or ("left", "right"))
-    updated = dict(detection)
-    manual_sides = []
-    for side in ("left", "right"):
-        if side not in active_sides:
-            continue
-        override = _page_override(spread, side)
-        if override.get("page_quad_mode") != "manual":
-            continue
-        quad = validate_roi(override.get("manual_quad")).tolist()
-        updated[side] = {
-            **updated.get(side, {}),
-            "quad": quad,
-            "confidence": 1.0,
-            "detected": True,
-            "touches_frame": any(
-                value <= 0.002 or value >= 0.998
-                for point in quad
-                for value in point
-            ),
-            "manual": True,
-        }
-        manual_sides.append(side)
-
-    if manual_sides:
-        updated["confidence"] = min(
-            float(updated["left"].get("confidence", 0.0)),
-            float(updated["right"].get("confidence", 0.0)),
-        )
-        updated["detected"] = bool(
-            updated["left"].get("detected") and updated["right"].get("detected")
-        )
-        updated["manual_sides"] = manual_sides
-    return updated
-
-
-def _finger_donor_candidates(spread, side, selected_id):
-    def rank(candidate):
-        metrics = candidate.get("page_metrics", {}).get(side, candidate.get("metrics", {}))
-        overlap = metrics.get("hand_overlap")
-        glare_overlap = float(metrics.get("glare_overlap", metrics.get("glare", 0.0)) or 0.0)
-        return (
-            1.0 if overlap is None else float(overlap),
-            glare_overlap,
-            -float(metrics.get("selection_score", metrics.get("score", 0.0))),
-        )
-
-    return sorted(
-        (candidate for candidate in spread["candidates"] if candidate["id"] != selected_id),
-        key=rank,
-    )
-
-
-def _persist_finger_repair_component_debug(project, repair, stem):
-    """Persist optional local-repair metadata without changing the core return contract."""
-    if not isinstance(repair, dict) or "components" not in repair:
-        return repair
-    components = repair.get("components")
-    if not components:
-        return repair
-
-    local_components = []
-    applied_component_ids = set()
-    max_shift = 0.0
-    for component in components:
-        if not isinstance(component, dict):
-            continue
-        component_id = component.get("component_id")
-        for donor in component.get("donors", []):
-            if not isinstance(donor, dict) or donor.get("method") != "local":
-                continue
-            dx = float(donor.get("dx", 0.0))
-            dy = float(donor.get("dy", 0.0))
-            local_components.append(
-                {
-                    "component_id": component_id,
-                    "candidate_id": donor.get("candidate_id"),
-                    "local_score": donor.get("local_score"),
-                    "dx": dx,
-                    "dy": dy,
-                    "coverage": donor.get("coverage"),
-                }
-            )
-            applied_component_ids.add(component_id)
-            max_shift = max(max_shift, math.hypot(dx, dy))
-
-    if local_components and "local_alignment" not in repair:
-        repair["local_alignment"] = {
-            "component_count": len(applied_component_ids),
-            "max_shift_px": round(max_shift, 3),
-            "components": local_components,
-        }
-
-    if repair.get("components_debug"):
-        return repair
-    path = f"debug/finger_repair/{stem}_components.json"
-    payload = {"components": components}
-    if repair.get("local_alignment"):
-        payload["local_alignment"] = repair["local_alignment"]
-    for key in ("component_count", "rejected_donors", "rejection_counts"):
-        if key in repair:
-            payload[key] = repair[key]
-    write_json(project / path, payload)
-    repair["components_debug"] = path
-    return repair
 
 
 def _whole_spread_geometry(source, record, spread, cfg, page_detection=None):
-    """Resolve one upright spread crop from manual or per-page outer corners."""
-    upright = rotate_image(source, cfg.rotation)
-    override = spread.get("roi_overrides", {}).get(str(record["id"]))
-    reference = rotate_roi(override or record["roi"], cfg.rotation).tolist()
-    if override is not None:
-        return upright, reference, {
-            "status": "manual",
-            "candidate_id": record["id"],
-            "roi": reference,
-        }
-
-    crop = {
-        "status": "fallback",
-        "candidate_id": record["id"],
-        "roi": reference,
-        "confidence": 0.0,
-    }
-    if not cfg.refine_quad:
-        crop["status"] = "reference"
-        return upright, reference, crop
-
-    detection_image = upright
-    if upright.shape[1] > cfg.analysis_width:
-        scale = cfg.analysis_width / upright.shape[1]
-        detection_image = cv2.resize(
-            upright,
-            (cfg.analysis_width, max(2, round(upright.shape[0] * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
-    detection = page_detection
-    if detection is None:
-        detection = detect_page_quads(
-            detection_image,
-            reference,
-            spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
-            min_confidence=cfg.page_contour_min_confidence,
-        )
-    crop["detection"] = detection
-    crop["confidence"] = detection["confidence"]
-    if detection["detected"]:
-        try:
-            crop["roi"] = spread_quad_from_page_quads(detection)
-        except ValueError:
-            crop["status"] = "fallback"
-        else:
-            crop["status"] = "auto_pages"
-    return upright, crop["roi"], crop
+    return _whole_spread_geometry_impl(
+        source,
+        record,
+        spread,
+        cfg,
+        page_detection=page_detection,
+        detect_page_quads_fn=detect_page_quads,
+    )
 
 
 def _render_whole_spread(project, manifest, spread, cfg):
-    """Render one spread, using both page outlines without cutting the gutter."""
-    for key in (
-        "page_contours_by_side",
-        "page_contour_debug_by_side",
-        "perspective_mode_used_by_side",
-        "spine_px_by_side",
-    ):
-        spread.pop(key, None)
-    selected_id = spread["selected"]
-    page_consensus = (
-        detect_spread_page_consensus(
-            project,
-            spread,
-            cfg,
-            {"left": selected_id, "right": selected_id},
-        )
-        if cfg.refine_quad
-        else None
+    return _render_whole_spread_impl(
+        project,
+        manifest,
+        spread,
+        cfg,
+        detect_spread_page_consensus_fn=detect_spread_page_consensus,
+        candidate_by_id_fn=_candidate_by_id,
+        whole_spread_geometry_fn=_whole_spread_geometry,
+        extract_frame_fn=extract_frame,
+        boundary_finger_mask_fn=boundary_finger_mask,
+        repair_finger_regions_fn=repair_finger_regions,
     )
-    cache = {}
-
-    def load(candidate_id):
-        if candidate_id in cache:
-            return cache[candidate_id]
-        record = _candidate_by_id(spread, candidate_id)
-        source = extract_frame(manifest["source"], record["time"], hwaccel=cfg.hwaccel)
-        upright, roi, crop = _whole_spread_geometry(
-            source,
-            record,
-            spread,
-            cfg,
-            page_detection=page_consensus if candidate_id == selected_id else None,
-        )
-        page = warp_roi(upright, roi)
-        background_mask = None
-        detection = crop.get("detection")
-        if crop.get("status") == "auto_pages" and detection and detection.get("detected"):
-            detected_mask = detected_spread_mask(upright.shape, detection)
-            background_mask = warp_roi(
-                detected_mask,
-                roi,
-                interpolation=cv2.INTER_NEAREST,
-            )
-        hand_mask = None
-        if cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
-            saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
-            if saved is not None:
-                saved = cv2.resize(
-                    saved, (source.shape[1], source.shape[0]), interpolation=cv2.INTER_NEAREST
-                )
-                upright_mask = rotate_image(saved, cfg.rotation)
-                hand_mask = warp_roi(
-                    upright_mask, roi, interpolation=cv2.INTER_NEAREST
-                )
-                hand_mask |= boundary_finger_mask(
-                    page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding
-                )
-        glare_mask = detect_glare_mask(page) if cfg.glare_repair else None
-        repair_hand_mask = hand_mask if cfg.finger_repair else None
-        occlusion_mask = _union_occlusion_masks(repair_hand_mask, glare_mask)
-        cache[candidate_id] = {
-            "page": page,
-            "mask": occlusion_mask,
-            "hand_mask": hand_mask,
-            "glare_mask": glare_mask,
-            "crop": crop,
-            "upright": upright,
-            "background_mask": background_mask,
-        }
-        return cache[candidate_id]
-
-    chosen = _candidate_by_id(spread, spread["selected"])
-    selected = load(chosen["id"])
-    page, mask = selected["page"], selected["mask"]
-    hand_mask = selected.get("hand_mask")
-    glare_mask = selected.get("glare_mask")
-    crop = selected["crop"]
-    spread["whole_spread_crop"] = {key: value for key, value in crop.items() if key != "detection"}
-    detection = crop.get("detection")
-    if detection is not None:
-        spread["page_contours"] = detection
-        debug_path = f"debug/page_contours/{spread['id']}_whole.jpg"
-        save_image(project / debug_path, draw_page_quads(selected["upright"], detection))
-        spread["page_contour_debug"] = debug_path
-    else:
-        spread.pop("page_contours", None)
-        spread.pop("page_contour_debug", None)
-    source_path = f"selected/{spread['id']}.png"
-    save_image(project / source_path, page)
-    spread["path"] = source_path
-    spread["perspective_mode_used"] = f"spread_{crop['status']}"
-    repair = {"status": "disabled", "coverage": 0.0, "donors": []}
-    if cfg.finger_repair or cfg.glare_repair:
-        if mask is None:
-            repair = {"status": "unavailable", "coverage": 0.0, "donors": []}
-        elif not np.any(mask > 127):
-            repair = {
-                "status": "clean" if cfg.finger_repair else "disabled",
-                "coverage": 1.0 if cfg.finger_repair else 0.0,
-                "donors": [],
-                "occlusion_kinds": [],
-            }
-        else:
-
-            def donor_rank(record):
-                metrics = record.get("metrics", {})
-                overlap = metrics.get("hand_overlap")
-                glare = float(metrics.get("glare_overlap", metrics.get("glare", 0.0)) or 0.0)
-                return (
-                    1.0 if overlap is None else float(overlap),
-                    glare,
-                    -float(metrics.get("selection_score", metrics.get("score", 0.0))),
-                )
-
-            def donors():
-                records = sorted(spread["candidates"], key=donor_rank)
-                for record in records:
-                    if record["id"] == chosen["id"]:
-                        continue
-                    donor = load(record["id"])
-                    if donor["mask"] is not None:
-                        yield {
-                            "candidate_id": record["id"],
-                            "image": donor["page"],
-                            "mask": donor["mask"],
-                        }
-
-            # repair_finger_regions remains the compatibility name; internally
-            # it delegates to the generalized occlusion repair engine.
-            page, repair, unresolved = repair_finger_regions(
-                page,
-                mask,
-                donors(),
-                min_coverage=cfg.finger_repair_min_coverage,
-                fallback=cfg.finger_repair_fallback,
-            )
-            repair["occlusion_kinds"] = [
-                kind
-                for kind, kind_mask in (
-                    ("finger", hand_mask if cfg.finger_repair else None),
-                    ("glare", glare_mask),
-                )
-                if kind_mask is not None and np.any(kind_mask > 127)
-            ]
-            if np.any(mask):
-                repair["target_mask"] = f"debug/finger_repair/{spread['id']}_whole_target.png"
-                save_image(project / repair["target_mask"], mask)
-            if glare_mask is not None and np.any(glare_mask > 127):
-                repair["glare_mask"] = f"debug/finger_repair/{spread['id']}_whole_glare.png"
-                save_image(project / repair["glare_mask"], glare_mask)
-            if np.any(unresolved):
-                repair["unresolved_mask"] = (
-                    f"debug/finger_repair/{spread['id']}_whole_unresolved.png"
-                )
-                save_image(project / repair["unresolved_mask"], unresolved)
-            repair = _persist_finger_repair_component_debug(
-                project,
-                repair,
-                f"{spread['id']}_whole",
-            )
-
-    background_fill = {
-        "mode": cfg.page_background_fill,
-        "status": "preserve" if cfg.page_background_fill == "preserve" else "unavailable",
-        "applied": False,
-        "filled_fraction": 0.0,
-        "fill_color": None,
-    }
-    background_mask = selected.get("background_mask")
-    if cfg.page_background_fill != "preserve" and background_mask is not None:
-        page, background_fill = fill_page_background(
-            page,
-            background_mask,
-            mode=cfg.page_background_fill,
-            paper_target=cfg.white_target,
-        )
-        background_fill["status"] = "applied" if background_fill["applied"] else "not_needed"
-        background_fill["confidence"] = crop.get("confidence", 0.0)
-        background_fill["mask"] = f"debug/background_fill/{spread['id']}_page_mask.png"
-        save_image(project / background_fill["mask"], background_mask)
-
-    # Single-page spine dewarping would distort the middle of a full spread.
-    render_settings = _page_render_settings(spread, "spread", cfg)
-    qa_before_enhance = page.copy()
-    page = enhance_page(
-        page,
-        grayscale=cfg.grayscale,
-        contrast=cfg.contrast,
-        illumination_correction=render_settings["illumination_correction"],
-        illumination_strength=cfg.illumination_strength,
-        white_normalization=render_settings["white_normalization"],
-        white_target=cfg.white_target,
-        white_strength=cfg.white_strength,
-    )
-    background_fill_area = None
-    if background_fill.get("applied") and background_mask is not None:
-        background_fill_area = float(np.mean(background_mask <= 127))
-    final_quality = final_quality_checks(
-        page,
-        before_enhance=qa_before_enhance,
-        finger_repair=repair,
-        background_fill_fraction=background_fill_area,
-        white_normalization=render_settings["white_normalization"],
-    )
-    ext = "png" if cfg.image_format == "png" else "jpg"
-    path = f"pages/{spread['id']}_whole.{ext}"
-    preview = f"pages/{spread['id']}_whole_thumb.jpg"
-    save_image(project / path, page, cfg.jpeg_quality)
-    h, w = page.shape[:2]
-    scale = min(1, 720 / max(h, w))
-    save_image(
-        project / preview, cv2.resize(page, (max(1, round(w * scale)), max(1, round(h * scale))))
-    )
-    suspect = list(
-        dict.fromkeys(
-            chosen.get("suspect", [])
-            + [
-                reason
-                for reason in spread.get("extra_suspect", [])
-                if reason != "page_contour_low_confidence"
-            ]
-        )
-    )
-    if crop["status"] == "fallback":
-        suspect.append("page_contour_low_confidence")
-    if detection and any(detection[side]["touches_frame"] for side in ("left", "right")):
-        suspect.append("source_frame_clipped")
-    if hand_mask is not None:
-        suspect = [reason for reason in suspect if reason != "hand_overlap"]
-        final_hand_overlap = float(np.mean(hand_mask > 127))
-        if final_hand_overlap >= cfg.suspect_hand_overlap:
-            suspect.append("hand_overlap")
-    if glare_mask is not None:
-        suspect = [reason for reason in suspect if reason != "glare_overlap"]
-        final_glare_overlap = float(np.mean(glare_mask > 127))
-        if final_glare_overlap >= cfg.suspect_glare_overlap:
-            suspect.append("glare_overlap")
-    if repair["status"] in ("clean", "complete"):
-        if cfg.finger_repair:
-            suspect = [reason for reason in suspect if reason != "hand_overlap"]
-        if cfg.glare_repair:
-            suspect = [reason for reason in suspect if reason != "glare_overlap"]
-    elif repair["status"] in ("incomplete", "unavailable"):
-        suspect.append("occlusion_repair_incomplete")
-        if cfg.finger_repair:
-            suspect.append("finger_repair_incomplete")
-    suspect = list(dict.fromkeys(suspect + final_quality["reasons"]))
-    spread["suspect"] = suspect
-    manifest["pdf_stale"] = True
-    return [
-        {
-            "id": f"{spread['id']}_whole",
-            "spread_id": spread["id"],
-            "side": "spread",
-            "path": path,
-            "preview": preview,
-            "source": source_path,
-            "candidate_id": chosen["id"],
-            "candidate_time": chosen["time"],
-            "enabled": not bool(spread.get("duplicate_of")),
-            "suspect": suspect,
-            "finger_repair": repair,
-            "background_fill": background_fill,
-            "final_quality": final_quality,
-            "crop": spread["whole_spread_crop"],
-            "dewarp": {"mode": "off", "status": "off", "applied": False},
-            "render_settings": {
-                **render_settings,
-                "dewarp": False,
-                "dewarp_mode": "off",
-                "page_quad_mode": "auto",
-                "manual_quad": None,
-            },
-        }
-    ]
 
 
 def render_spread(project, manifest, spread):
