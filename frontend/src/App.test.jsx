@@ -163,7 +163,7 @@ it('shows PDF generation instead of stale 100% scan progress during export', () 
 
   render(<App />);
 
-  expect(screen.getByText('PDFを生成中…')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'PDF生成中…' }).disabled).toBe(true);
+  expect(screen.getByText('PDF / CBZを生成中…')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'PDF / CBZ生成中…' }).disabled).toBe(true);
   expect(screen.queryByText('処理中…')).toBeNull();
 });

@@ -12,7 +12,7 @@ import numpy as np
 from .background_fill import detected_spread_mask, fill_page_background
 from .config import Config
 from .dedupe import compare
-from .export import contact_sheets, export_pdf
+from .export import contact_sheets, export_cbz, export_pdf
 from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_quality_checks
 from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
@@ -1390,15 +1390,40 @@ def _refresh_adjacent_final_quality(project, manifest, cfg):
         previous_image = image
 
 
-def build_pdf(project, manifest):
+def build_exports(project, manifest):
     cfg = Config.from_dict(manifest["config"])
     _refresh_adjacent_final_quality(project, manifest, cfg)
     paths = [project / p["path"] for p in manifest["pages"] if p["enabled"]]
-    export_pdf(paths, project / "output/manga.pdf", cfg.pdf_dpi, cfg.image_format, cfg.jpeg_quality)
+    output = project / "output"
+    pdf = output / "manga.pdf"
+    cbz = output / "manga.cbz"
+    next_pdf = output / "manga.next.pdf"
+    next_cbz = output / "manga.next.cbz"
+    try:
+        export_pdf(
+            paths,
+            next_pdf,
+            cfg.pdf_dpi,
+            cfg.image_format,
+            cfg.jpeg_quality,
+        )
+        export_cbz(paths, next_cbz)
+        next_pdf.replace(pdf)
+        next_cbz.replace(cbz)
+    finally:
+        next_pdf.unlink(missing_ok=True)
+        next_cbz.unlink(missing_ok=True)
+
     manifest["pdf_stale"] = False
     manifest["pdf"] = "output/manga.pdf"
+    manifest["cbz"] = "output/manga.cbz"
     contact_sheets(project, manifest["pages"])
     save_manifest(project, manifest)
+
+
+def build_pdf(project, manifest):
+    """Backward-compatible export entrypoint; now writes both PDF and CBZ."""
+    build_exports(project, manifest)
 
 
 def run(project, roi=None):
@@ -1610,8 +1635,8 @@ def run(project, roi=None):
                 writer = csv.DictWriter(f, fieldnames=list(score_rows[0]))
                 writer.writeheader()
                 writer.writerows(score_rows)
-            update(project, manifest, 0.97, "PDFを生成中")
-            build_pdf(project, manifest)
+            update(project, manifest, 0.97, "PDF / CBZを生成中")
+            build_exports(project, manifest)
             manifest.update(status="complete", elapsed_seconds=round(time.monotonic() - started, 2))
             update(project, manifest, 1, "完了 — 要確認ページを確認してください")
             return manifest
@@ -1634,15 +1659,15 @@ def edit(project, action, **params):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
         if action == "export":
-            manifest["message"] = "PDFを生成中です"
+            manifest["message"] = "PDF / CBZを生成中です"
             save_manifest(project, manifest)
             try:
-                build_pdf(project, manifest)
+                build_exports(project, manifest)
             except Exception:
-                manifest["message"] = "PDFの出力に失敗しました"
+                manifest["message"] = "PDF / CBZの出力に失敗しました"
                 save_manifest(project, manifest)
                 raise
-            manifest["message"] = "PDFを出力しました"
+            manifest["message"] = "PDF / CBZを出力しました"
             save_manifest(project, manifest)
             return manifest
         if action == "toggle_page":

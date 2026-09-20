@@ -12,7 +12,7 @@ from .video import probe
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Local manga video → image PDF (no OCR / no cloud)"
+        description="Local manga video → page images, PDF, and CBZ (no OCR / no cloud)"
     )
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("probe", help="Show video metadata")
@@ -34,7 +34,7 @@ def main(argv=None):
     p = sub.add_parser("run", help="Process an initialized project (failed runs restart analysis)")
     p.add_argument("project")
     p.add_argument("--roi", help="Normalized four corners, JSON")
-    p = sub.add_parser("export", help="Rebuild PDF using saved review order and enabled pages")
+    p = sub.add_parser("export", help="Rebuild PDF and CBZ using saved review order and enabled pages")
     p.add_argument("project")
     p = sub.add_parser("add", help="Add a spread from a timestamp, in presentation seconds")
     p.add_argument("project")
@@ -58,7 +58,9 @@ def main(argv=None):
             create_project(args.video, args.project, cfg, args.copy_source)
             if args.command == "scan":
                 run(args.project, roi)
-                print(Path(args.project).resolve() / "output/manga.pdf")
+                output = Path(args.project).resolve() / "output"
+                print(output / "manga.pdf")
+                print(output / "manga.cbz")
             else:
                 print(Path(args.project).resolve())
         elif args.command == "run":

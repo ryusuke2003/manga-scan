@@ -71,6 +71,24 @@ def test_missing_file_in_existing_project_returns_404(tmp_path):
     assert client.get("/files/scan-test/pages/missing.png").status_code == 404
 
 
+def test_cbz_file_is_served_as_attachment(tmp_path):
+    project = tmp_path / "scan-cbz"
+    (project / "output").mkdir(parents=True)
+    (project / "manifest.json").write_text(
+        '{"source": "/tmp/book.mp4", "status": "complete", "pages": []}\n'
+    )
+    payload = b"comic-book-zip"
+    (project / "output/manga.cbz").write_bytes(payload)
+
+    client = create_app(tmp_path).test_client()
+    response = client.get("/files/scan-cbz/output/manga.cbz")
+
+    assert response.status_code == 200
+    assert response.data == payload
+    assert "attachment" in response.headers["Content-Disposition"]
+    assert "manga.cbz" in response.headers["Content-Disposition"]
+
+
 def test_delete_project_requires_token_and_removes_only_project(tmp_path):
     projects = tmp_path / "projects"
     project = projects / "scan-delete"

@@ -209,11 +209,16 @@ def create_app(projects, config=None):
         path = (project / filename).resolve()
         if (
             not path.is_relative_to(project)
-            or path.suffix.lower() not in (".png", ".jpg", ".pdf")
+            or path.suffix.lower() not in (".png", ".jpg", ".pdf", ".cbz")
             or not path.is_file()
         ):
             abort(404)
-        return send_file(path, conditional=True)
+        return send_file(
+            path,
+            conditional=True,
+            as_attachment=path.suffix.lower() == ".cbz",
+            download_name=path.name if path.suffix.lower() == ".cbz" else None,
+        )
 
     def start_job(name, action, fn):
         if not guard.acquire(blocking=False):

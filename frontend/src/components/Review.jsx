@@ -258,17 +258,24 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
   let number = 0;
   const numbered = manifest.pages.map(page => ({ ...page, number: page.enabled ? ++number : null }));
   const pdfReady = Boolean(manifest.pdf && !manifest.pdf_stale);
-  const exportLabel = exporting ? 'PDF生成中…' : (pdfReady ? 'PDFを再出力' : 'PDFを出力');
+  const cbzReady = Boolean(manifest.cbz && !manifest.pdf_stale);
+  const exportsReady = pdfReady && cbzReady;
+  const exportLabel = exporting
+    ? 'PDF / CBZ生成中…'
+    : (exportsReady ? 'PDF / CBZを再出力' : 'PDF / CBZを出力');
   const exportStatus = exporting
-    ? 'PDFを生成中です。完了すると最新版を「PDFを開く」から確認できます。'
+    ? 'PDF / CBZを生成中です。完了すると最新版を確認・保存できます。'
     : manifest.pdf_stale
-      ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。'
-      : '現在のページ順・画質でPDFを出力済みです。';
+      ? '編集後のPDF / CBZは未出力です。「PDF / CBZを出力」で反映してください。'
+      : exportsReady
+        ? '現在のページ順・画質でPDF / CBZを出力済みです。'
+        : 'PDFは出力済みです。CBZも作成するには「PDF / CBZを出力」を実行してください。';
   const qualitySummary = qualityReviewSummary(manifest.pages);
   return <section>
     <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(needsReview).length}</h2></div>
       <div className="row"><button className="primary" aria-busy={exporting ? 'true' : undefined} disabled={busy || !enabled.length} onClick={() => onEdit('export')}>{exportLabel}</button>
-        {pdfReady && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
+        {pdfReady && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}
+        {cbzReady && <a className="button" href={file(manifest.cbz)} download>CBZを保存 ↓</a>}</div></div>
     <p className="muted">{exportStatus}</p>
     {qualitySummary.total > 0 && <div className="panel final-quality-summary" aria-label="最終品質チェック">
       <strong>要確認 {qualitySummary.total}件</strong>
