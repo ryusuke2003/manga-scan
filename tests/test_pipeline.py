@@ -32,7 +32,7 @@ def video(tmp_path_factory):
 
 def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     project = tmp_path / "book"
-    cfg = Config(hand_backend="none", analysis_width=480, candidates_per_spread=3)
+    cfg = Config(hand_backend="none", finger_repair=False, analysis_width=480, candidates_per_spread=3)
     create_project(video, project, cfg)
     manifest = run(project, ROI)
     assert manifest["status"] == "complete"
