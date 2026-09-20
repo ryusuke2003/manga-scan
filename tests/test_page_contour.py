@@ -4,7 +4,6 @@ import pytest
 
 from manga_scan.page_contour import detect_page_quads, draw_page_quads
 
-
 REFERENCE = [[0.05, 0.07], [0.96, 0.07], [0.96, 0.94], [0.05, 0.94]]
 LEFT = np.asarray([[90, 70], [490, 90], [470, 540], [70, 520]], dtype=np.float32)
 RIGHT = np.asarray([[510, 90], [920, 60], [940, 520], [530, 545]], dtype=np.float32)
