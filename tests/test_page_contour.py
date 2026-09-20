@@ -2,7 +2,11 @@ import cv2
 import numpy as np
 import pytest
 
-from manga_scan.page_contour import detect_page_quads, draw_page_quads
+from manga_scan.page_contour import (
+    detect_page_quads,
+    draw_page_quads,
+    spread_quad_from_page_quads,
+)
 
 REFERENCE = [[0.05, 0.07], [0.96, 0.07], [0.96, 0.94], [0.05, 0.94]]
 LEFT = np.asarray([[90, 70], [490, 90], [470, 540], [70, 520]], dtype=np.float32)
@@ -138,3 +142,23 @@ def test_paper_at_source_frame_edge_is_flagged():
     assert result["detected"]
     assert result["left"]["touches_frame"]
     assert result["right"]["touches_frame"]
+
+
+def test_spread_quad_uses_only_outer_corners_from_both_pages():
+    result = {
+        "detected": True,
+        "left": {"quad": [[.08, .10], [.48, .14], [.49, .88], [.06, .92]]},
+        "right": {"quad": [[.51, .13], [.93, .08], [.96, .91], [.50, .87]]},
+    }
+
+    np.testing.assert_allclose(
+        spread_quad_from_page_quads(result),
+        [[.08, .10], [.93, .08], [.96, .91], [.06, .92]],
+    )
+
+
+def test_spread_quad_rejects_fallback_or_invalid_page_detection():
+    with pytest.raises(ValueError, match="both page quads"):
+        spread_quad_from_page_quads({"detected": False})
+    with pytest.raises(ValueError, match="left/right quads"):
+        spread_quad_from_page_quads({"detected": True, "left": {}, "right": {}})
