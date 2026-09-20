@@ -115,7 +115,7 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
 
 ### 指の写り込み補修
 
-`finger_repair=true` のときだけ実行する。候補評価時に保存したMediaPipe手マスクを元フレーム解像度へ
+`finger_repair=true` のときだけ実行する。新規設定では既定で有効。候補評価時に保存したMediaPipe手マスクを元フレーム解像度へ
 nearest-neighborで戻し、設定回転を同じように適用してから、採用ページと同じROI / page contour / split座標へ射影する。
 採用ページで手と判定された領域がなければ追加decodeは行わない。
 
@@ -142,9 +142,9 @@ target mask / unresolved maskはmanifestと `debug/finger_repair/` に残す。
 両方が `page_contour_min_confidence` を満たした場合だけ各ページを独立して射影変換する。
 片側でもconfidence不足なら、その見開きは従来の「見開き全体を射影変換 → 左右分割」へfallbackし、
 `page_contour_low_confidence` を要確認理由として残す。検出quadとdebug overlayはmanifest / `debug/page_contours/` に保存する。
-デフォルトは手動ROI固定 + spread方式なので、漫画が動いた場合の背景混入を自動保証できない。
+新規設定の既定は `refine_quad=true` + `perspective_mode="per_page"`。見開きROIの保守的な微調整と左右ページ別の輪郭検出を試し、検出に十分なconfidenceがない場合は元ROI / spread方式へfallbackする。自動補正は元ROIの外側を描き足さないが、漫画が大きく移動した場合の背景除去を完全には保証しない。
 
-湾曲補正は `off / manual / auto` を選べる。manualは従来の対称cylindrical remapを維持する。
+湾曲補正は `off / manual / auto` を選べ、新規設定の既定は `auto`。manualは従来の対称cylindrical remapを維持する。
 autoは左右ページを分割した後、ページ高の9地点を中心にした複数scanline帯でSobel-x由来の
 縦エッジピークを測る。各高さで背表紙側のエッジ間隔とページ中央側の間隔を比較し、
 「背側へ近づくほど横方向に圧縮されている量」を独立に推定する。
@@ -167,7 +167,7 @@ autoを無効化できる。低confidence時は `dewarp_low_confidence` を要�
 
 指補修は回転済み見開きの左右ページ射影/分割後、湾曲・照明・白背景などの画質補正より前に行う。
 
-照明ムラ補正は既定無効。ON時は回転済み見開きの左右分割/湾曲補正後、白背景正規化・grayscale・contrast前に
+照明ムラ補正は新規設定で既定有効。回転済み見開きの左右分割/湾曲補正後、白背景正規化・grayscale・contrast前に
 ページ単位で補正する。カラー画像はLabのL成分だけ、グレースケール画像はその輝度を直接扱う。
 照明マップの推定だけを最大512pxへ縮小し、大きめのmorphological closingで線画・網点などの
 暗い高周波成分を抑えた後、Gaussian blurで低周波成分へ限定する。元画像を二値化せず、
@@ -178,7 +178,7 @@ global thresholdや背景画素の分類は行わない。
 大きな黒ベタが照明マップを誤らせた場合もゲイン上限で影響を抑える。補正前の見開きは従来どおり
 `selected/` に残る。
 
-白背景正規化は既定無効。ON時は照明ムラ補正の後に、ページの明るい低彩度画素からrobustなwhite levelを推定し、
+白背景正規化は新規設定で既定有効。照明ムラ補正の後に、ページの明るい低彩度画素からrobustなwhite levelを推定し、
 white targetへ緩やかに寄せる。補正重みはwhite levelの約45階調下からsmoothstepで立ち上げるため、
 黒ベタや中間調は原則そのまま残す。カラー画像ではLab色空間を使い、低彩度の明部だけ色かぶりを
 弱める。十分な明るい紙面候補がない暗いページでは補正せずfallbackする。
