@@ -391,7 +391,7 @@ const emptyBookMetadata = {
   language: '',
 };
 
-function BookMetadataEditor({ metadata = {}, busy, onSave }) {
+function BookMetadataEditor({ metadata = emptyBookMetadata, busy, onSave }) {
   const [draft, setDraft] = useState({ ...emptyBookMetadata, ...metadata });
   useEffect(() => {
     setDraft({ ...emptyBookMetadata, ...metadata });
