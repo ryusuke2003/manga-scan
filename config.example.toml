@@ -35,6 +35,8 @@ grayscale = false
 contrast = 1.0
 rotation = 0 # Clockwise, after split: 0 / 90 / 180 / 270
 dewarp_strength = 0.0 # 0 = off; experimental symmetric cylindrical remap, 0..0.6
+illumination_correction = false # Opt-in low-frequency lighting/shadow normalization
+illumination_strength = 0.7 # 0 = no effect, 1 = full correction
 pdf_dpi = 300 # Physical page size only; no pixel resampling
 hwaccel = "none" # Mac: "videotoolbox"; CPU fallback if hardware initialization fails
 save_lowres = false # true writes all sampled small frames; otherwise streamed
