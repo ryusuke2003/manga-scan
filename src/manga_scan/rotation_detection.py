@@ -147,10 +147,19 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
     # pretending the page-shape heuristic can always determine "up".
     priority = (0, 90, 270, 180)
     best_rotation = next(rotation for rotation in priority if rotation in near_ties)
+    confidence = _confidence(scores, best_rotation)
+    # The geometry path is designed around three independent observations.
+    # If one or both extra seeks fail, do not let a single cover/transition
+    # frame suppress the setup warning with an overconfident score.
+    if len(frames) == 2:
+        confidence = min(confidence, 0.62)
+    elif len(frames) == 1:
+        confidence = min(confidence, 0.55)
     return {
         "rotation": best_rotation,
-        "confidence": _confidence(scores, best_rotation),
+        "confidence": confidence,
         "source": "page_geometry",
         "scores": {str(rotation): scores[rotation] for rotation in _ROTATIONS},
         "sample_times": times,
+        "sample_count": len(frames),
     }
