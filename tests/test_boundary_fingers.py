@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from manga_scan.hand import boundary_finger_mask
+from manga_scan.hand import boundary_finger_mask, temporal_transient_mask
 
 ROI = [[0, 0], [1, 0], [1, 1], [0, 1]]
 
@@ -33,6 +33,73 @@ def test_color_page_and_long_book_cover_strip_are_not_fingertips():
     image = page()
     image[:, -15:] = (55, 65, 155)
     assert not np.any(boundary_finger_mask(image, ROI))
+
+
+def test_temporal_transient_detects_edge_finger_missed_by_landmarks():
+    clean = page()
+    target = clean.copy()
+    cv2.ellipse(target, (298, 340), (30, 25), 0, 0, 360, (75, 90, 140), -1)
+    zero = np.zeros(target.shape[:2], np.uint8)
+    peers = [{"image": clean.copy(), "mask": zero.copy()} for _ in range(3)]
+
+    mask = temporal_transient_mask(
+        target,
+        ROI,
+        peers,
+        target_mask=zero,
+    )
+
+    assert mask[340, 285] == 255
+    assert not np.any(mask[40:260, 40:240])
+
+
+def test_temporal_transient_ignores_stable_art_and_unconnected_center_change():
+    stable = page()
+    cv2.circle(stable, (150, 200), 28, (35, 35, 35), -1)
+    zero = np.zeros(stable.shape[:2], np.uint8)
+    stable_peers = [{"image": stable.copy(), "mask": zero.copy()} for _ in range(3)]
+    assert not np.any(
+        temporal_transient_mask(stable, ROI, stable_peers, target_mask=zero)
+    )
+
+    transient_center = stable.copy()
+    cv2.circle(transient_center, (150, 200), 24, (75, 90, 140), -1)
+    clean = page()
+    center_peers = [{"image": clean.copy(), "mask": zero.copy()} for _ in range(3)]
+    assert not np.any(
+        temporal_transient_mask(
+            transient_center,
+            ROI,
+            center_peers,
+            target_mask=zero,
+        )
+    )
+
+
+def test_temporal_transient_excludes_known_peer_hands_from_median():
+    clean = page()
+    target = clean.copy()
+    cv2.ellipse(target, (298, 340), (30, 25), 0, 0, 360, (75, 90, 140), -1)
+    zero = np.zeros(target.shape[:2], np.uint8)
+
+    occluded_peer = clean.copy()
+    cv2.ellipse(occluded_peer, (298, 340), (30, 25), 0, 0, 360, (75, 90, 140), -1)
+    peer_mask = np.zeros(target.shape[:2], np.uint8)
+    cv2.ellipse(peer_mask, (298, 340), (32, 27), 0, 0, 360, 255, -1)
+    peers = [
+        {"image": occluded_peer, "mask": peer_mask},
+        {"image": clean.copy(), "mask": zero.copy()},
+        {"image": clean.copy(), "mask": zero.copy()},
+    ]
+
+    mask = temporal_transient_mask(
+        target,
+        ROI,
+        peers,
+        target_mask=zero,
+    )
+
+    assert mask[340, 285] == 255
 
 
 def test_disabled_hand_backend_does_not_enable_color_heuristic():
