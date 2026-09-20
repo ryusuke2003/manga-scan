@@ -14,7 +14,6 @@ from manga_scan.score import composite_score, sharpness, suspect_reasons
 from manga_scan.split import (
     auto_dewarp_page,
     dewarp_debug_grid,
-    dewarp_page,
     dewarp_page_profile,
     enhance_page,
     estimate_curvature,
