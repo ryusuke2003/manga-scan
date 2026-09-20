@@ -181,6 +181,65 @@ function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
 }
 
+function ReviewViewer({ pages, pageId, file, onClose, onSelect }) {
+  const [zoom, setZoom] = useState(1);
+  const [mode, setMode] = useState('after');
+  const index = pages.findIndex(page => page.id === pageId);
+  const page = pages[index];
+
+  useEffect(() => {
+    setZoom(1);
+    setMode('after');
+  }, [pageId]);
+
+  useEffect(() => {
+    const onKeyDown = event => {
+      if (event.key === 'Escape') onClose();
+      if (event.key === 'ArrowLeft' && index > 0) onSelect(pages[index - 1].id);
+      if (event.key === 'ArrowRight' && index >= 0 && index < pages.length - 1) onSelect(pages[index + 1].id);
+      if (event.key === '+' || event.key === '=') setZoom(value => Math.min(4, value * 2));
+      if (event.key === '-') setZoom(value => Math.max(1, value / 2));
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [index, pages, onClose, onSelect]);
+
+  if (!page) return null;
+  const beforePath = page.source_image
+    || (page.source && page.source !== 'external_image' ? page.source : page.path);
+  const imagePath = mode === 'before' ? beforePath : page.path;
+
+  return <div className="review-viewer" role="dialog" aria-modal="true" aria-label="ページ全画面ビューア">
+    <div className="review-viewer-bar">
+      <div className="row">
+        <button type="button" disabled={index <= 0} onClick={() => onSelect(pages[index - 1].id)}>← 前</button>
+        <strong>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</strong>
+        <button type="button" disabled={index >= pages.length - 1} onClick={() => onSelect(pages[index + 1].id)}>次 →</button>
+      </div>
+      <div className="row">
+        <button type="button" className={mode === 'before' ? 'active' : ''} onClick={() => setMode('before')}>元画像</button>
+        <button type="button" className={mode === 'after' ? 'active' : ''} onClick={() => setMode('after')}>補正後</button>
+        {[1, 2, 4].map(level => <button
+          type="button"
+          key={level}
+          className={zoom === level ? 'active' : ''}
+          aria-label={`ズーム ${level * 100}%`}
+          onClick={() => setZoom(level)}
+        >{level * 100}%</button>)}
+        <button type="button" className="viewer-close" onClick={onClose}>閉じる ×</button>
+      </div>
+    </div>
+    <div className="review-viewer-stage">
+      <img
+        src={file(imagePath)}
+        alt={`${page.id} ${mode === 'before' ? '元画像' : '補正後'}`}
+        style={{ width: zoom === 1 ? 'auto' : `${zoom * 100}%` }}
+      />
+    </div>
+    <p className="review-viewer-help">← → ページ移動 · + / - ズーム · Esc 閉じる</p>
+  </div>;
+}
+
 export function reorderPageIds(pageIds, sourceId, targetId) {
   if (sourceId === targetId) return pageIds;
   const source = pageIds.indexOf(sourceId);
@@ -195,6 +254,8 @@ export function reorderPageIds(pageIds, sourceId, targetId) {
 
 function PageReviewControls({ page, manifest, file, busy, onEdit }) {
   const [editingContour, setEditingContour] = useState(false);
+  const [rescanRadius, setRescanRadius] = useState('1');
+  const [rescanFps, setRescanFps] = useState('60');
   const spread = manifest.spreads.find(item => item.id === page.spread_id);
   const candidate = spread?.candidates?.find(item => item.id === page.candidate_id);
   const settings = page.render_settings ?? {};
@@ -309,6 +370,37 @@ function PageReviewControls({ page, manifest, file, busy, onEdit }) {
       />
       <button disabled={busy} onClick={() => setEditingContour(false)}>閉じる</button>
     </div>}
+    <div className="candidate-rescan">
+      <div>
+        <strong>問題ページだけ再探索</strong>
+        <p className="muted">元動画のこのページ付近だけを高密度で見直し、候補を追加します。現在の採用候補は変更しません。</p>
+      </div>
+      <label>範囲
+        <select aria-label={page.id + ' 再探索範囲'} value={rescanRadius} onChange={event => setRescanRadius(event.target.value)}>
+          <option value="0.5">±0.5秒</option>
+          <option value="1">±1秒</option>
+          <option value="2">±2秒</option>
+        </select>
+      </label>
+      <label>密度
+        <select aria-label={page.id + ' 再探索fps'} value={rescanFps} onChange={event => setRescanFps(event.target.value)}>
+          <option value="30">30fps</option>
+          <option value="60">60fps</option>
+        </select>
+      </label>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onEdit('rescan_candidates', {
+          page_id: page.id,
+          radius: Number(rescanRadius),
+          fps: Number(rescanFps),
+        })}
+      >高fpsで再探索</button>
+      {spread?.candidate_rescan && <span className="muted">
+        前回: {spread.candidate_rescan.added}件追加 · 実効 {Number(spread.candidate_rescan.effective_fps).toFixed(0)}fps
+      </span>}
+    </div>
   </div>;
 }
 
@@ -429,6 +521,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
   const [timestamp, setTimestamp] = useState('');
   const [draggedPageId, setDraggedPageId] = useState(null);
   const [dragOverPageId, setDragOverPageId] = useState(null);
+  const [viewerPageId, setViewerPageId] = useState(null);
   const enabled = manifest.pages.filter(page => page.enabled);
   let number = 0;
   const numbered = manifest.pages.map(page => ({ ...page, number: page.enabled ? ++number : null }));
@@ -563,6 +656,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         }}
       >⠿ ドラッグ</div>
       <ImageLink file={file} path={page.path} preview={page.preview} />
+      <button type="button" className="viewer-open" onClick={() => setViewerPageId(page.id)}>全画面で確認・ズーム</button>
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
@@ -608,5 +702,12 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
     </article>)}</div>
     <h2 className="spreads-heading">見開き・候補フレーム</h2><p className="muted">候補を選ぶと元解像度で再抽出します。左右別モードでは各ページのスコアを個別に確認・差し替えできます。</p>
     {manifest.spreads.map(spread => <Spread key={spread.id} spread={spread} config={manifest.config} file={file} busy={busy} onEdit={onEdit} />)}
+    {viewerPageId && <ReviewViewer
+      pages={numbered}
+      pageId={viewerPageId}
+      file={file}
+      onClose={() => setViewerPageId(null)}
+      onSelect={setViewerPageId}
+    />}
   </section>;
 }
