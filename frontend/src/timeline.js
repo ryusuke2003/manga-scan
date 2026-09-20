@@ -18,6 +18,8 @@ export function pageTurnMissingCandidates(analysis) {
       id: candidate.id || `page-turn-missing-${index + 1}`,
       time: Number(candidate.time),
       motion: Number(candidate.motion),
+      windowStart: Number(candidate.window_start),
+      windowEnd: Number(candidate.window_end),
       before: candidate.before || null,
       after: candidate.after || null,
       leftTurn: candidate.left_turn || null,
