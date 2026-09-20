@@ -9,7 +9,7 @@ React / Vite source (frontend/)
                                       │
 CLI / Flask loopback Web UI (127.0.0.1:8765)
   └─ ingest → video → motion → candidate sampling → hand + score
-       → dedupe → perspective → split → page enhancement → export
+       → dedupe → perspective → configured rotation → split → page enhancement → export
        └─ project manifest + per-stage inspectable artifacts
 ```
 
@@ -20,7 +20,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py` / `perspective.py`: 保守的な外周微調整、ROI検証、射影変換。
-- `split.py`: 背の推定、左右分割、自動湾曲推定、左右別の保守的remap、白背景正規化、グレースケール、コントラスト、回転。
+- `split.py`: 設定回転、背の推定、左右分割、自動湾曲推定、左右別の保守的remap、白背景正規化、グレースケール、コントラスト。
 - `illumination.py`: ページ輝度の低周波マップ推定と、Lab輝度/グレースケールへの保守的な照明補正。
 - `dedupe.py`: dHashと局所SSIM。左右半分も比較。
 - `export.py`: 画像PDF、分割コンタクトシート。
@@ -107,7 +107,7 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
 
 正規化ROIは表示方向のTL/TR/BR/BL順。凸性・面積・範囲・順序を検証。
 表紙は独立した時刻・ROIで1ページとして切り出し、見開きROIとは共有しない。
-見開きはユーザーが選んだ基準フレームのROIで透視補正して机を外し、中央で左右分割。auto splitは中央±4%の暗い縦谷を検索する実験機能。
+見開きはユーザーが選んだ基準フレームのROIで透視補正して机を外す。`rotation` が指定されている場合は、左右を決める前に見開き全体・ROI・手マスクを同じ向きへ回転し、その表示向きで中央から左右分割する。これにより90°/270°の横向き撮影でも上/下ではなく見た目上の左/右ページを得る。auto splitは回転後画像の中央±4%の暗い縦谷を検索する実験機能。
 自動外周補正は元ROIより外へ広げず、各点最大2.5%の移動まで。検出失敗はROI fallbackと警告。
 デフォルトは手動ROI固定なので、漫画が動いた場合の背景混入を自動保証できない。
 
@@ -126,7 +126,7 @@ strength / confidence / statusを保存する。レビューUIから左右ペー
 低confidence時は `dewarp_low_confidence` を要確認理由へ追加する。表紙は背側を決められないため
 auto対象外で、manualのみ適用可能。文字認識・生成AI・描き足しは行わない。
 
-照明ムラ補正は既定無効。ON時は左右分割/湾曲補正後、白背景正規化・grayscale・contrast・rotation前に
+照明ムラ補正は既定無効。ON時は回転済み見開きの左右分割/湾曲補正後、白背景正規化・grayscale・contrast前に
 ページ単位で補正する。カラー画像はLabのL成分だけ、グレースケール画像はその輝度を直接扱う。
 照明マップの推定だけを最大512pxへ縮小し、大きめのmorphological closingで線画・網点などの
 暗い高周波成分を抑えた後、Gaussian blurで低周波成分へ限定する。元画像を二値化せず、
