@@ -257,7 +257,7 @@ def test_detect_spread_page_consensus_uses_saved_candidate_frames(tmp_path, monk
     candidates = []
     responses = {}
     for candidate_id, (pixel, shift, confidence) in enumerate(
-        ((30, -0.002, 0.85), (60, 0.0, 0.9), (90, 0.002, 0.88), (120, 0.12, 0.99))
+        ((30, -0.002, 0.85), (60, 0.0, 0.9), (90, 0.002, 0.88), (120, 0.06, 0.99))
     ):
         path = f"candidate_{candidate_id}.png"
         assert cv2.imwrite(str(tmp_path / path), np.full((80, 120, 3), pixel, np.uint8))
