@@ -7,7 +7,6 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from reportlab.pdfgen.canvas import Canvas
 
-
 BOOK_METADATA_FIELDS = ("title", "author", "series", "volume", "publisher", "language")
 
 
