@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 from .score import composite_score, sharpness
-from .split import split_spread
+from .split import rotate_image, split_spread
 
 
 def page_quality_metrics(
@@ -28,6 +28,8 @@ def page_quality_metrics(
 
 
 def score_candidate_pages(rectified, hand_mask, motion, config, geometry_metrics, hand_enabled):
+    rectified = rotate_image(rectified, config.rotation)
+    hand_mask = rotate_image(hand_mask, config.rotation)
     pages, spine = split_spread(
         rectified,
         config.spine_ratio,
