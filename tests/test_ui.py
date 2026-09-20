@@ -63,3 +63,4 @@ def test_delete_project_requires_token_and_removes_project(tmp_path):
     assert response.json == {"deleted": "scan-delete"}
     assert not project.exists()
     assert client.get("/api/projects/scan-delete").status_code == 404
+    assert not any(item["id"] == "scan-delete" for item in client.get("/api/state").json["projects"])
