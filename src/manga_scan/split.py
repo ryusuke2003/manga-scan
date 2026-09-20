@@ -75,18 +75,50 @@ def _spacing_ratio(peaks, width, side):
     return float(np.median(inner) / reference_median)
 
 
+def _curvature_band_centers():
+    return np.linspace(0.08, 0.92, 9, dtype=np.float32)
+
+
+def _strength_from_ratio(ratio, max_strength):
+    strength = min(float(max_strength), max(0.0, (0.96 - float(ratio)) * 0.9))
+    return 0.0 if strength < 0.015 else strength
+
+
+def _build_strength_profile(samples, max_strength):
+    if len(samples) < 2:
+        return []
+    centers = _curvature_band_centers()
+    sample_y = np.asarray([sample["y"] for sample in samples], dtype=np.float32)
+    sample_strength = np.asarray(
+        [_strength_from_ratio(sample["ratio"], max_strength) for sample in samples],
+        dtype=np.float32,
+    )
+    interpolated = np.interp(centers, sample_y, sample_strength)
+    padded = np.pad(interpolated, (1, 1), mode="edge")
+    smoothed = 0.2 * padded[:-2] + 0.6 * padded[1:-1] + 0.2 * padded[2:]
+    smoothed = np.clip(smoothed, 0.0, float(max_strength))
+    return [
+        {"y": round(float(y), 4), "strength": round(float(strength), 4)}
+        for y, strength in zip(centers, smoothed)
+    ]
+
+
 def estimate_curvature(image, side, max_strength=0.25):
-    """Estimate horizontal compression near the spine from repeated vertical edges."""
+    """Estimate a vertical profile of horizontal compression near the page spine."""
     if side not in ("left", "right"):
         raise ValueError("side must be left or right")
     h, w = image.shape[:2]
+    empty = {
+        "strength": 0.0,
+        "mean_strength": 0.0,
+        "profile_variation": 0.0,
+        "strength_profile": [],
+        "confidence": 0.0,
+        "compression_ratio": None,
+        "bands": 0,
+    }
     if h < 40 or w < 80:
-        return {
-            "strength": 0.0,
-            "confidence": 0.0,
-            "compression_ratio": None,
-            "bands": 0,
-        }
+        return empty
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     scale = min(1.0, 640 / w)
@@ -100,68 +132,154 @@ def estimate_curvature(image, side, max_strength=0.25):
     gradient = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
     cap = float(np.percentile(gradient, 98))
     if cap <= 1:
-        return {
-            "strength": 0.0,
-            "confidence": 0.0,
-            "compression_ratio": None,
-            "bands": 0,
-        }
+        return empty
     gradient = np.minimum(gradient, cap)
     min_distance = max(4, round(gx * 0.008))
-    ratios = []
-    bands = ((0.08, 0.24), (0.24, 0.40), (0.40, 0.56), (0.56, 0.72), (0.72, 0.88))
-    for start, end in bands:
+
+    samples = []
+    centers = _curvature_band_centers()
+    half_band = 0.065
+    for center in centers:
+        start = max(0.0, float(center) - half_band)
+        end = min(1.0, float(center) + half_band)
         y0 = round(gy * start)
         y1 = max(round(gy * end), y0 + 1)
         profile = gradient[y0:y1].mean(axis=0)
         peaks = _edge_peaks(profile, min_distance)
         ratio = _spacing_ratio(peaks, gx, side)
         if ratio is not None and 0.35 <= ratio <= 1.65:
-            ratios.append(ratio)
+            samples.append({"y": float(center), "ratio": float(ratio)})
 
-    if len(ratios) < 2:
+    if len(samples) < 2:
+        ratios = [sample["ratio"] for sample in samples]
         return {
-            "strength": 0.0,
-            "confidence": round(min(0.25, len(ratios) * 0.12), 4),
+            **empty,
+            "confidence": round(min(0.2, len(samples) * 0.1), 4),
             "compression_ratio": round(float(np.median(ratios)), 4) if ratios else None,
-            "bands": len(ratios),
+            "bands": len(samples),
         }
 
+    ratios = np.asarray([sample["ratio"] for sample in samples], dtype=np.float32)
     ratio = float(np.median(ratios))
-    mad = float(np.median(np.abs(np.asarray(ratios) - ratio)))
-    coverage = min(1.0, len(ratios) / 4)
-    consistency = max(0.0, min(1.0, 1 - mad / 0.18))
-    confidence = coverage * consistency
-    strength = min(float(max_strength), max(0.0, (0.96 - ratio) * 0.9))
-    if strength < 0.015:
-        strength = 0.0
+    coverage = min(1.0, len(samples) / len(centers))
+
+    # Real books can curve more at one height than another, so distance from the
+    # global median is not itself suspicious. What should reduce confidence is a
+    # jagged profile where adjacent scanline bands disagree sharply; that pattern
+    # is more likely to come from panels/text than from a physical book surface.
+    if len(ratios) >= 3:
+        adjacent_changes = np.abs(np.diff(ratios))
+        adjacent_change = float(np.percentile(adjacent_changes, 75))
+        smoothness = max(0.0, min(1.0, 1 - adjacent_change / 0.18))
+    else:
+        smoothness = 0.5
+    confidence = min(1.0, coverage * (0.4 + 0.6 * smoothness))
+
+    strength_profile = _build_strength_profile(samples, max_strength)
+    strengths = np.asarray(
+        [entry["strength"] for entry in strength_profile],
+        dtype=np.float32,
+    )
+    peak_strength = float(strengths.max()) if strengths.size else 0.0
+    mean_strength = float(strengths.mean()) if strengths.size else 0.0
+    variation = float(strengths.max() - strengths.min()) if strengths.size else 0.0
     return {
-        "strength": round(strength, 4),
+        "strength": round(peak_strength, 4),
+        "mean_strength": round(mean_strength, 4),
+        "profile_variation": round(variation, 4),
+        "strength_profile": strength_profile,
         "confidence": round(confidence, 4),
         "compression_ratio": round(ratio, 4),
-        "bands": len(ratios),
+        "bands": len(samples),
     }
 
 
-def dewarp_page(image, side, strength):
-    """Stretch the spine side conservatively while keeping image bounds unchanged."""
+def _row_strengths(height, strength_profile, fallback_strength=0.0):
+    if height <= 0:
+        return np.zeros(0, dtype=np.float32)
+    if not strength_profile:
+        return np.full(height, float(fallback_strength), dtype=np.float32)
+
+    points = sorted(
+        (
+            max(0.0, min(1.0, float(entry["y"]))),
+            max(0.0, min(0.35, float(entry["strength"]))),
+        )
+        for entry in strength_profile
+    )
+    ys = np.asarray([point[0] * max(1, height - 1) for point in points], dtype=np.float32)
+    strengths = np.asarray([point[1] for point in points], dtype=np.float32)
+    if len(points) == 1:
+        return np.full(height, strengths[0], dtype=np.float32)
+
+    rows = np.arange(height, dtype=np.float32)
+    interpolated = np.interp(rows, ys, strengths).astype(np.float32)
+
+    window = max(3, min(81, int(round(height * 0.05))))
+    if window % 2 == 0:
+        window += 1
+    if window > height and height > 1:
+        window = height if height % 2 else height - 1
+    if window >= 3:
+        kernel = cv2.getGaussianKernel(window, max(1.0, window / 4))[:, 0].astype(np.float32)
+        pad = window // 2
+        interpolated = np.convolve(
+            np.pad(interpolated, (pad, pad), mode="edge"),
+            kernel,
+            mode="valid",
+        ).astype(np.float32)
+    return np.clip(interpolated, 0.0, 0.35)
+
+
+def _remap_with_row_strengths(image, side, row_strengths):
     if side not in ("left", "right"):
         raise ValueError("side must be left or right")
-    strength = float(strength)
-    if strength <= 0:
-        return image.copy()
     h, w = image.shape[:2]
-    if w < 2:
+    if w < 2 or h < 1:
         return image.copy()
-    gamma = 1.0 + 3.0 * min(strength, 0.35)
-    u = np.linspace(0, 1, w, dtype=np.float32)
+    row_strengths = np.asarray(row_strengths, dtype=np.float32)
+    if row_strengths.shape != (h,):
+        raise ValueError("row_strengths must contain one value per image row")
+    if row_strengths.size == 0 or float(row_strengths.max()) <= 0:
+        return image.copy()
+
+    gamma = 1.0 + 3.0 * np.clip(row_strengths, 0.0, 0.35)
+    u = np.linspace(0, 1, w, dtype=np.float32)[None, :]
+    gamma = gamma[:, None]
     if side == "right":
         source_u = np.power(u, gamma)
     else:
         source_u = 1.0 - np.power(1.0 - u, gamma)
-    map_x = np.tile(source_u * (w - 1), (h, 1)).astype(np.float32)
+    map_x = (source_u * (w - 1)).astype(np.float32, copy=False)
     map_y = np.tile(np.arange(h, dtype=np.float32)[:, None], (1, w))
-    return cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return cv2.remap(
+        image,
+        map_x,
+        map_y,
+        cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def dewarp_page(image, side, strength):
+    """Apply the legacy constant-strength spine-side stretch."""
+    strength = float(strength)
+    if strength <= 0:
+        return image.copy()
+    return _remap_with_row_strengths(
+        image,
+        side,
+        np.full(image.shape[0], min(strength, 0.35), dtype=np.float32),
+    )
+
+
+def dewarp_page_profile(image, side, strength_profile, fallback_strength=0.0):
+    """Apply a height-varying 2D remap estimated from the photographed page."""
+    return _remap_with_row_strengths(
+        image,
+        side,
+        _row_strengths(image.shape[0], strength_profile, fallback_strength),
+    )
 
 
 def auto_dewarp_page(image, side, max_strength=0.25, min_confidence=0.6):
@@ -172,22 +290,28 @@ def auto_dewarp_page(image, side, max_strength=0.25, min_confidence=0.6):
         return image.copy(), {**estimate, "applied": False, "status": "low_confidence"}
     if strength <= 0:
         return image.copy(), {**estimate, "applied": False, "status": "not_needed"}
-    return dewarp_page(image, side, strength), {
+    return dewarp_page_profile(
+        image,
+        side,
+        estimate.get("strength_profile", []),
+        fallback_strength=estimate.get("mean_strength", strength),
+    ), {
         **estimate,
         "applied": True,
         "status": "applied",
     }
 
 
-def dewarp_debug_grid(shape, side, strength):
+def dewarp_debug_grid(shape, side, strength, strength_profile=None):
     h, w = shape[:2]
     grid = np.full((h, w, 3), 245, dtype=np.uint8)
     for x in np.linspace(0, max(0, w - 1), 11, dtype=int):
         cv2.line(grid, (int(x), 0), (int(x), max(0, h - 1)), (90, 90, 90), 1)
     for y in np.linspace(0, max(0, h - 1), 9, dtype=int):
         cv2.line(grid, (0, int(y)), (max(0, w - 1), int(y)), (185, 185, 185), 1)
+    if strength_profile:
+        return dewarp_page_profile(grid, side, strength_profile, fallback_strength=strength)
     return dewarp_page(grid, side, strength)
-
 
 def _smoothstep(value):
     value = np.clip(value, 0.0, 1.0)
