@@ -19,6 +19,10 @@ def create_project(video, project, config=None, copy_source=False):
     if project.exists() and any(project.iterdir()):
         raise ValueError("Project directory must be empty; choose a new directory")
     first = extract_frame(metadata["path"])
+    # A non-zero rotation was already a meaningful manual override before
+    # auto-detection existed. Preserve that behavior for direct Config users.
+    if config.auto_rotation and config.rotation:
+        config.auto_rotation = False
     if config.auto_rotation:
         rotation_detection = detect_video_rotation(
             metadata["path"],
