@@ -381,6 +381,49 @@ function Spread({ spread, config, file, busy, onEdit }) {
   </details>;
 }
 
+
+const emptyBookMetadata = {
+  title: '',
+  author: '',
+  series: '',
+  volume: '',
+  publisher: '',
+  language: '',
+};
+
+function BookMetadataEditor({ metadata = {}, busy, onSave }) {
+  const [draft, setDraft] = useState({ ...emptyBookMetadata, ...metadata });
+  useEffect(() => {
+    setDraft({ ...emptyBookMetadata, ...metadata });
+  }, [metadata]);
+
+  const setField = (field, value) => setDraft(current => ({ ...current, [field]: value }));
+  const normalized = Object.fromEntries(
+    Object.entries(draft).filter(([, value]) => value.trim()),
+  );
+  const current = Object.fromEntries(
+    Object.entries({ ...emptyBookMetadata, ...metadata }).filter(([, value]) => String(value).trim()),
+  );
+  const changed = JSON.stringify(normalized) !== JSON.stringify(current);
+
+  return <details className="book-metadata" open>
+    <summary>書籍メタデータ</summary>
+    <p className="muted">タイトル等をプロジェクトに保存し、PDF内部メタデータとCBZのComicInfo.xmlへ反映します。タイトルは出力ファイル名にも使われます。</p>
+    <div className="book-metadata-grid">
+      <label>タイトル<input aria-label="書籍タイトル" maxLength="200" value={draft.title} onChange={event => setField('title', event.target.value)} placeholder="例: ONE PIECE 1" /></label>
+      <label>著者<input aria-label="著者" maxLength="200" value={draft.author} onChange={event => setField('author', event.target.value)} placeholder="例: 尾田栄一郎" /></label>
+      <label>シリーズ<input aria-label="シリーズ" maxLength="200" value={draft.series} onChange={event => setField('series', event.target.value)} /></label>
+      <label>巻数<input aria-label="巻数" maxLength="64" value={draft.volume} onChange={event => setField('volume', event.target.value)} placeholder="例: 1" /></label>
+      <label>出版社<input aria-label="出版社" maxLength="200" value={draft.publisher} onChange={event => setField('publisher', event.target.value)} /></label>
+      <label>言語<input aria-label="言語" maxLength="32" value={draft.language} onChange={event => setField('language', event.target.value)} placeholder="ja" /></label>
+    </div>
+    <div className="row">
+      <button disabled={busy || !changed} onClick={() => onSave(normalized)}>メタデータを保存</button>
+      {metadata.title && <span className="muted">出力名: {metadata.title}.pdf / {metadata.title}.cbz</span>}
+    </div>
+  </details>;
+}
+
 export default function Review({ manifest, file, busy, exporting = false, onEdit }) {
   const [suspectsOnly, setSuspectsOnly] = useState(false);
   const [showExcluded, setShowExcluded] = useState(false);
@@ -430,6 +473,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         {pdfReady && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}
         {cbzReady && <a className="button" href={file(manifest.cbz)} download>CBZを保存 ↓</a>}</div></div>
     <p className="muted">{exportStatus}</p>
+    <BookMetadataEditor metadata={manifest.book_metadata} busy={busy} onSave={metadata => onEdit('book_metadata', { metadata })} />
     {qualitySummary.total > 0 && <div className="panel final-quality-summary" aria-label="最終品質チェック">
       <strong>要確認 {qualitySummary.total}件</strong>
       <div className="final-quality-counts">
