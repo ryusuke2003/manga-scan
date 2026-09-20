@@ -74,7 +74,7 @@ function Spread({ spread, config, file, busy, onEdit }) {
         </p>}
         <a href={file(candidate.hand_mask)} target="_blank" rel="noopener">手のマスク ↗</a>
         {selected && <button disabled={busy} onClick={() => setCropCandidate(candidate.id)}>外周を確認・調整</button>}
-        {selected && manuallyCropped && <button disabled={busy} onClick={() => onEdit('reset_crop', { spread_id: spread.id, candidate_id: candidate.id })}>自動検出に戻す</button>}
+        {selected && (manuallyCropped || (layout === 'spread' && config.refine_quad !== false)) && <button disabled={busy} onClick={() => onEdit('reset_crop', { spread_id: spread.id, candidate_id: candidate.id })}>{manuallyCropped ? '自動検出に戻す' : '外周を自動検出し直す'}</button>}
         {selectionMode === 'per_page'
           ? <div className="row">
             <button disabled={busy || leftSelected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id, side: 'left' })}>{leftSelected ? '左に採用中' : '左に採用'}</button>
