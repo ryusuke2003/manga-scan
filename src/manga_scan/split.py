@@ -20,6 +20,14 @@ def spine_position(image, ratio=0.5, mode="center"):
     return max(1, min(w - 1, center))
 
 
+def rotate_image(image, rotation=0):
+    if rotation not in (0, 90, 180, 270):
+        raise ValueError("rotation must be 0, 90, 180, or 270")
+    if rotation == 0:
+        return image
+    return np.rot90(image, -(rotation // 90)).copy()
+
+
 def split_spread(image, ratio=0.5, mode="center", gutter_fraction=0.0):
     spine = spine_position(image, ratio, mode)
     gutter = round(image.shape[1] * gutter_fraction / 2)
@@ -301,6 +309,5 @@ def enhance_page(
         image = np.clip((image.astype(np.float32) - 127.5) * contrast + 127.5, 0, 255).astype(
             np.uint8
         )
-    if rotation:
-        image = np.rot90(image, -(rotation // 90)).copy()
+    image = rotate_image(image, rotation)
     return image
