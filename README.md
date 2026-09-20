@@ -241,6 +241,8 @@ brew install ffmpeg
 manga-scan ui --config config.toml --projects projects --port 8766
 ```
 
+指補修はデフォルトOFFです。`finger_repair=true` の場合だけ、MediaPipeで保存済みの手マスクをページ座標へ写し、同じ見開き区間の別候補をOpenCVで位置合わせします。採用ページで指と判定された画素のうち、donor側で手に隠れていない場所だけを実画素で置き換えます。生成AIやinpaintingモデルは使いません。位置合わせが不確実なdonorは使わず、復元率が `finger_repair_min_coverage`（既定90%）未満なら残りを元画素のまま `finger_repair_incomplete` として要確認にします。
+
 ### `No stable intervals found`
 
 各見開きで静止する時間を長くしてください。それでも検出できない場合は `config.toml` の `stable_frames` や `motion_threshold` を調整します。
@@ -329,9 +331,9 @@ dewarp_max_strength = 0.25
 dewarp_min_confidence = 0.6
 ```
 
-自動推定は、ページ内を複数の高さ帯に分けて縦エッジ間隔を測り、背側だけが一貫して詰まっている場合に限って補正します。推定のばらつきが大きい場合は補正せず、ページを「要確認」にします。完全な3D復元や文字認識は行いません。
+自動推定は、ページ上端から下端まで複数の高さ帯で縦エッジ間隔を測り、背側の横方向圧縮を高さごとに推定します。補正量を1ページ全体で固定せず、**上・中央・下で異なる強さの2D remap**を使うため、背の中央だけ強く浮いている本にも追従できます。十分に測定できない場合は補正せず、ページを「要確認」にします。完全な3D復元や文字認識は行いません。
 
-レビュー画面では、ページごとに推定強度・信頼度を確認できます。自動補正を適用したくないページは「自動補正OFF」で片側だけ無効化できます。自動モードでは `debug/dewarp/` に補正前PNGと、推定した横方向remapを確認するグリッド画像を保存します。
+レビュー画面では、ページごとに最大補正量・高さ方向差・信頼度を確認できます。自動補正を適用したくないページは「自動補正OFF」で片側だけ無効化できます。自動モードでは `debug/dewarp/` に補正前PNGと、実際の高さ別remapを確認するグリッド画像を保存します。
 
 従来の固定補正も残しています。
 
@@ -342,7 +344,7 @@ dewarp_strength = 0.15
 
 `dewarp_mode = "off"` なら湾曲補正を完全に無効化します。表紙は背表紙側を一意に決められないため、自動モードの対象外です。表紙に固定補正をかけたい場合はmanualモードを使用してください。
 
-補正順は **湾曲補正 → 照明ムラ補正 → 白背景正規化 → grayscale / contrast / rotation** です。
+見開き全体の `rotation` は左右分割より前に適用されます。ページ分割後の補正順は **湾曲補正 → 照明ムラ補正 → 白背景正規化 → grayscale / contrast** です。
 
 ## チューニング
 
@@ -356,7 +358,6 @@ dewarp_strength = 0.15
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
 | 左右でベストな瞬間が違う | `candidate_selection_mode="per_page"`。レビュー画面で左/右だけ候補変更も可能 |
-| 指が写り込む | `finger_repair=true`。同じ場所が別候補でも指で隠れている場合は生成せず要確認にする |
 | 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
 | 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
@@ -365,8 +366,6 @@ dewarp_strength = 0.15
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
-
-指補修はデフォルトOFFです。`finger_repair=true` の場合だけ、MediaPipeで保存済みの手マスクをページ座標へ写し、同じ見開き区間の別候補をOpenCVで位置合わせします。採用ページで指と判定された画素のうち、donor側で手に隠れていない場所だけを実画素で置き換え、境界をfeatherします。生成AIやinpaintingモデルは使いません。復元率が `finger_repair_min_coverage`（既定90%）未満なら、残りは元画素を保ったまま `finger_repair_incomplete` として要確認にします。レビュー画面には復元率・使用donor・未補修マスクを表示します。
 
 候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
 
