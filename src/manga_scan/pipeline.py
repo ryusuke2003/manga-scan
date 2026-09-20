@@ -1454,6 +1454,7 @@ def run(project, roi=None):
                 status="complete",
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
+            refresh_review_safety(manifest)
             update(project, manifest, 1, "完了 — 要確認ページを確認してください")
             return manifest
         except ProcessingCancelled:
