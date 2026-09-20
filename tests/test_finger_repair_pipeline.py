@@ -176,7 +176,9 @@ def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monke
     assert repair["components"][0]["component_id"] == 1
     assert [entry["candidate_id"] for entry in repair["components"][0]["donors"]] == [1, 2]
     assert repair["local_alignment"]["component_count"] == 1
-    assert repair["local_alignment"]["max_shift_px"] == pytest.approx(np.hypot(2.0, -1.0))
+    assert repair["local_alignment"]["max_shift_px"] == pytest.approx(
+        round(float(np.hypot(2.0, -1.0)), 3)
+    )
     assert [entry["candidate_id"] for entry in repair["local_alignment"]["components"]] == [1, 2]
     assert repair["fallback"]["mode"] == "preserve"
     assert repair["target_mask"].endswith("_whole_target.png")
