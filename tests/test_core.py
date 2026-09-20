@@ -103,7 +103,6 @@ def test_candidates_span_interval_including_late_hand_withdrawal():
     assert len({s.index for s in chosen}) == 7
 
 
-
 def test_scan_style_defaults_and_hand_disabled_compatibility():
     cfg = Config().validate()
     assert cfg.reading_order == "rtl"
