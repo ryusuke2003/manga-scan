@@ -77,6 +77,88 @@ MediaPipe公式Pythonチュートリアルのサンプル画像を一時領域�
 左右別候補選択などはReact/Pythonの自動テストで回帰確認している。
 実写動画を使った一連のUI操作は「未検証」に含め、合成入力の自動テストと区別する。
 
+## Issue #53: 指補修のadversarial validation
+
+複数donorによる指補修では、**coverageが高いことだけを成功条件にしない**。
+復元率100%でも文字、コマ線、網点、絵の位置関係を壊していれば不合格とする。
+自動テストは「誤補修をしないための下限の安全制約」、実写確認は「漫画として自然か」の最終判定として扱う。
+
+### 自動テストで固定する安全制約
+
+`tests/test_finger_repair_adversarial.py` では、A/Bのlocal alignment実装に依存しない安全制約を先に固定する。
+
+1. **コマ線が数pxずれるdonor**: target hand mask外の画素がbit-identicalであること。
+2. **縦書き文字/細線が数pxずれるdonor**: target hand mask外へdonor画素が漏れないこと。
+3. **donorが別の指で隠れている**: donor hand mask内の画素を採用せず、埋められない領域をunresolvedとして残すこと。
+4. **ページ湾曲が少し違う**: Aのlocal alignment統合後、下記実写/合成ケースで二重線を目視・自動検証する。C単独PRではproduction algorithm未導入のため成功率テストを先行させない。
+5. **全く違うページ**: alignmentを拒否すること。
+6. **大きなlocal/global shiftが必要**: 上限を超える位置合わせを拒否すること。
+7. **clean context不足**: alignmentを拒否し、無理にcoverageを上げないこと。
+8. **指領域が2か所以上**: 複数donorを使ってもtarget mask外を変更しないこと。
+9. **target mask外の不変性**: 複数component/donorでもbit-identicalを維持すること。
+10. **unresolved**: Review UIの「要確認」件数・フィルタ対象に含め、未補修領域へのリンクを残すこと。
+
+local alignmentのproduction APIが入った後は、上記に加えて
+「global alignmentだけでは数px残るがlocal alignmentなら復元できる」
+「湾曲差があるdonorでも許容範囲だけ局所補正できる」
+をcore/pipeline側で追加検証する。
+
+### Review UIのoptional metadata契約
+
+A/Bが `finger_repair.local_alignment` を出力した場合だけ、既存の指補修欄へコンパクトに表示する。
+metadataが存在しない既存manifestでは何も追加表示しない。
+
+想定する最小形は次の通り。
+
+```json
+{
+  "finger_repair": {
+    "status": "complete",
+    "coverage": 1.0,
+    "donors": [4, 2],
+    "local_alignment": {
+      "component_count": 2,
+      "max_shift_px": 6.0,
+      "components": [
+        {
+          "donor_candidate_id": 4,
+          "score": 0.95,
+          "coverage": 1.0,
+          "dx": 3,
+          "dy": 4
+        }
+      ]
+    }
+  }
+}
+```
+
+Reviewカードでは大量のcomponent詳細は展開せず、例えば
+`局所補正 2領域 · 最大ずれ 6px`
+だけを表示する。`max_shift_px` がない場合はcomponentの `dx/dy`
+（または `shift.dx/shift.dy`）から最大移動量を算出する。
+donor IDs、coverage、target mask、unresolved maskは既存表示を維持する。
+
+### 実写で必ず確認する項目
+
+最低2〜3種類の実写見開きで、target / 採用donor / 補修後画像 / target mask / unresolved maskを並べて確認する。
+100%表示に加えて、細線や網点は必要に応じて200%以上でも確認する。
+
+- [ ] **文字が二重になっていない**。特に縦書き本文、ルビ、細い吹き出し内文字。
+- [ ] **コマ線が二重になっていない**。数pxの平行な線や折れが出ていない。
+- [ ] **網点が不自然になっていない**。位相ずれ、モアレ、局所的な濃淡の継ぎ目がない。
+- [ ] **指の輪郭の一部が残っていない**。肌色の縁、影、爪、半透明な境界が残っていない。
+- [ ] **donor由来の別位置の絵が混ざっていない**。目、髪、背景線、効果線などが別位置から誤貼付されていない。
+- [ ] **target mask外が変わっていない**。補修前後を差分比較し、mask外はbit-identicalである。
+- [ ] donor側で別の指に隠れた領域を使っていない。
+- [ ] ページ湾曲や押さえ方が違うdonorで、局所補正が大きくなりすぎていない。
+- [ ] clean contextが乏しい領域は無理に埋めず、unresolvedとして残る。
+- [ ] 2か所以上の指を別donorから補修した場合も、各領域の境界に継ぎ目がない。
+- [ ] unresolvedが残るページはReviewで「要確認」として数えられ、要確認フィルタでも消えない。
+
+**不合格例**: coverage 100%でも、文字/コマ線の二重化、網点の破綻、donorの別位置の絵の混入、
+target mask外の変更が1つでもあれば不合格とする。coverageを下げてunresolvedを残す方を優先する。
+
 ## 未検証
 
 実写漫画の手検出率、ページ欠落率、4K長時間動画の処理時間・最大メモリ、
