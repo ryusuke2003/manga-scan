@@ -155,7 +155,7 @@ def create_app(projects, config=None):
             directory.mkdir(parents=True, exist_ok=True)
             temporary = directory / f"upload-{uuid.uuid4().hex}{suffix}"
             upload.save(temporary)
-            manifest = import_external_page(project, temporary, request.form.get("page_id") or None)
+            manifest = import_external_page(\n                project,\n                temporary,\n                request.form.get("page_id") or None,\n                display_name=Path(upload.filename).name,\n            )
             return jsonify(manifest)
         finally:
             if temporary is not None:
