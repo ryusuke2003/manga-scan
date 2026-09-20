@@ -9,13 +9,63 @@ from .cover_detect import detect_cover_quad
 from .page_contour import detect_page_quads, spread_quad_from_page_quads
 
 
+def _coarse_spread_priors():
+    """Conservative full-frame priors for open books whose outer edge is obscured."""
+    return [
+        np.asarray([[0.04, 0.03], [0.86, 0.03], [0.86, 0.97], [0.04, 0.97]], np.float32),
+        np.asarray([[0.04, 0.03], [0.96, 0.03], [0.96, 0.97], [0.04, 0.97]], np.float32),
+        np.asarray([[0.09, 0.03], [0.91, 0.03], [0.91, 0.97], [0.09, 0.97]], np.float32),
+        np.asarray([[0.14, 0.03], [0.96, 0.03], [0.96, 0.97], [0.14, 0.97]], np.float32),
+        np.asarray([[0.15, 0.06], [0.85, 0.06], [0.85, 0.94], [0.15, 0.94]], np.float32),
+    ]
+
+
+def _detect_pages_from_priors(
+    working,
+    priors,
+    min_confidence,
+    *,
+    confidence_scale=1.0,
+    confidence_cap=None,
+):
+    best_failure = None
+    successes = []
+    for prior in priors:
+        for spine_ratio in (0.46, 0.50, 0.54):
+            try:
+                pages = detect_page_quads(
+                    working,
+                    prior,
+                    spine_ratio=spine_ratio,
+                    min_confidence=float(min_confidence),
+                )
+            except ValueError:
+                continue
+            confidence = float(pages["confidence"]) * float(confidence_scale)
+            if confidence_cap is not None:
+                confidence = min(confidence, float(confidence_cap))
+            if best_failure is None or confidence > best_failure[0]:
+                best_failure = (confidence, pages)
+            if not pages["detected"]:
+                continue
+            try:
+                roi = spread_quad_from_page_quads(pages)
+            except ValueError:
+                continue
+            successes.append((confidence, roi, pages))
+
+    success = max(successes, key=lambda item: item[0]) if successes else None
+    return success, best_failure
+
+
 def detect_reference_spread(image, min_confidence=0.55):
     """Detect both pages from the full frame and return one outer spread ROI.
 
-    The first stage finds a broad landscape book outline without relying on a
-    user ROI. The second stage verifies that the outline really contains two
-    page-like quads. If either stage is uncertain, callers should fall back to
-    manual four-point selection.
+    Prefer a broad Hough-based book outline, then verify the left/right pages.
+    If hands, page color, or curvature break that outer outline, retry from a
+    small set of conservative centered priors and let the two page detectors
+    establish the actual outer corners. Only a verified two-page result is
+    accepted; otherwise callers still fall back to manual four-point selection.
     """
 
     if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
@@ -38,61 +88,61 @@ def detect_reference_spread(image, min_confidence=0.55):
         aspect_range=(1.05, 3.2),
         target_aspect=1.75,
     )
-    if not outline["detected"]:
-        return {
-            "detected": False,
-            "confidence": round(float(outline["confidence"]), 4),
-            "roi": None,
-            "outline": outline,
-            "pages": None,
-            "stage": "outline",
-        }
 
-    outline_roi = np.asarray(outline["roi"], dtype=np.float32)
-    center = outline_roi.mean(axis=0)
     best_failure = None
-    successes = []
-    for expansion in (1.0, 1.04, 1.08, 1.12):
-        prior = np.clip(center + (outline_roi - center) * expansion, 0, 1)
-        try:
-            pages = detect_page_quads(
-                working,
-                prior,
-                spine_ratio=0.5,
-                min_confidence=float(min_confidence),
-            )
-        except ValueError:
-            continue
-        confidence = min(float(outline["confidence"]), float(pages["confidence"]))
-        if best_failure is None or confidence > best_failure[0]:
-            best_failure = (confidence, pages)
-        if not pages["detected"]:
-            continue
-        try:
-            roi = spread_quad_from_page_quads(pages)
-        except ValueError:
-            continue
-        successes.append((confidence, roi, pages))
+    if outline["detected"]:
+        outline_roi = np.asarray(outline["roi"], dtype=np.float32)
+        center = outline_roi.mean(axis=0)
+        outline_priors = [
+            np.clip(center + (outline_roi - center) * expansion, 0, 1)
+            for expansion in (1.0, 1.04, 1.08, 1.12)
+        ]
+        success, best_failure = _detect_pages_from_priors(
+            working,
+            outline_priors,
+            min_confidence,
+            confidence_cap=float(outline["confidence"]),
+        )
+        if success is not None:
+            confidence, roi, pages = success
+            return {
+                "detected": True,
+                "confidence": round(float(confidence), 4),
+                "roi": roi,
+                "outline": outline,
+                "pages": pages,
+                "stage": "complete",
+                "source": "outline_pages",
+            }
 
-    if not successes:
-        confidence, pages = best_failure or (0.0, None)
+    coarse_success, coarse_failure = _detect_pages_from_priors(
+        working,
+        _coarse_spread_priors(),
+        min_confidence,
+    )
+    if coarse_success is not None:
+        confidence, roi, pages = coarse_success
         return {
-            "detected": False,
+            "detected": True,
             "confidence": round(float(confidence), 4),
-            "roi": None,
+            "roi": roi,
             "outline": outline,
             "pages": pages,
-            "stage": "pages" if pages is not None else "combined",
+            "stage": "complete",
+            "source": "coarse_pages",
         }
 
-    confidence, roi, pages = max(successes, key=lambda item: item[0])
+    failures = [failure for failure in (best_failure, coarse_failure) if failure is not None]
+    confidence, pages = max(failures, key=lambda item: item[0]) if failures else (0.0, None)
+    coarse_evidence = coarse_failure is not None and coarse_failure[0] > 0
     return {
-        "detected": True,
-        "confidence": round(float(confidence), 4),
-        "roi": roi,
+        "detected": False,
+        "confidence": round(max(float(outline.get("confidence", 0.0)), float(confidence)), 4),
+        "roi": None,
         "outline": outline,
         "pages": pages,
-        "stage": "complete",
+        "stage": "pages" if outline["detected"] or coarse_evidence else "outline",
+        "source": None,
     }
 
 
