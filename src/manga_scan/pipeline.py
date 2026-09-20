@@ -948,6 +948,82 @@ def build_pdf(project, manifest):
     build_exports(project, manifest)
 
 
+_PAGE_HISTORY_LIMIT = 30
+
+
+def _page_review_state(manifest):
+    return {
+        "order": [page["id"] for page in manifest.get("pages", [])],
+        "disabled": [
+            page["id"]
+            for page in manifest.get("pages", [])
+            if not page.get("enabled", True)
+        ],
+    }
+
+
+def _page_history(manifest):
+    history = manifest.setdefault("page_history", {})
+    undo = history.setdefault("undo", [])
+    redo = history.setdefault("redo", [])
+    if not isinstance(undo, list) or not isinstance(redo, list):
+        raise ValueError("Invalid page history")
+    return history
+
+
+def _push_page_history(manifest, before, label):
+    history = _page_history(manifest)
+    history["undo"].append({"label": label, "state": before})
+    history["undo"] = history["undo"][-_PAGE_HISTORY_LIMIT:]
+    history["redo"] = []
+
+
+def _clear_page_history(manifest):
+    manifest.pop("page_history", None)
+
+
+def _restore_page_review_state(manifest, state):
+    order = list(state.get("order") or [])
+    current = {page["id"]: page for page in manifest.get("pages", [])}
+    if len(order) != len(current) or set(order) != set(current):
+        raise ValueError("Page history is no longer compatible with the current page set")
+
+    disabled = set(state.get("disabled") or [])
+    unknown_disabled = disabled - set(current)
+    if unknown_disabled:
+        raise ValueError("Page history contains unknown pages")
+
+    manifest["pages"] = [current[page_id] for page_id in order]
+    for page in manifest["pages"]:
+        page["enabled"] = page["id"] not in disabled
+
+
+def _apply_page_history(manifest, direction):
+    history = manifest.get("page_history")
+    if not history:
+        return False
+    if not isinstance(history, dict):
+        raise ValueError("Invalid page history")
+    undo = history.get("undo", [])
+    redo = history.get("redo", [])
+    if not isinstance(undo, list) or not isinstance(redo, list):
+        raise ValueError("Invalid page history")
+    source_name, target_name = (
+        ("undo", "redo") if direction == "undo" else ("redo", "undo")
+    )
+    source = history.get(source_name, [])
+    if not source:
+        return False
+    history.setdefault(target_name, [])
+
+    entry = source.pop()
+    current = _page_review_state(manifest)
+    _restore_page_review_state(manifest, entry["state"])
+    history[target_name].append({"label": entry.get("label", "ページ編集"), "state": current})
+    history[target_name] = history[target_name][-_PAGE_HISTORY_LIMIT:]
+    return True
+
+
 def run(project, roi=None):
     project = Path(project).resolve()
     with project_lock(project):
@@ -1192,13 +1268,48 @@ def edit(project, action, **params):
             manifest["message"] = "PDF / CBZを出力しました"
             save_manifest(project, manifest)
             return manifest
-        if action == "toggle_page":
+        if action in ("undo_page_edit", "redo_page_edit"):
+            changed = _apply_page_history(
+                manifest,
+                "undo" if action == "undo_page_edit" else "redo",
+            )
+            if not changed:
+                return manifest
+        elif action == "toggle_page":
+            before = _page_review_state(manifest)
             page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])
             page["enabled"] = not page["enabled"]
+            _push_page_history(manifest, before, "除外 / 復元")
         elif action == "move_page":
-            index = next(i for i, p in enumerate(manifest["pages"]) if p["id"] == params["page_id"])
-            destination = max(0, min(len(manifest["pages"]) - 1, index + int(params["delta"])))
+            index = next(
+                i for i, p in enumerate(manifest["pages"]) if p["id"] == params["page_id"]
+            )
+            destination = max(
+                0,
+                min(len(manifest["pages"]) - 1, index + int(params["delta"])),
+            )
+            if destination == index:
+                return manifest
+            before = _page_review_state(manifest)
             manifest["pages"].insert(destination, manifest["pages"].pop(index))
+            _push_page_history(manifest, before, "ページ並び替え")
+        elif action == "reorder_pages":
+            requested = params.get("page_ids")
+            if not isinstance(requested, list) or not all(
+                isinstance(page_id, str) for page_id in requested
+            ):
+                raise ValueError("page_ids must be a list of page IDs")
+            current_ids = [page["id"] for page in manifest["pages"]]
+            if len(requested) != len(current_ids) or len(set(requested)) != len(requested):
+                raise ValueError("page_ids must contain every page exactly once")
+            if set(requested) != set(current_ids):
+                raise ValueError("page_ids do not match the current pages")
+            if requested == current_ids:
+                return manifest
+            before = _page_review_state(manifest)
+            pages = {page["id"]: page for page in manifest["pages"]}
+            manifest["pages"] = [pages[page_id] for page_id in requested]
+            _push_page_history(manifest, before, "ドラッグ並び替え")
         elif action == "page_settings":
             page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])
             if page["side"] == "cover":
@@ -1287,8 +1398,11 @@ def edit(project, action, **params):
             new_pages.sort(key=lambda p: order.get(p["id"], len(order)))
             position = next(i for i, p in enumerate(manifest["pages"])
                             if p["spread_id"] == spread["id"])
-            manifest["pages"] = [p for p in manifest["pages"] if p["spread_id"] != spread["id"]]
+            manifest["pages"] = [
+                p for p in manifest["pages"] if p["spread_id"] != spread["id"]
+            ]
             manifest["pages"][position:position] = new_pages
+            _clear_page_history(manifest)
         elif action in (
             "select_candidate",
             "swap",
@@ -1308,11 +1422,13 @@ def edit(project, action, **params):
             if action == "swap":
                 if len(indices) != 2:
                     raise ValueError("Expected two pages in this spread")
+                before = _page_review_state(manifest)
                 a, b = indices
                 manifest["pages"][a], manifest["pages"][b] = (
                     manifest["pages"][b],
                     manifest["pages"][a],
                 )
+                _push_page_history(manifest, before, "左右の順番を入れ替え")
             else:
                 if action in ("crop", "reset_crop"):
                     candidate_id = int(params["candidate_id"])
@@ -1407,6 +1523,7 @@ def edit(project, action, **params):
             manifest["pages"][position:position] = pages
             manifest["spreads"].append(spread)
             manifest["spreads"].sort(key=lambda s: s["start"])
+            _clear_page_history(manifest)
         else:
             raise ValueError("Unknown review action")
         manifest["pdf_stale"] = True
