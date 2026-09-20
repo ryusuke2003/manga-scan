@@ -288,9 +288,13 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
-| 黒ベタや網点が変わる | `contrast=1.0`, `dewarp_strength=0.0`, PNG |
+| 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
+| 黒ベタや網点が変わる | `white_normalization=false`, `contrast=1.0`, `dewarp_strength=0.0`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
+
+白背景正規化はデフォルトOFFです。ONでも暗部はほぼ触らず、明るい紙面候補だけを白へ寄せます。
+薄いトーンを残したい場合は `white_strength` を下げてください。
 
 詳しい判定式やアルゴリズムは [docs/architecture.md](docs/architecture.md) を参照してください。
 

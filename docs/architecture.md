@@ -19,7 +19,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `page_detect.py` / `perspective.py`: 保守的な外周微調整、ROI検証、射影変換。
-- `split.py`: 背の推定、左右分割、グレースケール、コントラスト、回転、任意の円筒リマップ。
+- `split.py`: 背の推定、左右分割、保守的な白背景正規化、グレースケール、コントラスト、回転、任意の円筒リマップ。
 - `dedupe.py`: dHashと局所SSIM。左右半分も比較。
 - `export.py`: 画像PDF、分割コンタクトシート。
 - `pipeline.py`: 処理の接続とレビュー操作。画素アルゴリズムをUIから分離。
@@ -95,6 +95,12 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 
 円筒dewarpは明示設定時だけ水平方向に既存画素をリサンプルする。文字行も生成AIも使わない。
 この単純モデルは実際の本の曲面を推定しない。既定無効。
+
+白背景正規化は既定無効。ON時はページの明るい低彩度画素からrobustなwhite levelを推定し、
+white targetへ緩やかに寄せる。補正重みはwhite levelの約45階調下からsmoothstepで立ち上げるため、
+黒ベタや中間調は原則そのまま残す。カラー画像ではLab色空間を使い、低彩度の明部だけ色かぶりを
+弱める。十分な明るい紙面候補がない暗いページでは補正せずfallbackする。
+将来の照明ムラ補正は、この白背景正規化より前段へ挿入する。
 
 ### 重複
 
