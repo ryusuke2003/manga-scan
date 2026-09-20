@@ -20,10 +20,10 @@ export default function App() {
   const referenceConfirmed = reference?.confirmed ?? true;
   const referenceDetected = Boolean(reference?.detection?.detected && manifest?.roi);
   const activeProjectJob = Boolean(server.job?.busy && server.job.project === project);
-  const exportingPdf = activeProjectJob && server.job.action === 'export';
+  const exportingBook = activeProjectJob && server.job.action === 'export';
   const activeJobMessage = activeProjectJob
     ? server.job.action === 'export'
-      ? 'PDFを生成中…'
+      ? 'PDF / CBZを生成中…'
       : server.job.action === 'process'
         ? manifest?.message
         : '変更を反映中…'
@@ -112,19 +112,19 @@ export default function App() {
       <h2>プロジェクト</h2><div id="projects">{server.projects.map(item => <div className="project-item" key={item.id}>
         <button className={`project-select ${item.id === project ? 'active' : ''}`} title={item.id} onClick={() => scanner.selectProject(item.id)}>{item.source_name}</button>
         <button className="project-delete" disabled={busy} aria-label={`${item.source_name}を削除`} title="プロジェクトを削除" onClick={() => {
-          if (window.confirm(`「${item.source_name}」を削除しますか？\nプロジェクトID: ${item.id}\n\n生成したページ画像やPDFも削除されます。この操作は元に戻せません。`)) scanner.deleteProject(item.id);
+          if (window.confirm(`「${item.source_name}」を削除しますか？\nプロジェクトID: ${item.id}\n\n生成したページ画像やPDF / CBZも削除されます。この操作は元に戻せません。`)) scanner.deleteProject(item.id);
         }}>削除</button>
       </div>)}</div>
       <p className="aside-note">動画から、読むための一冊へ。<br />OCRなし・画像生成なし。</p>
     </aside>
     <main>
-      <header><div><p className="eyebrow">VIDEO → PAGES → PDF</p><h1>{project ? (manifest?.source.split('/').pop() || '読み込み中…') : '漫画を、ページに。'}</h1></div><span className="badge">OFFLINE</span></header>
+      <header><div><p className="eyebrow">VIDEO → PAGES → PDF / CBZ</p><h1>{project ? (manifest?.source.split('/').pop() || '読み込み中…') : '漫画を、ページに。'}</h1></div><span className="badge">OFFLINE</span></header>
       {error && <div id="error" role="alert">{error}</div>}
       {!project && <Setup busy={busy} defaults={server.defaults} onChoose={scanner.choose} onCreate={scanner.create} />}
       {manifest && <>
         {setupStage}
         <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{activeJobMessage ?? (busy && !server.job?.busy && manifest.status !== 'processing' ? '処理中…' : manifest.message)}</strong><span>{activeProjectJob && server.job.action !== 'process' ? '—' : `${Math.round(manifest.progress * 100)}%`}</span></div><progress max="1" value={activeProjectJob && server.job.action !== 'process' ? undefined : manifest.progress} /><p className="muted">{manifest.warnings.join(' / ')}</p></section>
-        {(manifest.pages.length > 0 || manifest.roi) && <Review key={project} manifest={manifest} file={file} busy={busy} exporting={exportingPdf} onEdit={scanner.edit} />}
+        {(manifest.pages.length > 0 || manifest.roi) && <Review key={project} manifest={manifest} file={file} busy={busy} exporting={exportingBook} onEdit={scanner.edit} />}
       </>}
       <footer>完全ローカル · 元動画を変更しません · 手や絵の描き足しは行いません</footer>
     </main>
