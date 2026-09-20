@@ -952,13 +952,15 @@ def build_pdf(project, manifest):
 _PAGE_HISTORY_LIMIT = 30
 
 
-def _page_review_state(manifest):
-    pages = deepcopy(manifest.get("pages", []))
-    return {
-        "pages": pages,
+def _page_review_state(manifest, include_pages=False):
+    pages = manifest.get("pages", [])
+    state = {
         "order": [page["id"] for page in pages],
         "disabled": [page["id"] for page in pages if not page.get("enabled", True)],
     }
+    if include_pages:
+        state["pages"] = deepcopy(pages)
+    return state
 
 
 def _page_history(manifest):
@@ -1021,8 +1023,12 @@ def _apply_page_history(manifest, direction):
     history.setdefault(target_name, [])
 
     entry = source.pop()
-    current = _page_review_state(manifest)
-    _restore_page_review_state(manifest, entry["state"])
+    entry_state = entry["state"]
+    current = _page_review_state(
+        manifest,
+        include_pages=isinstance(entry_state.get("pages"), list),
+    )
+    _restore_page_review_state(manifest, entry_state)
     history[target_name].append({"label": entry.get("label", "ページ編集"), "state": current})
     history[target_name] = history[target_name][-_PAGE_HISTORY_LIMIT:]
     return True
@@ -1273,7 +1279,7 @@ def import_external_page(project, image_path, page_id=None):
     with project_lock(project):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
-        before = _page_review_state(manifest)
+        before = _page_review_state(manifest, include_pages=True)
         imported = project / "source" / "external_pages"
         imported.mkdir(parents=True, exist_ok=True)
         serial = len(list(imported.glob("external_*"))) + 1
