@@ -647,9 +647,6 @@ def repair_finger_regions(
                 "candidate_id": donor["candidate_id"],
                 "image": aligned_image,
                 "mask": aligned_mask,
-                "source_mask": (
-                    _binary_mask(donor["mask"], target.shape) * 255
-                ).astype(np.uint8),
                 "global_score": float(global_score),
             }
         )
@@ -688,11 +685,11 @@ def repair_finger_regions(
                     component_used.add(candidate_id)
                     continue
 
-                # Stay conservative across every coordinate system:
-                # a pixel is eligible only if it was clean before global
-                # alignment, after global alignment, and after local refinement.
-                source_clean = _safe_clean_mask(donor["source_mask"], target.shape)
-                usable = unresolved_component & local["clean"] & source_clean
+                # local["clean"] already requires the donor pixel to be clean
+                # in both the globally aligned and locally refined donor masks.
+                # The raw donor mask is still in pre-global coordinates, so
+                # applying it here would reject valid pixels after translation.
+                usable = unresolved_component & local["clean"]
                 usable_pixels = int(np.count_nonzero(usable))
                 if usable_pixels < 8:
                     component_used.add(candidate_id)
