@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
-from scripts.run_real_benchmark import polygon_iou, validate_manifest
+from scripts.run_real_benchmark import (
+    _repair_result_isolated,
+    polygon_iou,
+    validate_manifest,
+)
 
 
 def test_real_benchmark_manifest_is_valid():
@@ -17,3 +21,18 @@ def test_polygon_iou_identical_and_disjoint():
     b = [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]
     assert polygon_iou(a, a) == 1.0
     assert polygon_iou(a, b) == 0.0
+
+
+def test_repair_worker_reports_python_errors_without_aborting(tmp_path):
+    result = _repair_result_isolated(
+        {"id": "video", "expected_rotation": 0},
+        {"id": "pair", "target_time": 0.0, "donor_times": [1.0]},
+        tmp_path / "missing.mov",
+        tmp_path / "missing.task",
+        timeout=10,
+    )
+
+    assert result["passed"] is False
+    assert result["video_id"] == "video"
+    assert result["pair_id"] == "pair"
+    assert "Hand model missing" in result["error"]

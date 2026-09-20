@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import multiprocessing as mp
 import os
+import signal
 import sys
 from collections import Counter
 from pathlib import Path
@@ -278,6 +280,80 @@ def _repair_result(video_spec, pair, path, model_path):
     }
 
 
+def _repair_error_result(video_spec, pair, error):
+    return {
+        "video_id": video_spec["id"],
+        "pair_id": pair["id"],
+        "target_time": pair["target_time"],
+        "donor_times": pair["donor_times"],
+        "tags": pair.get("tags", []),
+        "passed": False,
+        "error": error,
+    }
+
+
+def _repair_worker(connection, video_spec, pair, path, model_path):
+    """Keep native MediaPipe failures from aborting the full benchmark run."""
+    try:
+        result = _repair_result(video_spec, pair, Path(path), Path(model_path))
+        connection.send({"ok": True, "result": result})
+    except Exception as exc:
+        connection.send({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        connection.close()
+
+
+def _repair_result_isolated(video_spec, pair, path, model_path, timeout=180):
+    context = mp.get_context("spawn")
+    reader, writer = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_repair_worker,
+        args=(writer, video_spec, pair, str(path), str(model_path)),
+        name=f"real-benchmark-{video_spec['id']}-{pair['id']}",
+    )
+    process.start()
+    writer.close()
+    process.join(timeout)
+
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        reader.close()
+        return _repair_error_result(
+            video_spec,
+            pair,
+            f"MediaPipe worker exceeded the {timeout}s timeout",
+        )
+
+    payload = None
+    try:
+        if reader.poll():
+            payload = reader.recv()
+    except EOFError:
+        payload = None
+    finally:
+        reader.close()
+
+    if payload and payload.get("ok"):
+        return payload["result"]
+    if payload:
+        return _repair_error_result(video_spec, pair, payload["error"])
+
+    exitcode = process.exitcode
+    if exitcode is not None and exitcode < 0:
+        try:
+            reason = signal.Signals(-exitcode).name
+        except ValueError:
+            reason = f"signal {-exitcode}"
+        error = (
+            f"MediaPipe worker terminated by {reason}. On macOS, run the benchmark "
+            "from a session with Metal/GPU service access."
+        )
+    else:
+        error = f"MediaPipe worker exited without a result (exit code {exitcode})"
+    return _repair_error_result(video_spec, pair, error)
+
+
 def _summarize(report):
     checks = Counter()
     passes = Counter()
@@ -377,7 +453,9 @@ def run(
 
         if with_hands:
             for pair in spec.get("repair_pairs", []):
-                report["repairs"].append(_repair_result(spec, pair, path, hand_model))
+                report["repairs"].append(
+                    _repair_result_isolated(spec, pair, path, hand_model)
+                )
 
     report["summary"] = _summarize(report)
     output.parent.mkdir(parents=True, exist_ok=True)

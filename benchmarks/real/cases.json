@@ -4,11 +4,11 @@
   "videos": [
     {
       "id": "desk-landscape-6481",
-      "filename": "IMG_6481.mp4",
-      "sha256": "0fe83323cb0f49e9e4706176e36ad81a11d6e682c8d843396afdcf600e54a185",
-      "width": 910,
-      "height": 512,
-      "duration": 135.266667,
+      "filename": "IMG_6481.MOV",
+      "sha256": "2c0580439a6a7e2db24a558c59e74cf276b5b03e8bbd4cd8e5f6d9052a976473",
+      "width": 1920,
+      "height": 1080,
+      "duration": 135.24,
       "expected_rotation": 0,
       "samples": [
         {
@@ -53,11 +53,11 @@
     },
     {
       "id": "handheld-rotated-6474",
-      "filename": "IMG_6474.mp4",
-      "sha256": "577c4849958f33ca66308c533303f67f1426e56c13b0ccc1e46af1e5eec2de6e",
-      "width": 512,
-      "height": 910,
-      "duration": 62.2,
+      "filename": "IMG_6474.MOV",
+      "sha256": "19103bec33a6a49d336e608c638b2ecd65210686c8e73f55d62d4b37fe2d8f42",
+      "width": 1920,
+      "height": 1080,
+      "duration": 62.168333,
       "expected_rotation": 270,
       "samples": [
         {
@@ -91,11 +91,11 @@
     },
     {
       "id": "desk-portrait-6479",
-      "filename": "IMG_6479.mp4",
-      "sha256": "561ca857b219df60fb14f86c41595195fd38cde4c85de86ca84feb2a729933b1",
-      "width": 512,
-      "height": 910,
-      "duration": 60.366667,
+      "filename": "IMG_6479.MOV",
+      "sha256": "e70badb052c904184b9484aefe54e931a4aa06d90cd920a75b90d836ce6dbc8a",
+      "width": 1920,
+      "height": 1080,
+      "duration": 60.335,
       "expected_rotation": 0,
       "samples": [
         {

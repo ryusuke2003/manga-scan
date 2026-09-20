@@ -27,9 +27,9 @@ Copy the exact source videos into:
 
 ```text
 benchmarks/real/videos/
-  IMG_6474.mp4
-  IMG_6479.mp4
-  IMG_6481.mp4
+  IMG_6474.MOV
+  IMG_6479.MOV
+  IMG_6481.MOV
 ```
 
 The runner verifies SHA-256 before using a file. A renamed file is also accepted when its hash matches.
@@ -87,6 +87,12 @@ The initial repair pairs use different moments from the same physical spread. Th
 - number of changed pixels outside the target hand mask
 
 The safety invariant is strict: pixels outside the target mask must remain bit-identical.
+
+MediaPipe's macOS wheel initializes a Metal context even when its inference
+delegate is explicitly set to CPU. Run `--with-hands` from a normal interactive
+macOS session with GPU service access. The benchmark isolates each repair pair
+in a child process so a native MediaPipe/Metal abort is recorded as a failed
+repair check instead of terminating the entire benchmark without a report.
 
 This is deliberately not treated as a pixel-perfect restoration benchmark yet: there is no committed clean copyrighted ground-truth image. Coverage and safety are measured now; later corpus versions can add locally stored clean references without publishing the media.
 
