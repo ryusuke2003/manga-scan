@@ -149,6 +149,8 @@ class Config:
         data = dict(data)
         if data.get("hand_backend") == "none" and "finger_repair" not in data:
             data["finger_repair"] = False
+        if "page_background_fill" not in data:
+            data["page_background_fill"] = "preserve"
         # Numeric rotation existed before auto detection. Keep old configs and
         # manifests manual unless they explicitly opt into the new behavior.
         if data.get("rotation") in (90, 180, 270) and "auto_rotation" not in data:
