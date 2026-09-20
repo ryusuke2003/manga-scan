@@ -33,7 +33,7 @@ export default function RoiSelector({
   useEffect(() => {
     if (!image || !canvas.current) return;
     const element = canvas.current;
-    const scale = Math.min(1, 1100 / image.naturalWidth);
+    const scale = Math.min(1, 2048 / image.naturalWidth);
     element.width = Math.round(image.naturalWidth * scale);
     element.height = Math.round(image.naturalHeight * scale);
     const ctx = element.getContext('2d');
