@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from manga_scan.page_contour import (
+    consensus_page_quads,
     detect_page_quads,
     draw_page_quads,
     spread_quad_from_page_quads,
@@ -162,3 +163,103 @@ def test_spread_quad_rejects_fallback_or_invalid_page_detection():
         spread_quad_from_page_quads({"detected": False})
     with pytest.raises(ValueError, match="left/right quads"):
         spread_quad_from_page_quads({"detected": True, "left": {}, "right": {}})
+
+
+def _page_detection(
+    candidate_id,
+    left_quad,
+    right_quad,
+    *,
+    left_confidence=0.9,
+    right_confidence=0.9,
+    left_detected=True,
+    right_detected=True,
+):
+    return {
+        "candidate_id": candidate_id,
+        "left": {
+            "quad": np.asarray(left_quad, dtype=np.float32).tolist(),
+            "confidence": left_confidence,
+            "detected": left_detected,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": np.asarray(right_quad, dtype=np.float32).tolist(),
+            "confidence": right_confidence,
+            "detected": right_detected,
+            "touches_frame": False,
+        },
+        "confidence": min(left_confidence, right_confidence),
+        "detected": left_detected and right_detected,
+    }
+
+
+def test_consensus_page_quads_rejects_shifted_outlier():
+    left = np.asarray([[.08, .10], [.48, .11], [.47, .90], [.07, .89]], np.float32)
+    right = np.asarray([[.52, .11], [.92, .10], [.93, .89], [.53, .90]], np.float32)
+    detections = []
+    for candidate_id, shift in ((1, -0.002), (2, 0.0), (3, 0.002)):
+        delta = np.asarray([shift, 0], np.float32)
+        detections.append(
+            _page_detection(candidate_id, left + delta, right + delta)
+        )
+    detections.append(
+        _page_detection(
+            99,
+            left + np.asarray([0.12, 0], np.float32),
+            right + np.asarray([0.12, 0], np.float32),
+            left_confidence=0.99,
+            right_confidence=0.99,
+        )
+    )
+
+    result = consensus_page_quads(
+        detections,
+        min_confidence=0.5,
+        max_corner_deviation=0.04,
+        anchor_ids={"left": 2, "right": 2},
+    )
+
+    assert result["detected"]
+    np.testing.assert_allclose(result["left"]["quad"], left, atol=0.003)
+    np.testing.assert_allclose(result["right"]["quad"], right, atol=0.003)
+    assert result["left"]["consensus_count"] == 3
+    assert result["right"]["consensus_count"] == 3
+    assert result["left"]["consensus_outlier_ids"] == [99]
+    assert result["right"]["consensus_outlier_ids"] == [99]
+
+
+def test_consensus_page_quads_can_recover_each_side_from_different_frames():
+    left = np.asarray([[.08, .10], [.48, .11], [.47, .90], [.07, .89]], np.float32)
+    right = np.asarray([[.52, .11], [.92, .10], [.93, .89], [.53, .90]], np.float32)
+    fallback_left = left + np.asarray([0.03, 0], np.float32)
+    fallback_right = right - np.asarray([0.03, 0], np.float32)
+
+    result = consensus_page_quads(
+        [
+            _page_detection(
+                1,
+                left,
+                fallback_right,
+                left_detected=True,
+                right_detected=False,
+                right_confidence=0.2,
+            ),
+            _page_detection(
+                2,
+                fallback_left,
+                right,
+                left_detected=False,
+                right_detected=True,
+                left_confidence=0.2,
+            ),
+        ],
+        min_confidence=0.5,
+        anchor_ids={"left": 1, "right": 2},
+    )
+
+    assert result["detected"]
+    np.testing.assert_allclose(result["left"]["quad"], left, atol=1e-6)
+    np.testing.assert_allclose(result["right"]["quad"], right, atol=1e-6)
+    assert result["left"]["consensus_candidate_ids"] == [1]
+    assert result["right"]["consensus_candidate_ids"] == [2]
