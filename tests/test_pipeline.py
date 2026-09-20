@@ -2,6 +2,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import cv2
@@ -46,6 +47,11 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert manifest["spreads"][2]["duplicate_of"] == "spread_0002"
     assert [p["side"] for p in manifest["pages"]][:2] == ["right", "left"]
     assert len(PdfReader(project / "output/manga.pdf").pages) == 6
+    with zipfile.ZipFile(project / "output/manga.cbz") as archive:
+        assert archive.namelist() == [f"{i:03d}.png" for i in range(1, 7)]
+        enabled = [page for page in manifest["pages"] if page["enabled"]]
+        assert archive.read("001.png") == (project / enabled[0]["path"]).read_bytes()
+    assert manifest["cbz"] == "output/manga.cbz"
     assert (project / "debug/motion.csv").is_file()
     assert (project / "debug/scores.csv").is_file()
     assert (project / "debug/contact_sheet.jpg").is_file()
@@ -59,6 +65,8 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert manifest["pages"][0]["side"] == "left"
     edit(project, "export")
     assert len(PdfReader(project / "output/manga.pdf").pages) == 5
+    with zipfile.ZipFile(project / "output/manga.cbz") as archive:
+        assert len(archive.namelist()) == 5
     manifest = edit(project, "add_frame", time=0.8)
     assert len(manifest["pages"]) == 10
     manual_spread = next(
