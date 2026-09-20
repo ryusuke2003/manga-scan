@@ -54,9 +54,8 @@ def _ffprobe_input(path):
             "0",
             "-protocol_whitelist",
             "file,pipe",
-            str(path),
         ]
-    return ["-protocol_whitelist", "file,pipe", str(path)]
+    return ["-protocol_whitelist", "file,pipe"]
 
 
 def probe(path):
@@ -74,6 +73,7 @@ def probe(path):
             "-show_format",
             "-of",
             "json",
+            str(path),
         ],
         capture_output=True,
         check=True,
