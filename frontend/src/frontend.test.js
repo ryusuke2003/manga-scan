@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { fileUrl } from './api.js';
+import { clampTime } from './components/FrameSelector.jsx';
 import { normalizedPoint } from './components/RoiSelector.jsx';
 import { didJobFinish, shouldReportPollError } from './useScanner.js';
 
@@ -8,6 +9,12 @@ describe('frontend helpers', () => {
   it('builds encoded local file URLs', () => {
     expect(fileUrl('scan 01', 'pages/right page.png', 3))
       .toBe('/files/scan%2001/pages/right%20page.png?v=3');
+  });
+
+  it('clamps setup timestamps to the video duration', () => {
+    expect(clampTime(-2, 10)).toBe(0);
+    expect(clampTime(4.25, 10)).toBe(4.25);
+    expect(clampTime(12, 10)).toBeCloseTo(9.999);
   });
 
   it('normalizes and clamps ROI pointer coordinates', () => {

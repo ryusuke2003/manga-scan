@@ -57,6 +57,36 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     return record
 
 
+def render_cover(project, manifest):
+    cover = manifest.get("cover") or {}
+    if cover.get("status") != "ready":
+        return None
+    cfg = Config.from_dict(manifest["config"])
+    image = extract_frame(manifest["source"], cover["time"], hwaccel=cfg.hwaccel)
+    rectified = warp_roi(image, cover["roi"])
+    page_image = enhance_page(
+        rectified, cfg.grayscale, cfg.contrast, cfg.rotation, cfg.dewarp_strength
+    )
+    ext = "png" if cfg.image_format == "png" else "jpg"
+    path = f"pages/cover.{ext}"
+    save_image(project / path, page_image, cfg.jpeg_quality)
+    h, w = page_image.shape[:2]
+    thumb = cv2.resize(page_image, (max(1, round(w * min(1, 480 / h))), min(480, h)))
+    preview = "pages/cover_thumb.jpg"
+    save_image(project / preview, thumb)
+    cover["path"] = path
+    cover["preview"] = preview
+    return {
+        "id": "cover",
+        "spread_id": "cover",
+        "side": "cover",
+        "path": path,
+        "preview": preview,
+        "enabled": True,
+        "suspect": [],
+    }
+
+
 def render_spread(project, manifest, spread):
     cfg = Config.from_dict(manifest["config"])
     chosen = next(c for c in spread["candidates"] if c["id"] == spread["selected"])
@@ -117,6 +147,8 @@ def run(project, roi=None):
             raise ValueError("Project already processed. Use review edits or create a new project")
         cfg = Config.from_dict(manifest["config"])
         manifest["roi"] = validate_roi(roi if roi is not None else manifest["roi"]).tolist()
+        reference = manifest.get("reference") or {}
+        analysis_start = float(reference.get("time", 0)) if reference.get("confirmed") else 0.0
         detector = HandDetector(cfg)  # Fail before expensive analysis if hand support is missing.
         handler = logging.FileHandler(project / "debug/process.log", encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -126,6 +158,9 @@ def run(project, roi=None):
         try:
             manifest.update(status="processing", spreads=[], pages=[], pdf_stale=True)
             manifest.pop("error", None)
+            cover_page = render_cover(project, manifest)
+            if cover_page:
+                manifest["pages"].append(cover_page)
             update(project, manifest, 0, "低解像度で動きを解析中")
             if cfg.hand_backend == "mediapipe":
                 manifest["hand_model_sha256"] = hashlib.sha256(
@@ -143,7 +178,7 @@ def run(project, roi=None):
                 writer = csv.writer(f)
                 writer.writerow(["index", "time", "motion", "sharpness", "state"])
                 for index, timestamp, frame in sample_frames(
-                    manifest["source"], fps, size, cfg.hwaccel
+                    manifest["source"], fps, size, cfg.hwaccel, start_time=analysis_start
                 ):
                     cropped = warp_roi(frame, manifest["roi"])
                     motion = motion_score(previous, cropped) if previous is not None else 1.0
@@ -159,7 +194,12 @@ def run(project, roi=None):
                         update(
                             project,
                             manifest,
-                            min(0.4, 0.4 * timestamp / manifest["metadata"]["duration"]),
+                            min(
+                                0.4,
+                                0.4
+                                * max(0.0, timestamp - analysis_start)
+                                / max(0.001, manifest["metadata"]["duration"] - analysis_start),
+                            ),
                             f"動き解析 {timestamp:.1f}s / {manifest['metadata']['duration']:.1f}s",
                         )
             tail = machine.finish()
