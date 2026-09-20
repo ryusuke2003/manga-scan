@@ -13,6 +13,13 @@ const cropStatusLabel = crop => ({
   reference: '外周の自動検出はOFF',
   manual: '外周を手動指定',
 }[crop?.status] || '');
+const fingerFallbackLabel = repair => {
+  const fallback = repair?.fallback;
+  if (!fallback?.applied) return '';
+  if (fallback.mode === 'white') return ' · 未補修部を白塗り';
+  if (fallback.mode === 'paper') return ` · 紙面補完 ${Math.round((fallback.filled_fraction ?? 0) * 100)}%`;
+  return '';
+};
 
 function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
@@ -116,7 +123,7 @@ export default function Review({ manifest, file, busy, onEdit }) {
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
-        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}</span>
+        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}</span>
         {page.finger_repair.status === 'incomplete' && <p className="muted">隠れた部分を別候補から十分に補修できず、指が残っています。別の候補も確認してください。</p>}
         <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">指マスク ↗</a>}
           {page.finger_repair.unresolved_mask && <a href={file(page.finger_repair.unresolved_mask)} target="_blank" rel="noopener">未補修領域 ↗</a>}</div>
