@@ -61,6 +61,17 @@ def test_detect_page_quads_falls_back_safely_when_no_edges_exist():
     np.testing.assert_allclose(result["right"]["quad"], expected_right, atol=1e-6)
 
 
+def test_small_valid_spread_roi_can_still_fall_back_per_page():
+    image = np.full((400, 800, 3), 128, dtype=np.uint8)
+    small_reference = [[0.45, 0.40], [0.56, 0.40], [0.56, 0.46], [0.45, 0.46]]
+
+    result = detect_page_quads(image, small_reference)
+
+    assert not result["detected"]
+    assert len(result["left"]["quad"]) == 4
+    assert len(result["right"]["quad"]) == 4
+
+
 def test_min_confidence_can_force_reference_fallback():
     image = synthetic_spread()
     detected = detect_page_quads(image, REFERENCE, min_confidence=0.5)
