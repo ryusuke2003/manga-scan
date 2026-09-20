@@ -5,7 +5,7 @@ import pytest
 from manga_scan.config import Config
 from manga_scan.finger_repair import align_donor_page, repair_finger_regions
 from manga_scan.pipeline import candidate_page_hand_mask
-from manga_scan.split import split_spread
+from manga_scan.split import rotate_image, split_spread
 from manga_scan.storage import save_image
 
 
@@ -148,6 +148,42 @@ def test_candidate_hand_mask_uses_same_spread_page_coordinates(tmp_path):
     assert np.count_nonzero(right) == 0
     assert left.shape == sides["left"].shape[:2]
     assert right.shape == sides["right"].shape[:2]
+
+
+@pytest.mark.parametrize("rotation", [90, 270])
+def test_candidate_hand_mask_follows_pre_split_rotation(tmp_path, rotation):
+    frame = _page(height=100, width=200)
+    hand_mask = _mask(frame.shape, [(12, 18, 65, 78)])
+    save_image(tmp_path / "rotated_mask.png", hand_mask)
+
+    rectified = rotate_image(frame, rotation)
+    expected_mask = rotate_image(hand_mask, rotation)
+    sides, spine = split_spread(rectified, 0.5, "center", 0.0)
+    expected_sides, _ = split_spread(expected_mask, 0.5, "center", 0.0)
+    data = {
+        "chosen": {
+            "hand_mask": "rotated_mask.png",
+            "roi": [[0, 0], [1, 0], [1, 1], [0, 1]],
+        },
+        "source_frame_shape": frame.shape,
+        "rectified": rectified,
+        "sides": sides,
+        "state": {
+            "perspective_mode_used": "spread",
+            "spine_px": spine,
+            "spine_ratio": 0.5,
+        },
+    }
+    cfg = Config(hand_backend="mediapipe", rotation=rotation)
+
+    np.testing.assert_array_equal(
+        candidate_page_hand_mask(tmp_path, data, "left", cfg),
+        expected_sides["left"],
+    )
+    np.testing.assert_array_equal(
+        candidate_page_hand_mask(tmp_path, data, "right", cfg),
+        expected_sides["right"],
+    )
 
 
 def test_finger_repair_requires_mediapipe():
