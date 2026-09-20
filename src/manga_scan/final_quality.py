@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from .dedupe import compare, gray_thumb
-from .score import glare_fraction
+from .glare import detect_glare_mask, glare_overlap_fraction
 
 FINAL_QUALITY_REASONS = {
     "final_edge_crop_suspected",
@@ -165,7 +165,8 @@ def final_quality_checks(
     if edge["edge_line_fraction"] >= 0.72 and edge["edge_line_score"] >= 0.48:
         reasons.append("final_edge_crop_suspected")
 
-    glare = float(glare_fraction(image))
+    glare_mask = detect_glare_mask(image)
+    glare = float(glare_overlap_fraction(glare_mask))
     metrics["glare_fraction"] = round(glare, 6)
     if glare >= 0.003:
         reasons.append("final_glare_residual")
