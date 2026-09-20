@@ -1,5 +1,3 @@
-import math
-
 import cv2
 import numpy as np
 
@@ -77,7 +75,7 @@ def estimate_illumination(image):
 def correct_illumination(image, strength=0.7):
     """Normalize slow lighting/shadow variation while preserving local page detail."""
     _validate_image(image)
-    if type(strength) not in (int, float) or not math.isfinite(strength):
+    if type(strength) not in (int, float) or not np.isfinite(strength):
         raise ValueError("illumination strength must be a finite number")
     if not 0 <= strength <= 1:
         raise ValueError("illumination strength must be between 0 and 1")
