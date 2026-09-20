@@ -1132,7 +1132,36 @@ def render_spread(project, manifest, spread):
             for side in ("left", "right")
             if selected_pages[side] == candidate_id
         ]
+        manual_override_sides = [
+            side
+            for side in consensus_sides
+            if _page_override(spread, side).get("page_quad_mode") == "manual"
+        ]
         if page_consensus is not None and consensus_sides:
+            if manual_override_sides:
+                sides = rectify_spread_pages(
+                    project,
+                    image,
+                    rectified,
+                    roi,
+                    state,
+                    cfg,
+                    page_detection=page_consensus,
+                    consensus_sides=consensus_sides,
+                    manual_sides=manual_override_sides,
+                )
+            else:
+                sides = rectify_spread_pages(
+                    project,
+                    image,
+                    rectified,
+                    roi,
+                    state,
+                    cfg,
+                    page_detection=page_consensus,
+                    consensus_sides=consensus_sides,
+                )
+        elif manual_override_sides:
             sides = rectify_spread_pages(
                 project,
                 image,
@@ -1140,20 +1169,10 @@ def render_spread(project, manifest, spread):
                 roi,
                 state,
                 cfg,
-                page_detection=page_consensus,
-                consensus_sides=consensus_sides,
-                manual_sides=consensus_sides,
+                manual_sides=manual_override_sides,
             )
         else:
-            sides = rectify_spread_pages(
-                project,
-                image,
-                rectified,
-                roi,
-                state,
-                cfg,
-                manual_sides=consensus_sides,
-            )
+            sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
         cache[candidate_id] = {
             "chosen": chosen,
             "rectified": rectified,
