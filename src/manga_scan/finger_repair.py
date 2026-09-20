@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 _MAX_ALIGNMENT_SIDE = 640
 _MIN_ALIGNMENT_SCORE = 0.55
 _MAX_TRANSLATION_FRACTION = 0.18
