@@ -101,6 +101,10 @@ def test_render_spread_rotated_per_page_integration(
         rotation=rotation,
         reading_order="ltr",
         image_format="png",
+        grayscale=False,
+        dewarp_mode="off",
+        illumination_correction=False,
+        white_normalization=False,
     )
     manifest = {
         "source": "unused.mp4",
