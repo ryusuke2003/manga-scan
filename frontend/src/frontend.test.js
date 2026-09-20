@@ -57,7 +57,8 @@ describe('frontend helpers', () => {
 
     fireEvent.change(input, { target: { value: '10' } });
     expect(confirm.disabled).toBe(true);
-    expect(screen.getByText(/プレビュー更新.*確認してから確定/)).toBeInTheDocument();
+    expect(screen.getByText(/プレビュー更新.*確認してから確定/).textContent)
+      .toContain('確認してから確定');
 
     fireEvent.click(screen.getByRole('button', { name: 'プレビュー更新' }));
     expect(onPreview).toHaveBeenCalledWith(10);
