@@ -80,6 +80,7 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     project = tmp_path / "cover-book"
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         analysis_width=480,
         candidates_per_spread=3,
         dewarp_mode="auto",
@@ -160,6 +161,7 @@ def test_candidate_review_preview_uses_configured_rotation(video, tmp_path):
     project = tmp_path / "rotated-review"
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         analysis_width=480,
         candidates_per_spread=3,
         candidate_selection_mode="per_page",
@@ -218,7 +220,7 @@ def test_rotation_metadata_shared_by_preview_and_analysis(video, tmp_path):
     frame = extract_frame(output)
     assert frame.shape == (480, 320, 3)
     project = tmp_path / "rotated-project"
-    manifest = create_project(output, project, Config(hand_backend="none"))
+    manifest = create_project(output, project, Config(hand_backend="none", finger_repair=False))
     assert manifest["metadata"]["display_width"] == 320
     assert manifest["metadata"]["display_height"] == 480
     samples = sample_frames(output, 10, (160, 240))
