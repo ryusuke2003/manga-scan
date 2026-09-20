@@ -118,7 +118,10 @@ export default function useScanner() {
       const result = await request(path, { body, token: server.token });
       if (result.started) {
         jobBusy.current = true;
-        setServer(value => ({ ...value, job: { busy: true, project, error: null } }));
+        setServer(value => ({
+          ...value,
+          job: { busy: true, project, action: result.action ?? null, error: null },
+        }));
       }
       onSuccess?.(result);
       return result;
