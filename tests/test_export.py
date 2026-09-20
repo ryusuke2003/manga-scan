@@ -1,9 +1,11 @@
+import zipfile
+
 import numpy as np
 from PIL import Image
 from pypdf import PdfReader
 
 from manga_scan.config import Config
-from manga_scan.export import export_pdf
+from manga_scan.export import export_cbz, export_pdf
 from manga_scan.pipeline import edit
 from manga_scan.storage import read_manifest, save_manifest
 
@@ -30,6 +32,32 @@ def test_jpeg_embedded_without_second_recompression(tmp_path):
     assert embedded.data == path.read_bytes()
 
 
+def test_cbz_preserves_page_bytes_order_and_uses_store_mode(tmp_path):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.jpg"
+    Image.new("RGB", (31, 47), "#123456").save(first)
+    Image.new("RGB", (29, 43), "#abcdef").save(second, quality=83)
+
+    output = export_cbz([second, first], tmp_path / "book.cbz")
+
+    with zipfile.ZipFile(output) as archive:
+        infos = archive.infolist()
+        assert [info.filename for info in infos] == ["001.jpg", "002.png"]
+        assert all(info.compress_type == zipfile.ZIP_STORED for info in infos)
+        assert archive.read("001.jpg") == second.read_bytes()
+        assert archive.read("002.png") == first.read_bytes()
+
+
+def test_cbz_export_fails_without_destroying_previous_archive(tmp_path):
+    output = tmp_path / "old.cbz"
+    output.write_bytes(b"previous")
+    import pytest
+
+    with pytest.raises(Exception):
+        export_cbz([tmp_path / "missing.png"], output)
+    assert output.read_bytes() == b"previous"
+
+
 def test_export_fails_without_destroying_previous_pdf(tmp_path):
     output = tmp_path / "old.pdf"
     output.write_bytes(b"previous")
@@ -38,6 +66,60 @@ def test_export_fails_without_destroying_previous_pdf(tmp_path):
     with pytest.raises(Exception):
         export_pdf([tmp_path / "missing.png"], output)
     assert output.read_bytes() == b"previous"
+
+
+def test_combined_export_failure_keeps_previous_pdf_and_cbz(tmp_path, monkeypatch):
+    pages = tmp_path / "pages"
+    output = tmp_path / "output"
+    pages.mkdir()
+    output.mkdir()
+    Image.new("RGB", (40, 60), "white").save(pages / "page.png")
+    (output / "manga.pdf").write_bytes(b"previous-pdf")
+    (output / "manga.cbz").write_bytes(b"previous-cbz")
+
+    config = Config(hand_backend="none", finger_repair=False).to_dict()
+    save_manifest(
+        tmp_path,
+        {
+            "source": "/tmp/book.mp4",
+            "status": "complete",
+            "config": config,
+            "pages": [
+                {
+                    "id": "page-1",
+                    "spread_id": "spread-1",
+                    "side": "spread",
+                    "path": "pages/page.png",
+                    "enabled": True,
+                    "suspect": [],
+                }
+            ],
+            "spreads": [],
+            "pdf": "output/manga.pdf",
+            "cbz": "output/manga.cbz",
+            "pdf_stale": True,
+            "progress": 1,
+            "message": "完了",
+        },
+    )
+
+    import manga_scan.pipeline as pipeline
+    import pytest
+
+    monkeypatch.setattr(
+        pipeline,
+        "export_cbz",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("cbz failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="cbz failed"):
+        edit(tmp_path, "export")
+
+    assert (output / "manga.pdf").read_bytes() == b"previous-pdf"
+    assert (output / "manga.cbz").read_bytes() == b"previous-cbz"
+    persisted = read_manifest(tmp_path)
+    assert persisted["pdf_stale"] is True
+    assert persisted["message"] == "PDF / CBZの出力に失敗しました"
 
 
 def test_review_export_persists_completion_message(tmp_path):
@@ -71,6 +153,8 @@ def test_review_export_persists_completion_message(tmp_path):
 
     assert result["pdf_stale"] is False
     assert result["pdf"] == "output/manga.pdf"
-    assert result["message"] == "PDFを出力しました"
-    assert persisted["message"] == "PDFを出力しました"
+    assert result["cbz"] == "output/manga.cbz"
+    assert result["message"] == "PDF / CBZを出力しました"
+    assert persisted["message"] == "PDF / CBZを出力しました"
     assert (tmp_path / "output/manga.pdf").is_file()
+    assert (tmp_path / "output/manga.cbz").is_file()
