@@ -35,7 +35,7 @@ function Spread({ spread, config, file, busy, onEdit }) {
       const rightSelected = candidate.id === selectedPages.right;
       const selected = selectionMode === 'per_page' ? leftSelected || rightSelected : candidate.id === spread.selected;
       return <div key={candidate.id} className={`candidate ${selected ? 'selected' : ''}`}>
-        <ImageLink file={file} path={candidate.path} preview={candidate.preview} />
+        <ImageLink file={file} path={candidate.path} preview={candidate.review_preview || candidate.preview} />
         <p>{candidate.time.toFixed(2)}s · 全体 score {candidate.metrics.score.toFixed(3)}<br />
           鮮鋭度 {candidate.metrics.sharpness.toFixed(0)} / 手 {candidate.metrics.hand_overlap === null ? '未評価' : `${(candidate.metrics.hand_overlap * 100).toFixed(1)}%`}</p>
         {selectionMode === 'per_page' && <p>
