@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { fileUrl, request } from './api.js';
-import { clampTime } from './components/FrameSelector.jsx';
+import FrameSelector, { clampTime } from './components/FrameSelector.jsx';
 import { normalizedPoint } from './components/RoiSelector.jsx';
 import Setup, {
   applyCorrectionPreset,
@@ -29,6 +29,47 @@ describe('frontend helpers', () => {
     expect(clampTime(-2, 10)).toBe(0);
     expect(clampTime(4.25, 10)).toBe(4.25);
     expect(clampTime(12, 10)).toBeCloseTo(9.999);
+  });
+
+  it('requires the edited frame time to be previewed before confirmation', () => {
+    const onPreview = vi.fn();
+    const onConfirm = vi.fn();
+    const props = {
+      step: '04 / 見開き基準フレーム',
+      title: '基準フレーム',
+      description: 'desc',
+      imageUrl: '/frame-3.png',
+      time: 3,
+      duration: 20,
+      busy: false,
+      confirmLabel: 'このフレームを基準にする →',
+      onPreview,
+      onConfirm,
+    };
+    const { rerender } = render(React.createElement(FrameSelector, props));
+
+    const input = screen.getByLabelText('動画の秒数');
+    const confirm = screen.getByRole('button', { name: 'このフレームを基準にする →' });
+    expect(confirm).not.toBeDisabled();
+
+    fireEvent.change(input, { target: { value: '10' } });
+    expect(confirm).toBeDisabled();
+    expect(screen.getByText(/プレビュー更新.*確認してから確定/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'プレビュー更新' }));
+    expect(onPreview).toHaveBeenCalledWith(10);
+    expect(confirm).toBeDisabled();
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    rerender(React.createElement(FrameSelector, {
+      ...props,
+      imageUrl: '/frame-10.png',
+      time: 10,
+    }));
+
+    expect(screen.getByRole('button', { name: 'このフレームを基準にする →' })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'このフレームを基準にする →' }));
+    expect(onConfirm).toHaveBeenCalledWith(10);
   });
 
   it('normalizes and clamps ROI pointer coordinates', () => {
