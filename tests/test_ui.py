@@ -269,3 +269,66 @@ def test_export_job_exposes_action_in_state(tmp_path, monkeypatch):
         time.sleep(0.01)
     assert job["busy"] is False
     assert job["action"] is None
+
+
+
+def test_image_project_endpoint_passes_folder_and_expected_count(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_create(folder, project, cfg, expected_page_count=None):
+        captured.update(
+            folder=folder,
+            project=project,
+            expected_page_count=expected_page_count,
+        )
+        project.mkdir(parents=True)
+        manifest = {
+            "source_type": "image_folder",
+            "source": folder,
+            "status": "complete",
+            "pages": [],
+            "spreads": [],
+            "config": cfg.to_dict(),
+            "warnings": [],
+            "progress": 1,
+            "message": "ok",
+        }
+        write_json(project / "manifest.json", manifest)
+        return manifest
+
+    monkeypatch.setattr(ui_module, "create_image_folder_project", fake_create)
+    client = create_app(tmp_path).test_client()
+    token = client.get("/api/state").json["token"]
+
+    response = client.post(
+        "/api/image-projects",
+        json={
+            "folder": "/tmp/book-pages",
+            "expected_page_count": 192,
+            "config": {"hand_backend": "none", "finger_repair": False},
+        },
+        headers={"X-Manga-Token": token},
+    )
+
+    assert response.status_code == 200
+    assert captured["folder"] == "/tmp/book-pages"
+    assert captured["expected_page_count"] == 192
+    assert captured["project"].parent == tmp_path.resolve()
+
+
+def test_state_labels_image_folder_projects_by_folder_name(tmp_path):
+    project = tmp_path / "scan-images"
+    project.mkdir()
+    write_json(
+        project / "manifest.json",
+        {
+            "source_type": "image_folder",
+            "source": "/tmp/my-book",
+            "status": "complete",
+            "pages": [{"id": "a"}, {"id": "b"}],
+        },
+    )
+
+    state = create_app(tmp_path).test_client().get("/api/state").json
+
+    assert state["projects"][0]["source_name"] == "my-book (2枚)"

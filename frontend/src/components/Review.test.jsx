@@ -1,7 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import Review, { fingerRepairCoverageSummary, localAlignmentSummary, qualityReviewSummary, reorderPageIds } from './Review.jsx';
+import Review, {
+  fingerRepairCoverageSummary,
+  localAlignmentSummary,
+  pageCountSummary,
+  qualityReviewSummary,
+  reorderPageIds,
+  safeFixSummary,
+} from './Review.jsx';
 import Setup from './Setup.jsx';
 
 const manifest = {
@@ -77,7 +84,11 @@ it('defaults new projects to whole spreads and retains split controls', () => {
   expect(screen.getByLabelText('左右別の台形補正').disabled).toBe(false);
   fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/book.mov' } });
   fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
-  expect(onCreate).toHaveBeenCalledWith('/tmp/book.mov', expect.objectContaining({ output_layout: 'split' }));
+  expect(onCreate).toHaveBeenCalledWith(
+    '/tmp/book.mov',
+    expect.objectContaining({ output_layout: 'split' }),
+    null,
+  );
 });
 
 it('labels whole pages and offers layout switching and crop correction', () => {
@@ -600,6 +611,7 @@ it('creates a project from multiple videos in the entered order', () => {
   expect(onCreate).toHaveBeenCalledWith(
     ['/tmp/part-1.mov', '/tmp/part-2.mov'],
     expect.objectContaining({ output_layout: 'spread' }),
+    null,
   );
 });
 
@@ -655,4 +667,161 @@ it('renders imported external pages without video-only page controls', () => {
   expect(screen.getByText('001 · 外部画像')).toBeTruthy();
   expect(screen.getByText('外部画像: phone.jpg')).toBeTruthy();
   expect(screen.queryByText('ページ単位の補正')).toBeNull();
+});
+
+
+it('creates a project from a static image folder with an expected page count', () => {
+  const onCreateImages = vi.fn();
+  render(
+    <Setup
+      busy={false}
+      onChoose={vi.fn()}
+      onChooseFolder={vi.fn()}
+      onCreate={vi.fn()}
+      onCreateImages={onCreateImages}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: '静止画フォルダ' }));
+  fireEvent.change(screen.getByLabelText('静止画フォルダのローカルパス'), {
+    target: { value: '/tmp/book-pages' },
+  });
+  fireEvent.change(screen.getByLabelText('期待ページ数'), {
+    target: { value: '192' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: '静止画を一括読み込み →' }));
+
+  expect(onCreateImages).toHaveBeenCalledWith(
+    '/tmp/book-pages',
+    expect.objectContaining({ image_format: 'png' }),
+    192,
+  );
+});
+
+it('formats expected page count safety states', () => {
+  expect(pageCountSummary({
+    status: 'match',
+    actual: 192,
+    expected: 192,
+    output_items: 97,
+    difference: 0,
+  })).toContain('一致: 192 / 192ページ');
+  expect(pageCountSummary({
+    status: 'short',
+    actual: 190,
+    expected: 192,
+    output_items: 96,
+    difference: -2,
+  })).toContain('2ページ不足');
+  expect(pageCountSummary({
+    status: 'over',
+    actual: 194,
+    expected: 192,
+    output_items: 98,
+    difference: 2,
+  })).toContain('2ページ多い');
+});
+
+it('saves expected page count from Review', () => {
+  const onEdit = vi.fn();
+  render(
+    <Review
+      manifest={{
+        ...manifest,
+        expected_page_count: 10,
+        page_count_check: {
+          status: 'short',
+          expected: 10,
+          actual: 8,
+          output_items: 4,
+          difference: -2,
+        },
+      }}
+      file={path => path}
+      busy={false}
+      onEdit={onEdit}
+    />,
+  );
+
+  expect(screen.getByText(/2ページ不足/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('レビュー期待ページ数'), {
+    target: { value: '12' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'ページ数を保存' }));
+
+  expect(onEdit).toHaveBeenCalledWith('expected_page_count', {
+    expected_page_count: 12,
+  });
+});
+
+it('offers a safe existing candidate fix for a QA-flagged page', () => {
+  const onEdit = vi.fn();
+  const withSuggestion = {
+    ...manifest,
+    pages: [{
+      ...manifest.pages[0],
+      candidate_id: 0,
+      safe_fix_suggestions: [{
+        candidate_id: 2,
+        side: null,
+        confidence: 'high',
+        improvements: ['glare', 'selection_score'],
+        score_gain: .12,
+        current_risks: ['glare_overlap'],
+        candidate_risks: [],
+      }],
+    }],
+  };
+
+  render(
+    <Review
+      manifest={withSuggestion}
+      file={path => path}
+      busy={false}
+      onEdit={onEdit}
+    />,
+  );
+
+  expect(safeFixSummary(withSuggestion.pages[0].safe_fix_suggestions[0]))
+    .toContain('反射が少ない');
+  fireEvent.click(screen.getByRole('button', { name: 'この改善候補を採用' }));
+  expect(onEdit).toHaveBeenCalledWith('select_candidate', {
+    spread_id: 's',
+    candidate_id: 2,
+  });
+});
+
+it('renders image-folder projects without video-only controls', () => {
+  const imageManifest = {
+    ...manifest,
+    source_type: 'image_folder',
+    source: '/tmp/book-pages',
+    metadata: { image_count: 1 },
+    pages: [{
+      id: 'image_0001',
+      spread_id: null,
+      side: 'external',
+      enabled: true,
+      suspect: [],
+      path: 'pages/image_0001.png',
+      preview: 'pages/image_0001_thumb.jpg',
+      source: 'source/images/image_0001.png',
+      source_kind: 'image_folder',
+      external_name: '001.jpg',
+    }],
+    spreads: [],
+  };
+
+  render(
+    <Review
+      manifest={imageManifest}
+      file={path => path}
+      busy={false}
+      onEdit={vi.fn()}
+      onImportExternal={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByText('フォルダ画像: 001.jpg')).toBeTruthy();
+  expect(screen.queryByLabelText('追加する動画の秒数')).toBeNull();
 });

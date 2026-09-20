@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from flask import Flask, abort, jsonify, request, send_file
 
 from .config import Config
+from .image_folder import create_image_folder_project
 from .ingest import (
     create_project,
     reopen_cover_roi,
@@ -104,11 +105,15 @@ def create_app(projects, config=None):
                 {
                     "id": p.name,
                     "source_name": (
-                        Path((m.get("sources") or [m["source"]])[0]).name
-                        + (
-                            f" +{len(m.get('sources', [])) - 1}"
-                            if len(m.get("sources", [])) > 1
-                            else ""
+                        f"{Path(m['source']).name} ({len(m.get('pages', []))}枚)"
+                        if m.get("source_type") == "image_folder"
+                        else (
+                            Path((m.get("sources") or [m["source"]])[0]).name
+                            + (
+                                f" +{len(m.get('sources', [])) - 1}"
+                                if len(m.get("sources", [])) > 1
+                                else ""
+                            )
                         )
                     ),
                     "status": m["status"],
@@ -135,6 +140,24 @@ def create_app(projects, config=None):
             raise ValueError("ファイル選択がキャンセルされました")
         return jsonify(path=result.stdout.strip())
 
+    @app.post("/api/choose-folder")
+    def choose_folder():
+        if sys.platform != "darwin":
+            raise ValueError("Enter an absolute image folder path on this platform")
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'POSIX path of (choose folder with prompt "漫画の静止画フォルダを選択")',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode:
+            raise ValueError("フォルダ選択がキャンセルされました")
+        return jsonify(path=result.stdout.strip().rstrip("/"))
+
     @app.post("/api/projects")
     def create():
         if not guard.acquire(blocking=False):
@@ -144,7 +167,30 @@ def create_app(projects, config=None):
             cfg = Config.from_dict({**config.to_dict(), **data.get("config", {})})
             name = "scan-" + uuid.uuid4().hex[:10]
             videos = data.get("videos") or data.get("video")
-            manifest = create_project(videos, root / name, cfg)
+            manifest = create_project(
+                videos,
+                root / name,
+                cfg,
+                expected_page_count=data.get("expected_page_count"),
+            )
+            return jsonify(id=name, manifest=manifest)
+        finally:
+            guard.release()
+
+    @app.post("/api/image-projects")
+    def create_image_project():
+        if not guard.acquire(blocking=False):
+            return jsonify(error="処理中です"), 409
+        try:
+            data = request.get_json()
+            cfg = Config.from_dict({**config.to_dict(), **data.get("config", {})})
+            name = "scan-" + uuid.uuid4().hex[:10]
+            manifest = create_image_folder_project(
+                data["folder"],
+                root / name,
+                cfg,
+                expected_page_count=data.get("expected_page_count"),
+            )
             return jsonify(id=name, manifest=manifest)
         finally:
             guard.release()

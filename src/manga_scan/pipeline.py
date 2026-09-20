@@ -31,6 +31,10 @@ from .page_detect import refine_quad
 from .page_turns import analyze_page_turns
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
 from .processing_control import ProcessingCancelled, clear_cancel_request, raise_if_cancelled
+from .quality_safety import (
+    normalize_expected_page_count,
+    refresh_review_safety,
+)
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
@@ -921,6 +925,8 @@ def _refresh_adjacent_final_quality(project, manifest, cfg):
         previous = page
         previous_image = image
 
+    refresh_review_safety(manifest)
+
 
 def _managed_previous_export(project, output, manifest_path, suffix):
     """Return a previous export only when it is a direct child of project/output."""
@@ -1448,6 +1454,7 @@ def run(project, roi=None):
                 status="complete",
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
+            refresh_review_safety(manifest)
             update(project, manifest, 1, "完了 — 要確認ページを確認してください")
             return manifest
         except ProcessingCancelled:
@@ -1705,6 +1712,19 @@ def edit(project, action, **params):
             manifest["book_metadata"] = metadata
             manifest["pdf_stale"] = True
             manifest["message"] = "書籍メタデータを更新しました。PDF / CBZを再出力してください"
+            save_manifest(project, manifest)
+            return manifest
+        if action == "expected_page_count":
+            expected = normalize_expected_page_count(params.get("expected_page_count"))
+            if expected == manifest.get("expected_page_count"):
+                return manifest
+            manifest["expected_page_count"] = expected
+            refresh_review_safety(manifest)
+            manifest["message"] = (
+                "期待ページ数を解除しました"
+                if expected is None
+                else f"期待ページ数を {expected}ページに設定しました"
+            )
             save_manifest(project, manifest)
             return manifest
         if action == "rescan_candidates":

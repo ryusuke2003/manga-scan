@@ -328,6 +328,7 @@ describe('frontend helpers', () => {
     expect(onCreate).toHaveBeenCalledWith(
       '/tmp/book.mp4',
       expect.objectContaining({ finger_repair: false }),
+      null,
     );
   });
 
@@ -350,6 +351,7 @@ describe('frontend helpers', () => {
     expect(onCreate).toHaveBeenCalledWith(
       '/tmp/book.mp4',
       expect.objectContaining({ finger_repair_fallback: 'white' }),
+      null,
     );
   });
 
@@ -369,7 +371,7 @@ describe('frontend helpers', () => {
     expect(onCreate).toHaveBeenCalledWith('/tmp/book.mp4', expect.objectContaining({
       auto_rotation: true,
       rotation: 0,
-    }));
+    }), null);
   });
 
   it('shows detected rotation in frame preview and allows manual override', () => {
@@ -408,6 +410,6 @@ describe('frontend helpers', () => {
       dewarp_mode: 'auto',
       illumination_correction: true,
       white_normalization: false,
-    }));
+    }), null);
   });
 });

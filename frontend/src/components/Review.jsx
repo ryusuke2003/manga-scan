@@ -169,6 +169,45 @@ export function qualityReviewSummary(pages = []) {
   };
 }
 
+const safeFixLabels = {
+  glare: '反射が少ない',
+  hand: '手・指の重なりが少ない',
+  sharpness: 'より鮮明',
+  motion: 'ブレが少ない',
+  risk_count: '既知の警告が少ない',
+  selection_score: '総合スコアが高い',
+};
+
+export function safeFixSummary(suggestion) {
+  const items = (suggestion?.improvements || [])
+    .map(item => safeFixLabels[item] || item);
+  const gain = Number(suggestion?.score_gain);
+  if (Number.isFinite(gain) && gain >= 0.01) {
+    items.push(`候補スコア +${Math.round(gain * 100)}pt`);
+  }
+  return Array.from(new Set(items)).join(' · ');
+}
+
+export function pageCountSummary(check) {
+  if (!check) return 'ページ数を計算中';
+  const output = check.output_items !== check.actual
+    ? ` · 出力画像 ${check.output_items}枚`
+    : '';
+  if (check.status === 'unset') {
+    return `現在 ${check.actual}ページ${output} · 期待ページ数は未設定`;
+  }
+  if (check.status === 'pending') {
+    return `現在 ${check.actual}ページ${output} · 完了後に期待 ${check.expected}ページと照合`;
+  }
+  if (check.status === 'match') {
+    return `一致: ${check.actual} / ${check.expected}ページ${output}`;
+  }
+  if (check.status === 'short') {
+    return `不足: ${check.actual} / ${check.expected}ページ · ${Math.abs(check.difference)}ページ不足${output}`;
+  }
+  return `超過: ${check.actual} / ${check.expected}ページ · ${check.difference}ページ多い${output}`;
+}
+
 const backgroundFillLabel = fill => {
   if (!fill || fill.mode === 'preserve') return '';
   if (fill.status === 'unavailable') return 'ページ外背景: 輪郭不確かのため変更なし';
@@ -482,6 +521,77 @@ const emptyBookMetadata = {
   language: '',
 };
 
+function PageCountCheck({ manifest, busy, onSave }) {
+  const [draft, setDraft] = useState(
+    manifest.expected_page_count === null || manifest.expected_page_count === undefined
+      ? ''
+      : String(manifest.expected_page_count),
+  );
+  useEffect(() => {
+    setDraft(
+      manifest.expected_page_count === null || manifest.expected_page_count === undefined
+        ? ''
+        : String(manifest.expected_page_count),
+    );
+  }, [manifest.expected_page_count]);
+
+  const normalized = draft === '' ? null : Number(draft);
+  const changed = normalized !== (manifest.expected_page_count ?? null);
+  const enabled = manifest.pages.filter(page => page.enabled);
+  const actual = enabled.reduce(
+    (total, page) => total + (page.side === 'spread' ? 2 : 1),
+    0,
+  );
+  const fallbackDifference = manifest.expected_page_count == null
+    ? null
+    : actual - manifest.expected_page_count;
+  const check = manifest.page_count_check ?? {
+    status: manifest.expected_page_count == null
+      ? 'unset'
+      : manifest.status === 'complete'
+        ? (fallbackDifference === 0 ? 'match' : fallbackDifference < 0 ? 'short' : 'over')
+        : 'pending',
+    expected: manifest.expected_page_count ?? null,
+    actual,
+    output_items: enabled.length,
+    difference: fallbackDifference,
+  };
+  const status = check.status;
+
+  return <div className={`panel page-count-check ${status}`} aria-label="期待ページ数チェック">
+    <div>
+      <strong>期待ページ数チェック</strong>
+      <p className="muted">{pageCountSummary(check)}</p>
+    </div>
+    <div className="row">
+      <label>期待ページ数
+        <input
+          aria-label="レビュー期待ページ数"
+          type="number"
+          min="1"
+          max="10000"
+          step="1"
+          placeholder="未設定"
+          value={draft}
+          onChange={event => setDraft(event.target.value)}
+        />
+      </label>
+      <button
+        disabled={busy || !changed || (draft !== '' && (!Number.isInteger(normalized) || normalized < 1))}
+        onClick={() => onSave(normalized)}
+      >ページ数を保存</button>
+      {manifest.expected_page_count != null && <button
+        disabled={busy}
+        onClick={() => {
+          setDraft('');
+          onSave(null);
+        }}
+      >解除</button>}
+    </div>
+    <p className="muted">見開きは2ページ、表紙・左右分割・外部画像は1ページとして数えます。</p>
+  </div>;
+}
+
 function BookMetadataEditor({ metadata = emptyBookMetadata, busy, onSave }) {
   const [draft, setDraft] = useState({ ...emptyBookMetadata, ...metadata });
   useEffect(() => {
@@ -566,17 +676,22 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         {cbzReady && <a className="button" href={file(manifest.cbz)} download>CBZを保存 ↓</a>}</div></div>
     <p className="muted">{exportStatus}</p>
     <BookMetadataEditor metadata={manifest.book_metadata} busy={busy} onSave={metadata => onEdit('book_metadata', { metadata })} />
+    <PageCountCheck
+      manifest={manifest}
+      busy={busy}
+      onSave={expectedPageCount => onEdit('expected_page_count', { expected_page_count: expectedPageCount })}
+    />
     {qualitySummary.total > 0 && <div className="panel final-quality-summary" aria-label="最終品質チェック">
       <strong>要確認 {qualitySummary.total}件</strong>
       <div className="final-quality-counts">
         {qualitySummary.categories.map(category => <span key={category.label}>{category.label} {category.count}</span>)}
       </div>
     </div>}
-    <VideoTimeline
+    {manifest.source_type !== 'image_folder' && <VideoTimeline
       manifest={manifest}
       busy={busy}
       onSelectTime={time => setTimestamp(time.toFixed(2))}
-    />
+    />}
     <div className="toolbar panel">
       <div className="history-controls row" aria-label="ページ編集履歴">
         <button
@@ -595,9 +710,9 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       </div>
       <label className="checkbox"><input type="checkbox" checked={suspectsOnly} onChange={event => setSuspectsOnly(event.target.checked)} /> 要確認だけ表示</label>
       <label className="checkbox"><input type="checkbox" checked={showExcluded} onChange={event => setShowExcluded(event.target.checked)} /> 除外ページも表示</label>
-      <form className="row" onSubmit={event => { event.preventDefault(); onEdit('add_frame', { time: Number(timestamp) }); }}>
+      {manifest.source_type !== 'image_folder' && <form className="row" onSubmit={event => { event.preventDefault(); onEdit('add_frame', { time: Number(timestamp) }); }}>
         <input aria-label="追加する動画の秒数" type="number" min="0" max={manifest.metadata.duration - .001} step="any" placeholder="動画の秒数" required value={timestamp} onChange={event => setTimestamp(event.target.value)} />
-        <button disabled={busy || timestamp === ''}>この時刻から追加</button></form>
+        <button disabled={busy || timestamp === ''}>この時刻から追加</button></form>}
       <label className="external-page-import">外部画像をページ追加
         <input
           aria-label="外部画像をページ追加"
@@ -662,6 +777,19 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {!['cover', 'external'].includes(page.side) && <PageReviewControls page={page} manifest={manifest} file={file} busy={busy} onEdit={onEdit} />}
       {page.source === 'external_image' && <p className="muted">外部画像: {page.external_name || '読み込み画像'}</p>}
+      {page.source_kind === 'image_folder' && <p className="muted">フォルダ画像: {page.external_name || '読み込み画像'}</p>}
+      {page.safe_fix_suggestions?.length > 0 && <div className="dewarp-meta safe-fix-suggestions">
+        <strong>安全な改善候補</strong>
+        <p className="muted">既存の撮影候補だけを比較し、新しい既知リスクを増やさない候補のみ表示しています。</p>
+        {page.safe_fix_suggestions.map(suggestion => <div className="row" key={suggestion.candidate_id}>
+          <span>候補 #{suggestion.candidate_id} · {safeFixSummary(suggestion)}</span>
+          <button disabled={busy} onClick={() => onEdit('select_candidate', {
+            spread_id: page.spread_id,
+            candidate_id: suggestion.candidate_id,
+            ...(suggestion.side ? { side: suggestion.side } : {}),
+          })}>この改善候補を採用</button>
+        </div>)}
+      </div>}
       {page.final_quality?.reasons?.length > 0 && <div className="dewarp-meta">
         <span>完成画像QA: {reasons(page.final_quality.reasons)}</span>
         {page.final_quality.adjacent_duplicate && <p className="muted">前ページ {page.final_quality.adjacent_duplicate.other_page_id} と類似 · SSIM {(page.final_quality.adjacent_duplicate.ssim * 100).toFixed(1)}%</p>}
