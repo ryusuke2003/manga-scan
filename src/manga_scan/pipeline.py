@@ -952,14 +952,15 @@ def _render_whole_spread(project, manifest, spread, cfg):
         save_image(project / background_fill["mask"], background_mask)
 
     # Single-page spine dewarping would distort the middle of a full spread.
+    render_settings = _page_render_settings(spread, "spread", cfg)
     qa_before_enhance = page.copy()
     page = enhance_page(
         page,
         grayscale=cfg.grayscale,
         contrast=cfg.contrast,
-        illumination_correction=cfg.illumination_correction,
+        illumination_correction=render_settings["illumination_correction"],
         illumination_strength=cfg.illumination_strength,
-        white_normalization=cfg.white_normalization,
+        white_normalization=render_settings["white_normalization"],
         white_target=cfg.white_target,
         white_strength=cfg.white_strength,
     )
@@ -971,7 +972,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
         before_enhance=qa_before_enhance,
         finger_repair=repair,
         background_fill_fraction=background_fill_area,
-        white_normalization=cfg.white_normalization,
+        white_normalization=render_settings["white_normalization"],
     )
     ext = "png" if cfg.image_format == "png" else "jpg"
     path = f"pages/{spread['id']}_whole.{ext}"
@@ -1035,6 +1036,13 @@ def _render_whole_spread(project, manifest, spread, cfg):
             "final_quality": final_quality,
             "crop": spread["whole_spread_crop"],
             "dewarp": {"mode": "off", "status": "off", "applied": False},
+            "render_settings": {
+                **render_settings,
+                "dewarp": False,
+                "dewarp_mode": "off",
+                "page_quad_mode": "auto",
+                "manual_quad": None,
+            },
         }
     ]
 
@@ -1200,9 +1208,9 @@ def render_spread(project, manifest, spread):
     pages = []
     order = ["right", "left"] if cfg.reading_order == "rtl" else ["left", "right"]
     ext = "png" if cfg.image_format == "png" else "jpg"
-    disabled_sides = set(spread.get("dewarp_disabled_sides", []))
     for side in order:
         data = selected_data[side]
+        render_settings = _page_render_settings(spread, side, cfg)
         chosen = data["chosen"]
         source_page = data["sides"][side]
         selected_source = f"selected/{spread['id']}_{side}.png"
@@ -1293,10 +1301,11 @@ def render_spread(project, manifest, spread):
                     "occlusion_kinds": [],
                 }
 
-        dewarp = {"mode": cfg.dewarp_mode, "applied": False, "status": "off"}
+        dewarp_mode = render_settings["dewarp_mode"]
+        dewarp = {"mode": dewarp_mode, "applied": False, "status": "off"}
         manual_dewarp = 0.0
         qa_before_dewarp = None
-        if cfg.dewarp_mode == "manual":
+        if dewarp_mode == "manual":
             manual_dewarp = cfg.dewarp_strength
             dewarp.update(
                 applied=bool(manual_dewarp),
@@ -1310,52 +1319,51 @@ def render_spread(project, manifest, spread):
                     contrast=cfg.contrast,
                     rotation=0,
                     dewarp_strength=0.0,
-                    white_normalization=cfg.white_normalization,
+                    white_normalization=render_settings["white_normalization"],
                     white_target=cfg.white_target,
                     white_strength=cfg.white_strength,
-                    illumination_correction=cfg.illumination_correction,
+                    illumination_correction=render_settings["illumination_correction"],
                     illumination_strength=cfg.illumination_strength,
                 )
-        elif cfg.dewarp_mode == "auto":
-            if side in disabled_sides:
-                dewarp.update(status="disabled")
-            else:
-                before = f"debug/dewarp/{spread['id']}_{side}_before.png"
-                before_image = enhance_page(
-                    source_page,
-                    grayscale=cfg.grayscale,
-                    contrast=cfg.contrast,
-                    rotation=0,
-                    dewarp_strength=0.0,
-                    white_normalization=cfg.white_normalization,
-                    white_target=cfg.white_target,
-                    white_strength=cfg.white_strength,
-                    illumination_correction=cfg.illumination_correction,
-                    illumination_strength=cfg.illumination_strength,
+        elif dewarp_mode == "auto":
+            before = f"debug/dewarp/{spread['id']}_{side}_before.png"
+            before_image = enhance_page(
+                source_page,
+                grayscale=cfg.grayscale,
+                contrast=cfg.contrast,
+                rotation=0,
+                dewarp_strength=0.0,
+                white_normalization=render_settings["white_normalization"],
+                white_target=cfg.white_target,
+                white_strength=cfg.white_strength,
+                illumination_correction=render_settings["illumination_correction"],
+                illumination_strength=cfg.illumination_strength,
+            )
+            save_image(project / before, before_image)
+            qa_before_dewarp = before_image
+            corrected, estimate = auto_dewarp_page(
+                source_page,
+                side,
+                cfg.dewarp_max_strength,
+                cfg.dewarp_min_confidence,
+            )
+            source_page = corrected
+            dewarp.update(estimate)
+            dewarp["before"] = before
+            if estimate["strength"] > 0:
+                grid = f"debug/dewarp/{spread['id']}_{side}_remap.png"
+                save_image(
+                    project / grid,
+                    dewarp_debug_grid(
+                        data["sides"][side].shape,
+                        side,
+                        estimate["strength"],
+                        estimate.get("strength_profile"),
+                    ),
                 )
-                save_image(project / before, before_image)
-                qa_before_dewarp = before_image
-                corrected, estimate = auto_dewarp_page(
-                    source_page,
-                    side,
-                    cfg.dewarp_max_strength,
-                    cfg.dewarp_min_confidence,
-                )
-                source_page = corrected
-                dewarp.update(estimate)
-                dewarp["before"] = before
-                if estimate["strength"] > 0:
-                    grid = f"debug/dewarp/{spread['id']}_{side}_remap.png"
-                    save_image(
-                        project / grid,
-                        dewarp_debug_grid(
-                            data["sides"][side].shape,
-                            side,
-                            estimate["strength"],
-                            estimate.get("strength_profile"),
-                        ),
-                    )
-                    dewarp["debug_grid"] = grid
+                dewarp["debug_grid"] = grid
+        else:
+            dewarp.update(status="disabled")
 
         qa_before_enhance = source_page.copy()
         page_image = enhance_page(
@@ -1364,10 +1372,10 @@ def render_spread(project, manifest, spread):
             contrast=cfg.contrast,
             rotation=0,
             dewarp_strength=manual_dewarp,
-            white_normalization=cfg.white_normalization,
+            white_normalization=render_settings["white_normalization"],
             white_target=cfg.white_target,
             white_strength=cfg.white_strength,
-            illumination_correction=cfg.illumination_correction,
+            illumination_correction=render_settings["illumination_correction"],
             illumination_strength=cfg.illumination_strength,
         )
         final_quality = final_quality_checks(
@@ -1376,7 +1384,7 @@ def render_spread(project, manifest, spread):
             before_dewarp=qa_before_dewarp,
             dewarp=dewarp,
             finger_repair=finger_repair,
-            white_normalization=cfg.white_normalization,
+            white_normalization=render_settings["white_normalization"],
         )
         name = f"pages/{spread['id']}_{side}.{ext}"
         save_image(project / name, page_image, cfg.jpeg_quality)
@@ -1421,6 +1429,14 @@ def render_spread(project, manifest, spread):
                 "suspect": list(dict.fromkeys(page_suspect)),
                 "finger_repair": finger_repair,
                 "dewarp": dewarp,
+                "render_settings": render_settings,
+                "page_contour": {
+                    "mode": render_settings["page_quad_mode"],
+                    "quad": contours.get(side, {}).get("quad"),
+                    "confidence": contours.get(side, {}).get("confidence"),
+                    "detected": contours.get(side, {}).get("detected"),
+                    "manual": bool(contours.get(side, {}).get("manual")),
+                },
                 "final_quality": final_quality,
             }
         )
