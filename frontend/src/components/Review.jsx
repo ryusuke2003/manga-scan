@@ -32,7 +32,7 @@ const labels = {
   final_near_blank_black: '完成画像: ほぼ真っ黒',
 };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
-const pageSideLabel = side => ({ cover: '表紙', spread: '見開き', right: '右ページ', left: '左ページ' }[side] || side);
+const pageSideLabel = side => ({ cover: '表紙', spread: '見開き', right: '右ページ', left: '左ページ', external: '外部画像' }[side] || side);
 const repairTitle = repair => repair?.occlusion_kinds?.includes('glare') ? '遮蔽補修' : '指補修';
 const repairCleanLabel = repair => repair?.occlusion_kinds?.includes('glare') ? '遮蔽なし' : '指を未検出';
 const cropStatusLabel = crop => ({
@@ -381,7 +381,6 @@ function Spread({ spread, config, file, busy, onEdit }) {
   </details>;
 }
 
-
 const emptyBookMetadata = {
   title: '',
   author: '',
@@ -424,7 +423,7 @@ function BookMetadataEditor({ metadata = emptyBookMetadata, busy, onSave }) {
   </details>;
 }
 
-export default function Review({ manifest, file, busy, exporting = false, onEdit }) {
+export default function Review({ manifest, file, busy, exporting = false, onEdit, onImportExternal }) {
   const [suspectsOnly, setSuspectsOnly] = useState(false);
   const [showExcluded, setShowExcluded] = useState(false);
   const [timestamp, setTimestamp] = useState('');
@@ -506,6 +505,19 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <form className="row" onSubmit={event => { event.preventDefault(); onEdit('add_frame', { time: Number(timestamp) }); }}>
         <input aria-label="追加する動画の秒数" type="number" min="0" max={manifest.metadata.duration - .001} step="any" placeholder="動画の秒数" required value={timestamp} onChange={event => setTimestamp(event.target.value)} />
         <button disabled={busy || timestamp === ''}>この時刻から追加</button></form>
+      <label className="external-page-import">外部画像をページ追加
+        <input
+          aria-label="外部画像をページ追加"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          disabled={busy}
+          onChange={event => {
+            const image = event.target.files?.[0];
+            if (image) onImportExternal?.(image);
+            event.target.value = '';
+          }}
+        />
+      </label>
     </div>
     <p className="muted reorder-help">ページは「⠿ ドラッグ」で並べ替えできます。← / →もそのまま使えます。</p>
     <div className={`page-grid ${manifest.pages.some(page => page.side === 'spread') ? 'with-spreads' : ''}`}>{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || needsReview(page))).map(page => <article
@@ -554,7 +566,8 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
-      {page.side !== 'cover' && <PageReviewControls page={page} manifest={manifest} file={file} busy={busy} onEdit={onEdit} />}
+      {!['cover', 'external'].includes(page.side) && <PageReviewControls page={page} manifest={manifest} file={file} busy={busy} onEdit={onEdit} />}
+      {page.source === 'external_image' && <p className="muted">外部画像: {page.external_name || '読み込み画像'}</p>}
       {page.final_quality?.reasons?.length > 0 && <div className="dewarp-meta">
         <span>完成画像QA: {reasons(page.final_quality.reasons)}</span>
         {page.final_quality.adjacent_duplicate && <p className="muted">前ページ {page.final_quality.adjacent_duplicate.other_page_id} と類似 · SSIM {(page.final_quality.adjacent_duplicate.ssim * 100).toFixed(1)}%</p>}
@@ -578,7 +591,20 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       </div>}
       <div className="row"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
         <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
-        <button disabled={busy} aria-label={`${page.id}を後ろへ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: 1 })}>→</button></div>
+        <button disabled={busy} aria-label={`${page.id}を後ろへ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: 1 })}>→</button>
+        <label className="external-page-replace">画像で差し替え
+          <input
+            aria-label={`${page.id}を外部画像で差し替え`}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            disabled={busy}
+            onChange={event => {
+              const image = event.target.files?.[0];
+              if (image) onImportExternal?.(image, page.id);
+              event.target.value = '';
+            }}
+          />
+        </label></div>
     </article>)}</div>
     <h2 className="spreads-heading">見開き・候補フレーム</h2><p className="muted">候補を選ぶと元解像度で再抽出します。左右別モードでは各ページのスコアを個別に確認・差し替えできます。</p>
     {manifest.spreads.map(spread => <Spread key={spread.id} spread={spread} config={manifest.config} file={file} busy={busy} onEdit={onEdit} />)}
