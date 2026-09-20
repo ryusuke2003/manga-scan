@@ -317,6 +317,24 @@ def _finger_donor_candidates(spread, side, selected_id):
     )
 
 
+def _persist_finger_repair_component_debug(project, repair, stem):
+    """Persist optional local-repair metadata without changing the core return contract."""
+    if not isinstance(repair, dict) or "components" not in repair:
+        return repair
+    components = repair.get("components")
+    if components is None or repair.get("components_debug"):
+        return repair
+
+    path = f"debug/finger_repair/{stem}_components.json"
+    payload = {"components": components}
+    for key in ("component_count", "rejected_donors", "rejection_counts"):
+        if key in repair:
+            payload[key] = repair[key]
+    write_json(project / path, payload)
+    repair["components_debug"] = path
+    return repair
+
+
 def _whole_spread_geometry(source, record, spread, cfg):
     """Resolve one upright spread crop from manual or per-page outer corners."""
     upright = rotate_image(source, cfg.rotation)
@@ -469,6 +487,11 @@ def _render_whole_spread(project, manifest, spread, cfg):
                     f"debug/finger_repair/{spread['id']}_whole_unresolved.png"
                 )
                 save_image(project / repair["unresolved_mask"], unresolved)
+            repair = _persist_finger_repair_component_debug(
+                project,
+                repair,
+                f"{spread['id']}_whole",
+            )
 
     background_fill = {
         "mode": cfg.page_background_fill,
@@ -738,6 +761,11 @@ def render_spread(project, manifest, spread):
                     )
                     save_image(project / unresolved_path, unresolved)
                     finger_repair["unresolved_mask"] = unresolved_path
+                finger_repair = _persist_finger_repair_component_debug(
+                    project,
+                    finger_repair,
+                    f"{spread['id']}_{side}",
+                )
             else:
                 finger_repair = {
                     "status": "clean",
