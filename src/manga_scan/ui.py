@@ -160,14 +160,27 @@ def create_app(projects, config=None):
             return jsonify(error="処理中です。完了後に削除してください"), 409
         try:
             entry = root / name
+            resolved = entry.resolve(strict=False)
+            if resolved.parent != root:
+                abort(404)
             if entry.is_symlink():
                 raise ValueError("Symlinked projects cannot be deleted")
-            project = project_path(name)
+            if not entry.exists():
+                if job["project"] == name:
+                    job.update(project=None, error=None)
+                return jsonify(deleted=name, already_deleted=True)
+            if not entry.is_dir() or not (entry / "manifest.json").is_file():
+                abort(404)
+            project = entry.resolve()
             try:
                 with project_lock(project):
                     shutil.rmtree(project)
             except ValueError as exc:
                 return jsonify(error=str(exc)), 409
+            except FileNotFoundError:
+                if job["project"] == name:
+                    job.update(project=None, error=None)
+                return jsonify(deleted=name, already_deleted=True)
             if job["project"] == name:
                 job.update(project=None, error=None)
             return jsonify(deleted=name)
