@@ -918,6 +918,20 @@ def _refresh_adjacent_final_quality(project, manifest, cfg):
         previous_image = image
 
 
+def _managed_previous_export(project, output, manifest_path, suffix):
+    """Return a previous export only when it is a direct child of project/output."""
+    if not manifest_path or not isinstance(manifest_path, str):
+        return None
+    relative = Path(manifest_path)
+    if relative.is_absolute():
+        return None
+    candidate = (project / relative).resolve(strict=False)
+    output_root = output.resolve(strict=False)
+    if candidate.parent != output_root or candidate.suffix.lower() != suffix:
+        return None
+    return candidate
+
+
 def build_exports(project, manifest):
     cfg = Config.from_dict(manifest["config"])
     _refresh_adjacent_final_quality(project, manifest, cfg)
@@ -929,8 +943,8 @@ def build_exports(project, manifest):
     cbz = output / f"{stem}.cbz"
     next_pdf = output / f"{stem}.next.pdf"
     next_cbz = output / f"{stem}.next.cbz"
-    previous_pdf = project / manifest["pdf"] if manifest.get("pdf") else None
-    previous_cbz = project / manifest["cbz"] if manifest.get("cbz") else None
+    previous_pdf = _managed_previous_export(project, output, manifest.get("pdf"), ".pdf")
+    previous_cbz = _managed_previous_export(project, output, manifest.get("cbz"), ".cbz")
     try:
         export_pdf(
             paths,
