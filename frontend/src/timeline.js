@@ -7,6 +7,27 @@ function median(values) {
     : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+
+export function pageTurnMissingCandidates(analysis) {
+  if (!analysis || Number(analysis.version) < 2) return null;
+  const candidates = Array.isArray(analysis.missing_candidates)
+    ? analysis.missing_candidates
+    : [];
+  return candidates
+    .map((candidate, index) => ({
+      id: candidate.id || `page-turn-missing-${index + 1}`,
+      time: Number(candidate.time),
+      motion: Number(candidate.motion),
+      before: candidate.before || null,
+      after: candidate.after || null,
+      leftTurn: candidate.left_turn || null,
+      rightTurn: candidate.right_turn || null,
+      reason: candidate.reason || 'no_stable_interval_between_turns',
+      source: 'page_turn_v2',
+    }))
+    .filter(candidate => Number.isFinite(candidate.time));
+}
+
 export function spreadTime(spread) {
   const selected = spread.candidates?.find(candidate => candidate.id === spread.selected);
   if (Number.isFinite(selected?.time)) return selected.time;
