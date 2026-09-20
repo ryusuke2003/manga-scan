@@ -161,10 +161,18 @@ def estimate_curvature(image, side, max_strength=0.25):
 
     ratios = np.asarray([sample["ratio"] for sample in samples], dtype=np.float32)
     ratio = float(np.median(ratios))
-    mad = float(np.median(np.abs(ratios - ratio)))
     coverage = min(1.0, len(samples) / len(centers))
-    consistency = max(0.0, min(1.0, 1 - mad / 0.30))
-    confidence = min(1.0, coverage * (0.75 + 0.25 * consistency))
+
+    # Real books can curve more at one height than another, so distance from the
+    # global median is not itself suspicious. What should reduce confidence is a
+    # jagged profile where adjacent scanline bands disagree sharply; that pattern
+    # is more likely to come from panels/text than from a physical book surface.
+    if len(ratios) >= 3:
+        adjacent_change = float(np.median(np.abs(np.diff(ratios))))
+        smoothness = max(0.0, min(1.0, 1 - adjacent_change / 0.18))
+    else:
+        smoothness = 0.5
+    confidence = min(1.0, coverage * (0.4 + 0.6 * smoothness))
 
     strength_profile = _build_strength_profile(samples, max_strength)
     strengths = np.asarray(
