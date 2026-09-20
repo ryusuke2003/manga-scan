@@ -1262,7 +1262,7 @@ def run(project, roi=None):
 
 
 
-def import_external_page(project, image_path, page_id=None):
+def import_external_page(project, image_path, page_id=None, display_name=None):
     """Add or replace one final page using a local external image."""
     from PIL import Image, ImageOps
 
@@ -1303,7 +1303,7 @@ def import_external_page(project, image_path, page_id=None):
             "preview": relative,
             "source": "external_image",
             "source_image": str(original_path.relative_to(project)),
-            "external_name": image_path.name,
+            "external_name": display_name or image_path.name,
         }
 
         if page_id:
