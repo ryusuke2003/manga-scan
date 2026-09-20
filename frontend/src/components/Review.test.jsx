@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import Review, { localAlignmentSummary } from './Review.jsx';
+import Review, { fingerRepairCoverageSummary, localAlignmentSummary } from './Review.jsx';
 import Setup from './Setup.jsx';
 
 const manifest = {
@@ -54,6 +54,57 @@ it('can discard a manual crop and return to automatic detection', () => {
   render(<Review manifest={manual} file={path => path} busy={false} onEdit={onEdit} />);
   fireEvent.click(screen.getByText('自動検出に戻す'));
   expect(onEdit).toHaveBeenCalledWith('reset_crop', { spread_id: 's', candidate_id: 0 });
+});
+
+it('distinguishes donor pixel recovery from fallback-inclusive coverage', () => {
+  expect(fingerRepairCoverageSummary({
+    status: 'complete',
+    donor_coverage: .7,
+    coverage: 1,
+  })).toBe('実画素復元率 70% · 処理済み率 100%');
+
+  expect(fingerRepairCoverageSummary({
+    status: 'complete',
+    donor_coverage: 1,
+    coverage: 1,
+  })).toBe('実画素復元率 100%');
+
+  expect(fingerRepairCoverageSummary({
+    status: 'complete',
+    coverage: .96,
+  })).toBe('処理済み率 96%');
+
+  expect(fingerRepairCoverageSummary({
+    status: 'clean',
+    donor_coverage: 1,
+    coverage: 1,
+  })).toBe('');
+});
+
+it('renders donor recovery separately from fallback-inclusive coverage', () => {
+  const withFallback = {
+    ...manifest,
+    pages: [{
+      ...manifest.pages[0],
+      finger_repair: {
+        status: 'complete',
+        donor_coverage: .7,
+        coverage: 1,
+        donors: [4],
+        fallback: {
+          mode: 'paper',
+          applied: true,
+          filled_fraction: 1,
+        },
+      },
+    }],
+  };
+  render(<Review manifest={withFallback} file={path => path} busy={false} onEdit={vi.fn()} />);
+
+  expect(screen.getByText((_text, node) => node.tagName === 'SPAN'
+    && node.textContent.includes('実画素復元率 70%')
+    && node.textContent.includes('処理済み率 100%')
+    && node.textContent.includes('紙面補完 100%'))).toBeTruthy();
 });
 
 it('summarizes optional local finger alignment metadata compactly', () => {

@@ -21,6 +21,28 @@ const fingerFallbackLabel = repair => {
   return '';
 };
 
+const repairPercentage = value => {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric * 100) : null;
+};
+
+export function fingerRepairCoverageSummary(repair) {
+  if (!repair || repair.status === 'clean') return '';
+
+  const donorCoverage = repairPercentage(repair.donor_coverage);
+  const coverage = repairPercentage(repair.coverage);
+  const parts = [];
+
+  if (donorCoverage !== null) {
+    parts.push(`実画素復元率 ${donorCoverage}%`);
+  }
+  if (coverage !== null && (donorCoverage === null || coverage !== donorCoverage)) {
+    parts.push(`処理済み率 ${coverage}%`);
+  }
+  return parts.join(' · ');
+}
+
 function localShift(component) {
   const shift = component?.shift ?? component?.local_shift ?? {};
   const dx = Number(component?.dx ?? component?.shift_dx ?? shift.dx);
@@ -177,7 +199,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
-        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
+        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'}{fingerRepairCoverageSummary(page.finger_repair) ? ` · ${fingerRepairCoverageSummary(page.finger_repair)}` : ''}{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
         {page.finger_repair.unresolved_mask && <p className="muted">要確認: 未補修領域が残っています。文字・コマ線・網点・指の輪郭に不自然さがないか確認してください。</p>}
         {!page.finger_repair.unresolved_mask && page.finger_repair.status === 'incomplete' && <p className="muted">隠れた部分を別候補から十分に補修できず、指が残っています。別の候補も確認してください。</p>}
         <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">指マスク ↗</a>}

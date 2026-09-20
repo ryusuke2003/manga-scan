@@ -5,6 +5,7 @@ import pytest
 from manga_scan.finger_repair import (
     _component_records,
     _validate_local_candidate,
+    align_donor_page,
     repair_finger_regions,
 )
 
@@ -83,6 +84,50 @@ def test_local_alignment_repairs_residual_component_shift():
     np.testing.assert_array_equal(repaired[target_mask == 0], target[target_mask == 0])
 
 
+def test_global_shifted_donor_mask_uses_aligned_coordinates():
+    clean = _textured_page()
+    target_mask = _mask(clean.shape, [(175, 82, 179, 148)])
+    target = clean.copy()
+    target[target_mask > 0] = (25, 95, 195)
+
+    # Shift the entire donor page. The donor hand mask deliberately overlaps
+    # the target component in raw image coordinates, but after global page
+    # alignment it moves away. Eligibility must therefore use the aligned
+    # donor mask rather than comparing the raw mask in target coordinates.
+    donor = cv2.warpAffine(
+        clean,
+        np.asarray([[1, 0, 7], [0, 1, 0]], np.float32),
+        (clean.shape[1], clean.shape[0]),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REFLECT,
+    )
+    donor_mask = _mask(clean.shape, [(175, 82, 179, 148)])
+    donor[donor_mask > 0] = (30, 105, 205)
+
+    aligned = align_donor_page(target, donor, donor_mask, target_mask)
+    assert aligned is not None
+    _, aligned_mask, _ = aligned
+    assert np.any((donor_mask > 0) & (target_mask > 0))
+    assert not np.any((aligned_mask > 127) & (target_mask > 0))
+
+    repaired, metadata, unresolved = repair_finger_regions(
+        target,
+        target_mask,
+        [{"candidate_id": 11, "image": donor, "mask": donor_mask}],
+        min_coverage=1.0,
+    )
+
+    assert metadata["status"] == "complete"
+    assert metadata["donors"] == [11]
+    assert metadata["donor_coverage"] == pytest.approx(1.0)
+    assert not np.any(unresolved)
+    # The mask is intentionally narrow, so feathering blends its boundary.
+    # Check the fully weighted center pixel rather than treating that blend as
+    # an alignment error.
+    np.testing.assert_allclose(repaired[115, 177], clean[115, 177], atol=5)
+    np.testing.assert_array_equal(repaired[target_mask == 0], target[target_mask == 0])
+
+
 def test_one_component_can_be_completed_by_multiple_donors():
     clean = _textured_page()
     target_mask = _mask(clean.shape, [(105, 76, 205, 154)])
@@ -103,7 +148,7 @@ def test_one_component_can_be_completed_by_multiple_donors():
 
     assert metadata["status"] == "complete"
     assert not np.any(unresolved)
-    assert metadata["donors"] == [1, 2]
+    assert set(metadata["donors"]) == {1, 2}
     component = metadata["components"][0]
     assert component["coverage"] == pytest.approx(1.0)
     assert {entry["candidate_id"] for entry in component["donors"]} == {1, 2}

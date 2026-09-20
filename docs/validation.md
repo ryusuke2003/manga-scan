@@ -46,7 +46,7 @@ ruff check src tests scripts
 
 PythonのUI統合テストは、Viteの`index.html`が参照するハッシュ付き`/static/assets/...`を実際にFlaskから取得できることを確認する。そのためpytest前にfrontend buildが必要。
 
-GitHub Actionsは、Ubuntu/Python 3.14のfast jobでNode 22のfrontend test/build、Ruff、軽量pytestを実行する。pipeline jobではUbuntu/Python 3.12の互換テストとmacOS/Python 3.14のFFmpeg統合テストを実行する。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
+GitHub Actionsは、Ubuntu/Python 3.14のfast jobでNode 22のfrontend test/build、Ruff、軽量pytestを実行する。Ubuntu/Python 3.11のcompat-py311 jobではsource compileと、frontend buildが必要なUI統合テストおよびFFmpeg統合テストを除くPythonテストを実行し、`requires-python = ">=3.11"` の最低対応バージョンを継続確認する。pipeline jobではmacOS/Python 3.14でFFmpeg統合テストを実行する。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
 
 ## M5上のローカル実行
 

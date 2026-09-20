@@ -27,12 +27,46 @@ def _binary_mask(mask, shape):
     height, width = shape[:2]
     if mask.shape != (height, width):
         mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+
+    # Keep normalization idempotent. Internal alignment code intentionally
+    # passes masks through this helper more than once, so an already-normalized
+    # 0/1 mask must not be erased by the 8-bit 0/255 threshold.
+    if mask.size and float(np.max(mask)) <= 1.0:
+        return (mask > 0).astype(np.uint8)
     return (mask > 127).astype(np.uint8)
 
 
 def _alignment_scale(shape):
     height, width = shape[:2]
     return min(1.0, _MAX_ALIGNMENT_SIDE / max(height, width))
+
+
+def _global_alignment_residual(target_gray, donor_gray, target_mask, donor_mask):
+    height, width = target_gray.shape[:2]
+    if target_mask.shape != (height, width):
+        target_mask = cv2.resize(
+            target_mask,
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    if donor_mask.shape != (height, width):
+        donor_mask = cv2.resize(
+            donor_mask,
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    # Internal alignment masks may already be normalized to 0/1 while warped
+    # masks use 0/255. Non-zero is the mask contract here, not a gray threshold.
+    blocked = ((target_mask > 0) | (donor_mask > 0)).astype(np.uint8)
+    kernel = np.ones((5, 5), np.uint8)
+    clean = cv2.dilate(blocked, kernel, iterations=1) == 0
+    if np.count_nonzero(clean) < clean.size * 0.2:
+        return None
+    delta = np.abs(
+        target_gray[clean].astype(np.float32)
+        - donor_gray[clean].astype(np.float32)
+    )
+    return float(np.mean(delta) / 255.0)
 
 
 def align_donor_page(target, donor, donor_mask, target_mask):
@@ -151,6 +185,33 @@ def align_donor_page(target, donor, donor_mask, target_mask):
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=255,
     )
+
+    # ECC can occasionally find a small but unnecessary warp when masked
+    # regions differ. Prefer the unwarped donor unless the proposed global
+    # transform actually improves clean-pixel agreement. This lets a genuine
+    # page shift move the donor mask with the page without using a raw mask in
+    # target coordinates as a safety backstop.
+    identity_residual = _global_alignment_residual(
+        target_gray,
+        donor_gray,
+        target_mask,
+        donor_mask,
+    )
+    aligned_residual = _global_alignment_residual(
+        target_gray,
+        _gray(aligned),
+        target_mask,
+        aligned_mask,
+    )
+    if (
+        identity_residual is not None
+        and (
+            aligned_residual is None
+            or identity_residual <= aligned_residual + 0.002
+        )
+    ):
+        return donor, (donor_mask * 255).astype(np.uint8), float(score)
+
     return aligned, aligned_mask, float(score)
 
 
@@ -647,9 +708,6 @@ def repair_finger_regions(
                 "candidate_id": donor["candidate_id"],
                 "image": aligned_image,
                 "mask": aligned_mask,
-                "source_mask": (
-                    _binary_mask(donor["mask"], target.shape) * 255
-                ).astype(np.uint8),
                 "global_score": float(global_score),
             }
         )
@@ -688,11 +746,11 @@ def repair_finger_regions(
                     component_used.add(candidate_id)
                     continue
 
-                # Stay conservative across every coordinate system:
-                # a pixel is eligible only if it was clean before global
-                # alignment, after global alignment, and after local refinement.
-                source_clean = _safe_clean_mask(donor["source_mask"], target.shape)
-                usable = unresolved_component & local["clean"] & source_clean
+                # local["clean"] already requires the donor pixel to be clean
+                # in both the globally aligned and locally refined donor masks.
+                # The raw donor mask is still in pre-global coordinates, so
+                # applying it here would reject valid pixels after translation.
+                usable = unresolved_component & local["clean"]
                 usable_pixels = int(np.count_nonzero(usable))
                 if usable_pixels < 8:
                     component_used.add(candidate_id)
