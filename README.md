@@ -65,7 +65,7 @@ python -m pip install -e '.[hands]'
 ### 4. React/Viteフロントをビルド
 
 ```bash
-npm --prefix frontend install --no-audit --no-fund
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
 npm --prefix frontend run build
 ```
 
@@ -163,7 +163,7 @@ source .venv/bin/activate
 React/Viteの生成物がありません。
 
 ```bash
-npm --prefix frontend install --no-audit --no-fund
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
 npm --prefix frontend run build
 ```
 
@@ -289,7 +289,7 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 ```bash
 source .venv/bin/activate
 python -m pip install -e '.[hands,dev]'
-npm --prefix frontend install --no-audit --no-fund
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
 ```
 
 ### テスト
