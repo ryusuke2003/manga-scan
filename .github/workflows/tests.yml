@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install frontend dependencies
-        run: npm --prefix frontend install --no-audit --no-fund
+        run: npm --prefix frontend install --no-audit --no-fund --no-package-lock
       - name: Test frontend
         run: npm --prefix frontend test
       - name: Build frontend
