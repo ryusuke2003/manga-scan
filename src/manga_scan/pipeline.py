@@ -127,6 +127,8 @@ def _join_physical_pages(physical_pages):
 
 def selected_spread_preview(project, spread, cfg):
     selected = [_selected_candidate_id(spread, side) for side in ("left", "right")]
+    if spread.get("output_layout", cfg.output_layout) == "spread":
+        selected = [spread["selected"]] * 2
     if selected[0] == selected[1]:
         candidate_record = _candidate_by_id(spread, selected[0])
         preview = cv2.imread(str(project / candidate_record["preview"]))
@@ -195,7 +197,7 @@ def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
     """Choose per-page perspective correction or the legacy spread fallback."""
 
     ratio = spread.get("spine_ratio", cfg.spine_ratio)
-    if cfg.perspective_mode == "per_page":
+    if cfg.perspective_mode == "per_page" and not spread.get("manual_roi"):
         detection_image = image
         if image.shape[1] > cfg.analysis_width:
             scale = cfg.analysis_width / image.shape[1]
@@ -312,8 +314,129 @@ def _finger_donor_candidates(spread, side, selected_id):
     )
 
 
+def _render_whole_spread(project, manifest, spread, cfg):
+    """Render directly from the source ROI, without splitting or rejoining it."""
+    cache = {}
+
+    def load(candidate_id):
+        if candidate_id in cache:
+            return cache[candidate_id]
+        record = _candidate_by_id(spread, candidate_id)
+        roi = spread.get("roi_overrides", {}).get(str(candidate_id), record["roi"])
+        source = extract_frame(manifest["source"], record["time"], hwaccel=cfg.hwaccel)
+        page = rotate_image(warp_roi(source, roi), cfg.rotation)
+        mask = None
+        if cfg.finger_repair and record.get("hand_mask"):
+            saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
+            if saved is not None:
+                saved = cv2.resize(
+                    saved, (source.shape[1], source.shape[0]), interpolation=cv2.INTER_NEAREST
+                )
+                mask = rotate_image(
+                    warp_roi(saved, roi, interpolation=cv2.INTER_NEAREST), cfg.rotation
+                )
+                mask |= boundary_finger_mask(
+                    page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding
+                )
+        cache[candidate_id] = page, mask
+        return page, mask
+
+    chosen = _candidate_by_id(spread, spread["selected"])
+    page, mask = load(chosen["id"])
+    source_path = f"selected/{spread['id']}.png"
+    save_image(project / source_path, page)
+    spread["path"] = source_path
+    spread["perspective_mode_used"] = "spread"
+    repair = {"status": "disabled", "coverage": 0.0, "donors": []}
+    if cfg.finger_repair:
+        if mask is None:
+            repair = {"status": "unavailable", "coverage": 0.0, "donors": []}
+        else:
+
+            def donors():
+                records = sorted(
+                    spread["candidates"], key=lambda c: -c.get("metrics", {}).get("score", 0)
+                )
+                for record in records:
+                    if record["id"] == chosen["id"]:
+                        continue
+                    donor, donor_mask = load(record["id"])
+                    if donor_mask is not None:
+                        yield {"candidate_id": record["id"], "image": donor, "mask": donor_mask}
+
+            page, repair, unresolved = repair_finger_regions(
+                page,
+                mask,
+                donors(),
+                min_coverage=cfg.finger_repair_min_coverage,
+            )
+            if np.any(mask):
+                repair["target_mask"] = f"debug/finger_repair/{spread['id']}_whole_target.png"
+                save_image(project / repair["target_mask"], mask)
+            if np.any(unresolved):
+                repair["unresolved_mask"] = (
+                    f"debug/finger_repair/{spread['id']}_whole_unresolved.png"
+                )
+                save_image(project / repair["unresolved_mask"], unresolved)
+
+    # Single-page spine dewarping would distort the middle of a full spread.
+    page = enhance_page(
+        page,
+        grayscale=cfg.grayscale,
+        contrast=cfg.contrast,
+        illumination_correction=cfg.illumination_correction,
+        illumination_strength=cfg.illumination_strength,
+        white_normalization=cfg.white_normalization,
+        white_target=cfg.white_target,
+        white_strength=cfg.white_strength,
+    )
+    ext = "png" if cfg.image_format == "png" else "jpg"
+    path = f"pages/{spread['id']}_whole.{ext}"
+    preview = f"pages/{spread['id']}_whole_thumb.jpg"
+    save_image(project / path, page, cfg.jpeg_quality)
+    h, w = page.shape[:2]
+    scale = min(1, 720 / max(h, w))
+    save_image(
+        project / preview, cv2.resize(page, (max(1, round(w * scale)), max(1, round(h * scale))))
+    )
+    suspect = list(
+        dict.fromkeys(
+            chosen.get("suspect", [])
+            + [
+                reason
+                for reason in spread.get("extra_suspect", [])
+                if reason != "page_contour_low_confidence"
+            ]
+        )
+    )
+    if repair["status"] in ("clean", "complete"):
+        suspect = [reason for reason in suspect if reason != "hand_overlap"]
+    elif repair["status"] in ("incomplete", "unavailable"):
+        suspect.append("finger_repair_incomplete")
+    spread["suspect"] = suspect
+    manifest["pdf_stale"] = True
+    return [
+        {
+            "id": f"{spread['id']}_whole",
+            "spread_id": spread["id"],
+            "side": "spread",
+            "path": path,
+            "preview": preview,
+            "source": source_path,
+            "candidate_id": chosen["id"],
+            "candidate_time": chosen["time"],
+            "enabled": not bool(spread.get("duplicate_of")),
+            "suspect": suspect,
+            "finger_repair": repair,
+            "dewarp": {"mode": "off", "status": "off", "applied": False},
+        }
+    ]
+
+
 def render_spread(project, manifest, spread):
     cfg = Config.from_dict(manifest["config"])
+    if spread.get("output_layout", cfg.output_layout) == "spread":
+        return _render_whole_spread(project, manifest, spread, cfg)
     selected_pages = spread.get("selected_pages") or {
         "left": spread["selected"],
         "right": spread["selected"],
@@ -332,6 +455,9 @@ def render_spread(project, manifest, spread):
         if candidate_id in cache:
             return cache[candidate_id]
         chosen = _candidate_by_id(spread, candidate_id)
+        override = spread.get("roi_overrides", {}).get(str(candidate_id))
+        if override is not None:
+            chosen = {**chosen, "roi": override}
         source_image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
         rectified = rotate_image(warp_roi(source_image, chosen["roi"]), cfg.rotation)
         image = rotate_image(source_image, cfg.rotation)
@@ -348,6 +474,7 @@ def render_spread(project, manifest, spread):
                 "extra_suspect": [],
             }
         )
+        state["manual_roi"] = override is not None
         sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
         cache[candidate_id] = {
             "chosen": chosen,
@@ -729,9 +856,8 @@ def run(project, roi=None):
                             "right_hand_overlap": records[-1]["page_metrics"]["right"]["hand_overlap"],
                         }
                     )
-                selected, selected_pages = choose_candidate_selection(
-                    records, cfg.candidate_selection_mode
-                )
+                selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
+                selected, selected_pages = choose_candidate_selection(records, selection_mode)
                 spread = {
                     "id": spread_id,
                     "start": segment[0].time,
@@ -802,8 +928,37 @@ def edit(project, action, **params):
             index = next(i for i, p in enumerate(manifest["pages"]) if p["id"] == params["page_id"])
             destination = max(0, min(len(manifest["pages"]) - 1, index + int(params["delta"])))
             manifest["pages"].insert(destination, manifest["pages"].pop(index))
-        elif action in ("select_candidate", "swap", "spine", "toggle_dewarp"):
+        elif action == "output_layout":
+            layout = params["layout"]
+            if layout not in ("spread", "split"):
+                raise ValueError("Output layout must be spread or split")
             spread = next(s for s in manifest["spreads"] if s["id"] == params["spread_id"])
+            old_layout = spread.get("output_layout", cfg.output_layout)
+            if layout == old_layout:
+                return manifest
+            old_pages = [p for p in manifest["pages"] if p["spread_id"] == spread["id"]]
+            state = spread.setdefault("layout_page_state", {})
+            state[old_layout] = [{"id": p["id"], "enabled": p["enabled"]} for p in old_pages]
+            spread["output_layout"] = layout
+            new_pages = render_spread(project, manifest, spread)
+            restored = state.get(layout, [])
+            enabled = {p["id"]: p["enabled"] for p in restored}
+            for page in new_pages:
+                page["enabled"] = enabled.get(page["id"], any(p["enabled"] for p in old_pages))
+            order = {p["id"]: i for i, p in enumerate(restored)}
+            new_pages.sort(key=lambda p: order.get(p["id"], len(order)))
+            position = next(i for i, p in enumerate(manifest["pages"])
+                            if p["spread_id"] == spread["id"])
+            manifest["pages"] = [p for p in manifest["pages"] if p["spread_id"] != spread["id"]]
+            manifest["pages"][position:position] = new_pages
+        elif action in ("select_candidate", "swap", "spine", "toggle_dewarp", "crop"):
+            spread = next(s for s in manifest["spreads"] if s["id"] == params["spread_id"])
+            layout = spread.get("output_layout", cfg.output_layout)
+            if layout == "spread" and (
+                action in ("swap", "spine", "toggle_dewarp")
+                or (action == "select_candidate" and params.get("side") is not None)
+            ):
+                raise ValueError("This action requires split output")
             indices = [i for i, p in enumerate(manifest["pages"]) if p["spread_id"] == spread["id"]]
             if action == "swap":
                 if len(indices) != 2:
@@ -814,7 +969,14 @@ def edit(project, action, **params):
                     manifest["pages"][a],
                 )
             else:
-                if action == "spine":
+                if action == "crop":
+                    candidate_id = int(params["candidate_id"])
+                    if candidate_id not in [c["id"] for c in spread["candidates"]]:
+                        raise ValueError("Unknown candidate")
+                    # The review editor displays the original frame upright.
+                    roi = rotate_roi(params["roi"], (360 - cfg.rotation) % 360).tolist()
+                    spread.setdefault("roi_overrides", {})[str(candidate_id)] = roi
+                elif action == "spine":
                     ratio = float(params["ratio"])
                     if not 0.25 <= ratio <= 0.75:
                         raise ValueError("Spine ratio must be 0.25..0.75")

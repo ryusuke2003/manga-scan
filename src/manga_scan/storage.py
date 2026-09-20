@@ -25,7 +25,12 @@ def write_json(path, data):
 
 
 def read_manifest(project):
-    return json.loads((Path(project) / "manifest.json").read_text())
+    manifest = json.loads((Path(project) / "manifest.json").read_text())
+    # Old projects were always split. New configuration defaults must not
+    # silently change their page IDs, exclusions, or order during an edit.
+    if "config" in manifest:
+        manifest["config"].setdefault("output_layout", "split")
+    return manifest
 
 
 def save_manifest(project, manifest):

@@ -100,6 +100,7 @@ def test_render_spread_rotates_before_left_right_split(tmp_path, monkeypatch):
         hand_backend="none",
         finger_repair=False,
         rotation=90,
+        output_layout="split",
         dewarp_mode="off",
         perspective_mode="spread",
         image_format="png",
@@ -157,7 +158,7 @@ def test_review_can_change_only_one_page_candidate(tmp_path, monkeypatch):
     project = tmp_path / "book"
     project.mkdir()
     manifest = {
-        "config": Config(candidate_selection_mode="per_page").to_dict(),
+        "config": Config(candidate_selection_mode="per_page", output_layout="split").to_dict(),
         "metadata": {"duration": 10.0},
         "roi": [[0, 0], [1, 0], [1, 1], [0, 1]],
         "spreads": [

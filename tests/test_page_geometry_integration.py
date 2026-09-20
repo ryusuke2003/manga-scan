@@ -99,6 +99,7 @@ def test_render_spread_rotated_per_page_integration(
         perspective_mode="per_page",
         page_contour_min_confidence=0.5,
         rotation=rotation,
+        output_layout="split",
         reading_order="ltr",
         image_format="png",
         grayscale=False,

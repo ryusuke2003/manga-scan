@@ -5,6 +5,7 @@ stable_frames = 5
 motion_threshold = 0.012
 turn_threshold = 0.025
 candidates_per_spread = 7
+output_layout = "spread" # "spread": one image/PDF page per spread (default); "split": left/right pages
 candidate_selection_mode = "spread" # "spread" / "per_page"; per_page selects left/right independently
 
 sharpness_weight = 1.0
@@ -56,4 +57,3 @@ save_lowres = false # true writes all sampled small frames; otherwise streamed
 suspect_sharpness = 60.0
 suspect_hand_overlap = 0.015
 interval_gap_factor = 3.0
-
