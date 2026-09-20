@@ -83,6 +83,22 @@ def _selected_candidate_id(spread, side):
     return (spread.get("selected_pages") or {}).get(side, spread["selected"])
 
 
+def _join_physical_pages(physical_pages):
+    height = min(page.shape[0] for page in physical_pages)
+    resized = []
+    for page in physical_pages:
+        width = max(1, round(page.shape[1] * height / page.shape[0]))
+        resized.append(cv2.resize(page, (width, height), interpolation=cv2.INTER_AREA))
+    width = min(page.shape[1] for page in resized)
+    normalized = [
+        page
+        if page.shape[1] == width
+        else cv2.resize(page, (width, height), interpolation=cv2.INTER_AREA)
+        for page in resized
+    ]
+    return np.concatenate(normalized, axis=1)
+
+
 def selected_spread_preview(project, spread, cfg):
     selected = [_selected_candidate_id(spread, side) for side in ("left", "right")]
     if selected[0] == selected[1]:
@@ -105,16 +121,7 @@ def selected_spread_preview(project, spread, cfg):
             cfg.gutter_fraction,
         )
         physical_pages.append(sides[side])
-
-    height = min(page.shape[0] for page in physical_pages)
-    resized = []
-    for page in physical_pages:
-        if page.shape[0] == height:
-            resized.append(page)
-            continue
-        width = max(1, round(page.shape[1] * height / page.shape[0]))
-        resized.append(cv2.resize(page, (width, height), interpolation=cv2.INTER_AREA))
-    return np.concatenate(resized, axis=1)
+    return _join_physical_pages(physical_pages)
 
 
 def render_cover(project, manifest):
@@ -180,16 +187,27 @@ def render_spread(project, manifest, spread):
             cache[candidate_id] = (chosen, rectified, sides, spine)
         return cache[candidate_id]
 
-    _, legacy_rectified, _, legacy_spine = load_candidate(spread["selected"])
+    selected_data = {
+        side: load_candidate(selected_pages[side]) for side in ("left", "right")
+    }
+    spread["spine_px_by_side"] = {
+        side: selected_data[side][3] for side in ("left", "right")
+    }
+    spread["spine_px"] = spread["spine_px_by_side"]["left"]
+
     selected = f"selected/{spread['id']}.png"
-    save_image(project / selected, legacy_rectified)
+    if selected_pages["left"] == selected_pages["right"]:
+        selected_image = selected_data["left"][1]
+    else:
+        selected_image = _join_physical_pages(
+            [selected_data["left"][2]["left"], selected_data["right"][2]["right"]]
+        )
+    save_image(project / selected, selected_image)
     spread["path"] = selected
-    spread["spine_px"] = legacy_spine
-    spread["spine_px_by_side"] = {}
 
     selected_suspect = []
     for side in ("left", "right"):
-        chosen, _, _, _ = load_candidate(selected_pages[side])
+        chosen = selected_data[side][0]
         selected_suspect.extend(
             chosen.get("page_suspect", {}).get(side, chosen.get("suspect", []))
         )
@@ -203,9 +221,8 @@ def render_spread(project, manifest, spread):
     disabled_sides = set(spread.get("dewarp_disabled_sides", []))
     for side in order:
         candidate_id = selected_pages[side]
-        chosen, _, sides, spine = load_candidate(candidate_id)
+        chosen, _, sides, _ = selected_data[side]
         source_page = sides[side]
-        spread["spine_px_by_side"][side] = spine
         selected_source = f"selected/{spread['id']}_{side}.png"
         save_image(project / selected_source, source_page)
 
