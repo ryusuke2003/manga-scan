@@ -555,6 +555,19 @@ def render_spread(project, manifest, spread):
                 "dewarp": dewarp,
             }
         )
+    if cfg.finger_repair:
+        incomplete = any(
+            page.get("finger_repair", {}).get("status") in ("incomplete", "unavailable")
+            for page in pages
+        )
+        if incomplete:
+            spread["suspect"] = list(
+                dict.fromkeys(spread.get("suspect", []) + ["finger_repair_incomplete"])
+            )
+        else:
+            spread["suspect"] = [
+                reason for reason in spread.get("suspect", []) if reason != "hand_overlap"
+            ]
     manifest["pdf_stale"] = True
     return pages
 
