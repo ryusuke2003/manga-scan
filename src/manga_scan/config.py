@@ -140,6 +140,11 @@ class Config:
 
     @classmethod
     def from_dict(cls, data):
+        data = dict(data)
+        # Existing configs/manifests that explicitly stored a numeric rotation
+        # predate auto detection and should keep their manual behavior.
+        if "rotation" in data and "auto_rotation" not in data:
+            data["auto_rotation"] = False
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown settings: {sorted(unknown)}")
