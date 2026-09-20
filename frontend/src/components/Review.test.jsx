@@ -183,27 +183,42 @@ it('retains split review controls for legacy projects without the new setting', 
 });
 
 
-it('distinguishes current PDF, stale PDF, and an active export job', () => {
-  const current = { ...manifest, pdf: 'output/manga.pdf', pdf_stale: false };
+it('distinguishes current PDF/CBZ, legacy PDF-only, stale exports, and active export', () => {
+  const current = {
+    ...manifest,
+    pdf: 'output/manga.pdf',
+    cbz: 'output/manga.cbz',
+    pdf_stale: false,
+  };
   const { rerender } = render(
     <Review manifest={current} file={path => path} busy={false} onEdit={vi.fn()} />,
   );
-  expect(screen.getByRole('button', { name: 'PDFを再出力' }).disabled).toBe(false);
+  expect(screen.getByRole('button', { name: 'PDF / CBZを再出力' }).disabled).toBe(false);
   expect(screen.getByRole('link', { name: 'PDFを開く ↗' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'CBZを保存 ↓' })).toBeTruthy();
+
+  rerender(
+    <Review manifest={{ ...current, cbz: undefined }} file={path => path} busy={false} onEdit={vi.fn()} />,
+  );
+  expect(screen.getByRole('button', { name: 'PDF / CBZを出力' }).disabled).toBe(false);
+  expect(screen.getByRole('link', { name: 'PDFを開く ↗' })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'CBZを保存 ↓' })).toBeNull();
+  expect(screen.getByText(/PDFは出力済みです/)).toBeTruthy();
 
   rerender(
     <Review manifest={{ ...current, pdf_stale: true }} file={path => path} busy={false} onEdit={vi.fn()} />,
   );
-  expect(screen.getByRole('button', { name: 'PDFを出力' }).disabled).toBe(false);
+  expect(screen.getByRole('button', { name: 'PDF / CBZを出力' }).disabled).toBe(false);
   expect(screen.queryByRole('link', { name: 'PDFを開く ↗' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'CBZを保存 ↓' })).toBeNull();
 
   rerender(
     <Review manifest={current} file={path => path} busy exporting onEdit={vi.fn()} />,
   );
-  const exporting = screen.getByRole('button', { name: 'PDF生成中…' });
+  const exporting = screen.getByRole('button', { name: 'PDF / CBZ生成中…' });
   expect(exporting.disabled).toBe(true);
   expect(exporting.getAttribute('aria-busy')).toBe('true');
-  expect(screen.getByText(/PDFを生成中です/)).toBeTruthy();
+  expect(screen.getByText(/PDF \/ CBZを生成中です/)).toBeTruthy();
 });
 
 
