@@ -2,10 +2,9 @@ import cv2
 import numpy as np
 
 _MAX_ALIGNMENT_SIDE = 640
-_MIN_ALIGNMENT_SCORE = 0.55
-_MAX_TRANSLATION_FRACTION = 0.18
-_MIN_SCALE_DETERMINANT = 0.70
-_MAX_SCALE_DETERMINANT = 1.35
+_MIN_ALIGNMENT_SCORE = 0.72
+_MAX_TRANSLATION_FRACTION = 0.08
+_MAX_ROTATION_DEGREES = 5.0
 
 
 def _gray(image):
@@ -54,16 +53,48 @@ def align_donor_page(target, donor, donor_mask, target_mask):
     )
     target_small = cv2.resize(target_gray, small_size, interpolation=cv2.INTER_AREA)
     donor_small = cv2.resize(donor_gray, small_size, interpolation=cv2.INTER_AREA)
-    clean = ((target_mask == 0) & (donor_mask == 0)).astype(np.uint8)
-    clean_small = cv2.resize(
-        (clean * 255).astype(np.uint8),
+    target_mask_small = cv2.resize(
+        target_mask,
         small_size,
         interpolation=cv2.INTER_NEAREST,
     )
-    clean_small = cv2.erode(clean_small, np.ones((3, 3), np.uint8), iterations=1)
-    if np.count_nonzero(clean_small) < clean_small.size * 0.2:
+    donor_mask_small = cv2.resize(
+        donor_mask,
+        small_size,
+        interpolation=cv2.INTER_NEAREST,
+    )
+
+    # The two hand masks live in different image coordinate systems before
+    # alignment, so do not AND them into one ECC input mask. Neutralize each
+    # image's own masked pixels instead, then align only the page appearance.
+    kernel = np.ones((5, 5), np.uint8)
+    target_mask_small = cv2.dilate(target_mask_small, kernel, iterations=1)
+    donor_mask_small = cv2.dilate(donor_mask_small, kernel, iterations=1)
+    target_clean = target_mask_small == 0
+    donor_clean = donor_mask_small == 0
+    if (
+        np.count_nonzero(target_clean) < target_clean.size * 0.2
+        or np.count_nonzero(donor_clean) < donor_clean.size * 0.2
+    ):
         return None
 
+    fill = int(
+        round(
+            (
+                float(np.median(target_small[target_clean]))
+                + float(np.median(donor_small[donor_clean]))
+            )
+            / 2
+        )
+    )
+    target_for_ecc = target_small.copy()
+    donor_for_ecc = donor_small.copy()
+    target_for_ecc[~target_clean] = fill
+    donor_for_ecc[~donor_clean] = fill
+
+    # Page geometry has already been normalized by ROI / per-page perspective
+    # correction. Residual alignment should therefore be only a small rotation
+    # and translation. Refuse scale/shear instead of risking wrong manga pixels.
     warp = np.eye(2, 3, dtype=np.float32)
     criteria = (
         cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
@@ -72,12 +103,12 @@ def align_donor_page(target, donor, donor_mask, target_mask):
     )
     try:
         score, warp = cv2.findTransformECC(
-            target_small,
-            donor_small,
+            target_for_ecc,
+            donor_for_ecc,
             warp,
-            cv2.MOTION_AFFINE,
+            cv2.MOTION_EUCLIDEAN,
             criteria,
-            inputMask=clean_small,
+            inputMask=None,
             gaussFiltSize=5,
         )
     except cv2.error:
@@ -88,11 +119,11 @@ def align_donor_page(target, donor, donor_mask, target_mask):
 
     small_width, small_height = small_size
     warp = warp.astype(np.float32, copy=True)
+    angle = abs(float(np.degrees(np.arctan2(warp[1, 0], warp[0, 0]))))
+    if angle > _MAX_ROTATION_DEGREES:
+        return None
     warp[0, 2] *= width / small_width
     warp[1, 2] *= height / small_height
-    determinant = float(np.linalg.det(warp[:, :2]))
-    if not _MIN_SCALE_DETERMINANT <= determinant <= _MAX_SCALE_DETERMINANT:
-        return None
     if (
         abs(float(warp[0, 2])) > width * _MAX_TRANSLATION_FRACTION
         or abs(float(warp[1, 2])) > height * _MAX_TRANSLATION_FRACTION
