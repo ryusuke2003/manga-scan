@@ -131,14 +131,16 @@ def read_exact(stream, size):
     return b"".join(chunks)
 
 
-def sample_frames(path, fps, size, hwaccel="none"):
+def sample_frames(path, fps, size, hwaccel="none", start_time=0.0):
     """Bounded rawvideo pipe. Samples on the presentation timeline, not frame indices.
 
     Inter-frame codecs still decode intervening frames inside FFmpeg; only sampled,
     scaled frames cross into Python. No full-resolution video array is retained.
     """
+    if not math.isfinite(start_time) or start_time < 0:
+        raise ValueError("Start time must be finite and >= 0")
     w, h = size
-    args = input_args(local_video(path), hwaccel)
+    args = input_args(local_video(path), hwaccel, start_time if start_time else None)
     args += [
         "-vf",
         f"setpts=PTS-STARTPTS,fps=fps={fps}:start_time=0:round=near,scale={w}:{h}",
@@ -158,7 +160,7 @@ def sample_frames(path, fps, size, hwaccel="none"):
                     break
                 if len(data) != w * h * 3:
                     raise RuntimeError("Truncated FFmpeg frame")
-                yield index, index / fps, np.frombuffer(data, np.uint8).reshape(h, w, 3)
+                yield index, start_time + index / fps, np.frombuffer(data, np.uint8).reshape(h, w, 3)
                 index += 1
             code = proc.wait(timeout=30)
             if code or index == 0:
@@ -166,7 +168,7 @@ def sample_frames(path, fps, size, hwaccel="none"):
                 message = err.read().decode(errors="replace")[-2000:]
                 if hwaccel != "none" and index == 0:
                     LOG.warning("Hardware decode failed; retrying analysis on CPU")
-                    yield from sample_frames(path, fps, size, "none")
+                    yield from sample_frames(path, fps, size, "none", start_time)
                 else:
                     raise RuntimeError(f"FFmpeg analysis failed: {message}")
         finally:
