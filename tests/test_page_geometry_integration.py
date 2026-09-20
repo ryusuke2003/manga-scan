@@ -3,8 +3,8 @@ import numpy as np
 import pytest
 
 from manga_scan.config import Config
-from manga_scan.pipeline import rectify_spread_pages
 from manga_scan.perspective import warp_roi
+from manga_scan.pipeline import rectify_spread_pages
 from manga_scan.split import split_spread
 
 REFERENCE = [[0.05, 0.07], [0.96, 0.07], [0.96, 0.94], [0.05, 0.94]]
