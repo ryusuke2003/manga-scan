@@ -17,3 +17,7 @@ models/*.json
 *.mp4
 *.MP4
 config.toml
+
+# Local-only real-camera benchmark outputs.
+benchmarks/real/videos/
+benchmarks/real/reports/
