@@ -4,6 +4,7 @@ import pytest
 
 import manga_scan.pipeline as pipeline
 from manga_scan.config import Config
+from manga_scan.score import glare_fraction, local_sharpness_metrics
 from manga_scan.selection import choose_candidate_selection, score_candidate_pages
 from manga_scan.storage import save_manifest
 
@@ -221,3 +222,120 @@ def test_review_can_change_only_one_page_candidate(tmp_path, monkeypatch):
 def test_config_rejects_unknown_candidate_selection_mode(mode):
     with pytest.raises(ValueError):
         Config.from_dict({"candidate_selection_mode": mode})
+
+
+
+def _v2_record(candidate_id, *, base_score, sharpness_uniformity, motion=0.01,
+               hand_overlap=0.0, glare=0.0):
+    metrics = {
+        "score": base_score,
+        "sharpness": 100.0,
+        "sharpness_uniformity": sharpness_uniformity,
+        "motion": motion,
+        "hand_overlap": hand_overlap,
+        "glare": glare,
+    }
+    return {
+        "id": candidate_id,
+        "metrics": dict(metrics),
+        "page_metrics": {
+            "left": dict(metrics),
+            "right": dict(metrics),
+        },
+    }
+
+
+def test_local_sharpness_detects_blurry_band():
+    yy, xx = np.indices((180, 180))
+    crisp = (((xx // 4 + yy // 4) % 2) * 220 + 20).astype(np.uint8)
+    partial = crisp.copy()
+    partial[120:] = cv2.GaussianBlur(partial[120:], (0, 0), 6)
+
+    crisp_metrics = local_sharpness_metrics(crisp)
+    partial_metrics = local_sharpness_metrics(partial)
+
+    assert len(partial_metrics["sharpness_tiles"]) == 9
+    assert partial_metrics["sharpness_p10"] < crisp_metrics["sharpness_p10"] * 0.5
+    assert partial_metrics["sharpness_worst"] < crisp_metrics["sharpness_worst"] * 0.5
+    assert partial_metrics["sharpness_uniformity"] < crisp_metrics["sharpness_uniformity"]
+
+
+def test_glare_detects_local_highlight_but_not_uniform_white():
+    page = np.full((160, 160, 3), 210, np.uint8)
+    page[::8, :] = 70
+    page[:, ::16] = 90
+    glare = page.copy()
+    cv2.circle(glare, (80, 80), 18, (255, 255, 255), -1)
+
+    assert glare_fraction(glare) > glare_fraction(page)
+    assert glare_fraction(np.full_like(page, 255)) == 0.0
+
+
+def test_relative_scoring_prefers_uniform_focus_over_center_only_sharp():
+    records = [
+        _v2_record(0, base_score=0.9, sharpness_uniformity=0.2),
+        _v2_record(1, base_score=0.8, sharpness_uniformity=0.8),
+    ]
+
+    selected, selected_pages = choose_candidate_selection(records, "spread")
+
+    assert selected == 1
+    assert selected_pages == {"left": 1, "right": 1}
+    assert records[1]["metrics"]["selection_score"] > records[0]["metrics"]["selection_score"]
+    assert records[1]["metrics"]["relative_quality"]["sharpness"] == 1.0
+
+
+def test_relative_scoring_prefers_less_glare_when_other_quality_ties():
+    records = [
+        _v2_record(0, base_score=0.8, sharpness_uniformity=0.7, glare=0.03),
+        _v2_record(1, base_score=0.8, sharpness_uniformity=0.7, glare=0.0),
+    ]
+
+    selected, _ = choose_candidate_selection(records, "spread")
+
+    assert selected == 1
+    assert records[1]["metrics"]["relative_quality"]["glare"] == 1.0
+    assert records[0]["metrics"]["relative_quality"]["glare"] == 0.0
+
+
+
+def test_page_scoring_penalizes_glare_mask_only_on_covered_side():
+    image = np.full((100, 200, 3), 220, np.uint8)
+    image[::4, :] = 30
+    hand_mask = np.zeros((100, 200), np.uint8)
+    glare_mask = np.zeros((100, 200), np.uint8)
+    glare_mask[:, :100] = 255
+    cfg = Config(glare_overlap_weight=6.0)
+
+    metrics, spine = score_candidate_pages(
+        image,
+        hand_mask,
+        motion=0.0,
+        config=cfg,
+        geometry_metrics={"distortion": 0.0, "flatness_proxy": 0.0},
+        hand_enabled=False,
+        glare_mask=glare_mask,
+    )
+
+    assert spine == 100
+    assert metrics["left"]["glare_overlap"] == pytest.approx(1.0)
+    assert metrics["right"]["glare_overlap"] == pytest.approx(0.0)
+    assert metrics["right"]["score"] > metrics["left"]["score"]
+
+
+def test_relative_scoring_uses_glare_overlap_when_available():
+    records = [
+        _v2_record(0, base_score=0.8, sharpness_uniformity=0.7, glare=0.0),
+        _v2_record(1, base_score=0.8, sharpness_uniformity=0.7, glare=0.0),
+    ]
+    records[0]["metrics"]["glare_overlap"] = 0.04
+    records[1]["metrics"]["glare_overlap"] = 0.0
+    for side in ("left", "right"):
+        records[0]["page_metrics"][side]["glare_overlap"] = 0.04
+        records[1]["page_metrics"][side]["glare_overlap"] = 0.0
+
+    selected, _ = choose_candidate_selection(records, "spread")
+
+    assert selected == 1
+    assert records[1]["metrics"]["relative_quality"]["glare"] == 1.0
+    assert records[0]["metrics"]["relative_quality"]["glare"] == 0.0
