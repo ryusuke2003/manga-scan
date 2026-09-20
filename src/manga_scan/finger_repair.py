@@ -5,6 +5,12 @@ _MAX_ALIGNMENT_SIDE = 640
 _MIN_ALIGNMENT_SCORE = 0.72
 _MAX_TRANSLATION_FRACTION = 0.08
 _MAX_ROTATION_DEGREES = 5.0
+_MAX_LOCAL_SHIFT_FRACTION = 0.03
+_LOCAL_CONTEXT_FRACTION = 0.06
+_LOCAL_MASK_MARGIN_FRACTION = 0.006
+_MIN_LOCAL_ALIGNMENT_SCORE = 0.55
+_MAX_LOCAL_CONTEXT_RESIDUAL = 0.18
+_MIN_LOCAL_CONTEXT_PIXELS = 80
 
 
 def _gray(image):
@@ -146,6 +152,275 @@ def align_donor_page(target, donor, donor_mask, target_mask):
         borderValue=255,
     )
     return aligned, aligned_mask, float(score)
+
+
+def _dilate_mask(mask, radius):
+    if radius <= 0:
+        return mask.astype(bool)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (radius * 2 + 1, radius * 2 + 1),
+    )
+    return cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+
+
+def _safe_clean_mask(mask, shape):
+    binary = _binary_mask(mask, shape).astype(bool)
+    margin = max(2, round(min(shape[:2]) * _LOCAL_MASK_MARGIN_FRACTION))
+    return ~_dilate_mask(binary, margin)
+
+
+def _component_records(mask):
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8),
+        connectivity=8,
+    )
+    records = []
+    for label in range(1, count):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area <= 0:
+            continue
+        records.append(
+            {
+                "id": label,
+                "area": area,
+                "mask": labels == label,
+                "bbox": (
+                    int(stats[label, cv2.CC_STAT_LEFT]),
+                    int(stats[label, cv2.CC_STAT_TOP]),
+                    int(stats[label, cv2.CC_STAT_WIDTH]),
+                    int(stats[label, cv2.CC_STAT_HEIGHT]),
+                ),
+            }
+        )
+    return records
+
+
+def _component_context(component, target_mask, donor_mask):
+    height, width = target_mask.shape
+    x, y, box_width, box_height = component["bbox"]
+    radius = max(10, round(min(height, width) * _LOCAL_CONTEXT_FRACTION))
+    x0 = max(0, x - radius)
+    y0 = max(0, y - radius)
+    x1 = min(width, x + box_width + radius)
+    y1 = min(height, y + box_height + radius)
+
+    region = np.zeros((height, width), bool)
+    region[y0:y1, x0:x1] = True
+
+    margin = max(2, round(min(height, width) * _LOCAL_MASK_MARGIN_FRACTION))
+    inner_margin = max(margin + 1, round(min(height, width) * 0.012))
+    blocked_target = _dilate_mask(target_mask, margin)
+    blocked_component = _dilate_mask(component["mask"], inner_margin)
+    blocked_donor = _dilate_mask(donor_mask, margin)
+    context = region & ~blocked_target & ~blocked_component & ~blocked_donor
+    required = max(_MIN_LOCAL_CONTEXT_PIXELS, round(component["area"] * 0.5))
+    if np.count_nonzero(context) < required:
+        return None
+    return context, (x0, y0, x1, y1)
+
+
+def _warp_local_translation(image, mask, dx, dy):
+    height, width = image.shape[:2]
+    warp = np.asarray([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float32)
+    aligned_image = cv2.warpAffine(
+        image,
+        warp,
+        (width, height),
+        flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_REFLECT,
+    )
+    aligned_mask = cv2.warpAffine(
+        (_binary_mask(mask, image.shape) * 255).astype(np.uint8),
+        warp,
+        (width, height),
+        flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=255,
+    )
+    return aligned_image, aligned_mask
+
+
+def _context_residual(target_gray, donor_gray, context):
+    if np.count_nonzero(context) < _MIN_LOCAL_CONTEXT_PIXELS:
+        return None
+    delta = np.abs(
+        target_gray[context].astype(np.float32)
+        - donor_gray[context].astype(np.float32)
+    )
+    return float(np.mean(delta) / 255.0)
+
+
+def _validate_local_candidate(
+    target,
+    donor,
+    donor_mask,
+    target_mask,
+    component,
+    dx,
+    dy,
+    score,
+    method,
+):
+    height, width = target.shape[:2]
+    max_shift = max(2.0, min(height, width) * _MAX_LOCAL_SHIFT_FRACTION)
+    if abs(float(dx)) > max_shift or abs(float(dy)) > max_shift:
+        return None
+
+    aligned_image, aligned_mask = _warp_local_translation(
+        donor,
+        donor_mask,
+        float(dx),
+        float(dy),
+    )
+    clean = _safe_clean_mask(aligned_mask, target.shape)
+    context_data = _component_context(
+        component,
+        target_mask.astype(bool),
+        (aligned_mask > 127),
+    )
+    if context_data is None:
+        return None
+    context, _ = context_data
+    target_gray = _gray(target)
+    donor_gray = _gray(aligned_image)
+    residual = _context_residual(target_gray, donor_gray, context)
+    if residual is None or residual > _MAX_LOCAL_CONTEXT_RESIDUAL:
+        return None
+
+    usable = component["mask"] & clean
+    clean_coverage = float(np.count_nonzero(usable) / component["area"])
+    if np.count_nonzero(usable) < 8:
+        return None
+
+    bounded_score = max(0.0, min(1.0, float(score)))
+    quality = (
+        0.50 * clean_coverage
+        + 0.30 * bounded_score
+        + 0.20 * (1.0 - residual)
+    )
+    return {
+        "image": aligned_image,
+        "mask": aligned_mask,
+        "clean": clean,
+        "score": bounded_score,
+        "dx": float(dx),
+        "dy": float(dy),
+        "residual": residual,
+        "clean_coverage": clean_coverage,
+        "quality": quality,
+        "method": method,
+    }
+
+
+def _align_local_component(
+    target,
+    donor,
+    donor_mask,
+    target_mask,
+    component,
+    global_score,
+):
+    """Refine one globally aligned donor using bounded translation only."""
+    donor_mask = _binary_mask(donor_mask, target.shape)
+    target_mask = _binary_mask(target_mask, target.shape)
+
+    context_data = _component_context(
+        component,
+        target_mask.astype(bool),
+        donor_mask.astype(bool),
+    )
+    if context_data is None:
+        return None
+    context, (x0, y0, x1, y1) = context_data
+
+    best = _validate_local_candidate(
+        target,
+        donor,
+        donor_mask,
+        target_mask,
+        component,
+        0.0,
+        0.0,
+        global_score,
+        "global",
+    )
+
+    target_gray = _gray(target)
+    donor_gray = _gray(donor)
+    target_patch = target_gray[y0:y1, x0:x1]
+    donor_patch = donor_gray[y0:y1, x0:x1]
+    context_patch = context[y0:y1, x0:x1]
+    if (
+        target_patch.shape[0] < 8
+        or target_patch.shape[1] < 8
+        or np.count_nonzero(context_patch) < _MIN_LOCAL_CONTEXT_PIXELS
+    ):
+        return best
+
+    context_values = np.concatenate(
+        (
+            target_patch[context_patch].astype(np.float32),
+            donor_patch[context_patch].astype(np.float32),
+        )
+    )
+    fill = np.uint8(np.clip(round(float(np.median(context_values))), 0, 255))
+    target_for_ecc = target_patch.copy()
+    donor_for_ecc = donor_patch.copy()
+    target_for_ecc[~context_patch] = fill
+    donor_for_ecc[~context_patch] = fill
+    input_mask = (context_patch.astype(np.uint8) * 255)
+
+    warp = np.eye(2, 3, dtype=np.float32)
+    criteria = (
+        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
+        50,
+        1e-5,
+    )
+    try:
+        local_score, warp = cv2.findTransformECC(
+            target_for_ecc,
+            donor_for_ecc,
+            warp,
+            cv2.MOTION_TRANSLATION,
+            criteria,
+            inputMask=input_mask,
+            gaussFiltSize=5,
+        )
+    except cv2.error:
+        return best
+
+    if (
+        not np.isfinite(local_score)
+        or local_score < _MIN_LOCAL_ALIGNMENT_SCORE
+        or not np.isfinite(warp).all()
+    ):
+        return best
+
+    local = _validate_local_candidate(
+        target,
+        donor,
+        donor_mask,
+        target_mask,
+        component,
+        float(warp[0, 2]),
+        float(warp[1, 2]),
+        float(local_score),
+        "local",
+    )
+    if local is None:
+        return best
+    if best is None:
+        return local
+
+    # Prefer local refinement only when it measurably improves the surrounding
+    # context, or exposes more clean donor pixels inside the finger component.
+    if (
+        local["residual"] + 0.005 < best["residual"]
+        or local["clean_coverage"] > best["clean_coverage"] + 0.03
+    ):
+        return local
+    return best
 
 
 def _blend_inside_mask(base, donor, mask):
@@ -300,6 +575,7 @@ def repair_finger_regions(
             "donor_coverage": 1.0,
             "donors": [],
             "alignment_scores": [],
+            "components": [],
             "fallback": {
                 "mode": fallback,
                 "applied": False,
@@ -310,11 +586,9 @@ def repair_finger_regions(
             },
         }, np.zeros(target.shape[:2], np.uint8)
 
-    result = target.copy()
-    remaining = target_mask.astype(bool)
-    donors_used = []
-    alignment_scores = []
-
+    # Keep the existing global page alignment as the first safety gate. Local
+    # refinement is attempted only for donors that already match the page.
+    aligned_donors = []
     for donor in donors:
         aligned = align_donor_page(
             target,
@@ -324,23 +598,103 @@ def repair_finger_regions(
         )
         if aligned is None:
             continue
-        aligned_image, aligned_mask, score = aligned
-        donor_clean = aligned_mask <= 127
-        donor_clean = cv2.erode(
-            donor_clean.astype(np.uint8),
-            np.ones((3, 3), np.uint8),
-            iterations=1,
-        ).astype(bool)
-        usable = remaining & donor_clean
-        if np.count_nonzero(usable) < 8:
-            continue
+        aligned_image, aligned_mask, global_score = aligned
+        aligned_donors.append(
+            {
+                "candidate_id": donor["candidate_id"],
+                "image": aligned_image,
+                "mask": aligned_mask,
+                "global_score": float(global_score),
+            }
+        )
 
-        result = _blend_inside_mask(result, aligned_image, usable)
-        remaining[usable] = False
-        donors_used.append(donor["candidate_id"])
-        alignment_scores.append(round(score, 4))
-        if not np.any(remaining):
-            break
+    result = target.copy()
+    remaining = target_mask.astype(bool)
+    donors_used = []
+    alignment_scores = []
+    components_info = []
+
+    for component in _component_records(target_mask):
+        original_pixels = int(np.count_nonzero(component["mask"]))
+        component_used = set()
+        component_donors = []
+
+        while True:
+            unresolved_component = remaining & component["mask"]
+            unresolved_pixels = int(np.count_nonzero(unresolved_component))
+            if unresolved_pixels < 8:
+                break
+
+            candidates = []
+            for donor in aligned_donors:
+                candidate_id = donor["candidate_id"]
+                if candidate_id in component_used:
+                    continue
+                local = _align_local_component(
+                    target,
+                    donor["image"],
+                    donor["mask"],
+                    target_mask,
+                    component,
+                    donor["global_score"],
+                )
+                if local is None:
+                    component_used.add(candidate_id)
+                    continue
+
+                usable = unresolved_component & local["clean"]
+                usable_pixels = int(np.count_nonzero(usable))
+                if usable_pixels < 8:
+                    component_used.add(candidate_id)
+                    continue
+
+                current_coverage = usable_pixels / unresolved_pixels
+                quality = (
+                    0.50 * current_coverage
+                    + 0.30 * local["score"]
+                    + 0.20 * (1.0 - local["residual"])
+                )
+                candidates.append((quality, usable_pixels, donor, local, usable))
+
+            if not candidates:
+                break
+
+            _, usable_pixels, donor, local, usable = max(
+                candidates,
+                key=lambda item: (item[0], item[1]),
+            )
+            candidate_id = donor["candidate_id"]
+            result = _blend_inside_mask(result, local["image"], usable)
+            remaining[usable] = False
+            component_used.add(candidate_id)
+
+            if candidate_id not in donors_used:
+                donors_used.append(candidate_id)
+                alignment_scores.append(round(donor["global_score"], 4))
+
+            component_donors.append(
+                {
+                    "candidate_id": candidate_id,
+                    "method": local["method"],
+                    "local_score": round(local["score"], 4),
+                    "dx": round(local["dx"], 3),
+                    "dy": round(local["dy"], 3),
+                    "context_residual": round(local["residual"], 4),
+                    "coverage": round(usable_pixels / original_pixels, 4),
+                }
+            )
+
+        repaired_pixels = original_pixels - int(
+            np.count_nonzero(remaining & component["mask"])
+        )
+        components_info.append(
+            {
+                "component_id": component["id"],
+                "area": original_pixels,
+                "coverage": round(repaired_pixels / original_pixels, 4),
+                "donors": component_donors,
+            }
+        )
 
     donor_coverage = 1.0 - float(np.count_nonzero(remaining) / total)
     unresolved = remaining.astype(np.uint8) * 255
@@ -357,5 +711,7 @@ def repair_finger_regions(
         "donor_coverage": round(donor_coverage, 4),
         "donors": donors_used,
         "alignment_scores": alignment_scores,
+        "components": components_info,
         "fallback": fallback_info,
     }, unresolved
+
