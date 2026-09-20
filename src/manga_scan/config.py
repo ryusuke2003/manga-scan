@@ -28,6 +28,8 @@ class Config:
     dedupe_window: int = 3
     refine_quad: bool = False
     quad_max_shift: float = 0.025
+    perspective_mode: str = "spread"
+    page_contour_min_confidence: float = 0.5
     split_mode: str = "center"
     spine_ratio: float = 0.5
     gutter_fraction: float = 0.0
@@ -91,6 +93,7 @@ class Config:
             "duplicate_suspect_ssim": (0, 1),
             "dedupe_window": (1, 50),
             "quad_max_shift": (0, 0.1),
+            "page_contour_min_confidence": (0, 1),
             "hand_padding": (0, 0.1),
             "dewarp_strength": (0, 0.6),
             "dewarp_max_strength": (0, 0.35),
@@ -113,6 +116,7 @@ class Config:
             "hand_backend": ("mediapipe", "none"),
             "image_format": ("png", "jpeg"),
             "split_mode": ("center", "auto"),
+            "perspective_mode": ("spread", "per_page"),
             "dewarp_mode": ("off", "manual", "auto"),
             "reading_order": ("rtl", "ltr"),
             "hwaccel": ("none", "videotoolbox"),
