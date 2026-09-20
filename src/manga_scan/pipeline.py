@@ -18,9 +18,9 @@ from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
-from .page_turns import analyze_page_turns
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
+from .page_turns import analyze_page_turns
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
