@@ -91,7 +91,7 @@ def create_app(projects, config=None):
                     "pages": len(m["pages"]),
                 }
             )
-        return jsonify(token=token, projects=projects, job=job)
+        return jsonify(token=token, projects=projects, job=job, defaults=config.to_dict())
 
     @app.post("/api/choose")
     def choose():
