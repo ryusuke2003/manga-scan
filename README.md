@@ -94,13 +94,34 @@ manga-scan ui --config config.toml --projects projects
 
 ### 2回目以降
 
-フロントを変更していなければ、通常はこれだけです。
+#### フロントに変更がない場合
+
+通常はこれだけです。
 
 ```bash
 cd manga-scan
 source .venv/bin/activate
 manga-scan ui --config config.toml --projects projects
 ```
+
+#### フロントを変更した場合
+
+`frontend/` 以下を変更した場合や、`git pull` でフロントの変更を取り込んだ場合は、**起動前にReact/Viteをbuildし直します**。
+
+```bash
+cd manga-scan
+source .venv/bin/activate
+npm --prefix frontend run build
+manga-scan ui --config config.toml --projects projects
+```
+
+`frontend/package.json` が変更されている場合や `node_modules` がない場合は、buildの前に次も実行してください。
+
+```bash
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
+```
+
+フロントを継続的に開発するときのVite開発サーバーやテスト手順は、[開発・テストガイド](docs/development.md) を参照してください。
 
 ## Web UIの使い方
 
@@ -352,47 +373,9 @@ dewarp_strength = 0.15
 
 詳しい判定式やアルゴリズムは [docs/architecture.md](docs/architecture.md) を参照してください。
 
-## 開発する場合
+## 開発・テスト
 
-### 開発依存を入れる
-
-```bash
-source .venv/bin/activate
-python -m pip install -e '.[hands,dev]'
-npm --prefix frontend install --no-audit --no-fund --no-package-lock
-```
-
-### テスト
-
-```bash
-npm --prefix frontend test
-npm --prefix frontend run build
-python -m pytest -q
-ruff check src tests scripts
-```
-
-PythonのUI統合テストは、Viteで生成された `src/manga_scan/static/` をFlaskから実際に配信できることも確認します。そのため **Pythonテストの前にフロントをbuild** してください。
-
-GitHub Actionsでは、Ubuntu/Python 3.14でNode 22のフロントテスト・ビルドと軽量Pythonテストを先に実行します。Ubuntu/Python 3.12ではUI以外のPythonテストとソース互換性を確認し、macOS/Python 3.14ではFFmpegを使うパイプライン統合テストを実行します。PRブランチではpushとpull_requestの二重実行を避け、同じPRへの古い実行は新しいpush時に自動キャンセルします。
-
-### React/Viteを開発モードで動かす
-
-ターミナル1:
-
-```bash
-source .venv/bin/activate
-manga-scan ui --config config.toml --projects projects
-```
-
-ターミナル2:
-
-```bash
-npm --prefix frontend run dev
-```
-
-開発中は **http://127.0.0.1:5173** を開きます。Viteが `/api` と `/files` を `127.0.0.1:8765` のFlaskへproxyします。
-
-フロント変更を通常の `8765` 側へ反映したいときは、再度 `npm --prefix frontend run build` を実行してください。
+開発用依存関係、フロントのVite開発サーバー、テスト、GitHub Actionsについては、[開発・テストガイド](docs/development.md) にまとめています。
 
 ## 制約
 
@@ -409,6 +392,7 @@ npm --prefix frontend run dev
 
 ## ドキュメント
 
+- [開発・テストガイド](docs/development.md)
 - [設計・アルゴリズム・MVPの境界](docs/architecture.md)
 - [検証記録](docs/validation.md)
 - [OSS・モデル・ライセンス調査](THIRD_PARTY.md)
