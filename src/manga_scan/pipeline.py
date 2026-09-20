@@ -16,7 +16,12 @@ from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
 from .hand import HandDetector, boundary_finger_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
-from .page_contour import detect_page_quads, draw_page_quads, spread_quad_from_page_quads
+from .page_contour import (
+    consensus_page_quads,
+    detect_page_quads,
+    draw_page_quads,
+    spread_quad_from_page_quads,
+)
 from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
 from .perspective import rotate_roi, validate_roi, warp_roi
@@ -34,6 +39,8 @@ from .storage import project_lock, read_manifest, save_image, save_manifest, wri
 from .video import extract_frame, sample_frames
 
 LOG = logging.getLogger("manga_scan")
+
+PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
 
 
 def update(project, manifest, progress, message):
@@ -194,7 +201,46 @@ def render_cover(project, manifest):
     }
 
 
-def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
+def detect_spread_page_consensus(project, spread, cfg, anchor_ids=None):
+    """Estimate page quads from all saved candidates for one spread.
+
+    Candidate preview frames are already analysis-resolution images, so this
+    adds no extra video seeks. Each frame is evaluated independently and the
+    page_contour module rejects geometric outliers before combining corners.
+    """
+
+    detections = []
+    overrides = spread.get("roi_overrides", {})
+    for record in spread.get("candidates", []):
+        path = record.get("path")
+        if not path:
+            continue
+        image = cv2.imread(str(project / path), cv2.IMREAD_COLOR)
+        if image is None:
+            continue
+        upright = rotate_image(image, cfg.rotation)
+        override = overrides.get(str(record["id"]))
+        roi = rotate_roi(override or record["roi"], cfg.rotation).tolist()
+        detection = detect_page_quads(
+            upright,
+            roi,
+            spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
+            min_confidence=cfg.page_contour_min_confidence,
+        )
+        detection["candidate_id"] = record["id"]
+        detections.append(detection)
+
+    if not detections:
+        return None
+    return consensus_page_quads(
+        detections,
+        min_confidence=cfg.page_contour_min_confidence,
+        max_corner_deviation=PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION,
+        anchor_ids=anchor_ids,
+    )
+
+
+def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg, page_detection=None):
     """Choose per-page perspective correction or the legacy spread fallback."""
 
     ratio = spread.get("spine_ratio", cfg.spine_ratio)
@@ -207,12 +253,14 @@ def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
                 (cfg.analysis_width, max(2, round(image.shape[0] * scale))),
                 interpolation=cv2.INTER_AREA,
             )
-        detection = detect_page_quads(
-            detection_image,
-            chosen_roi,
-            spine_ratio=ratio,
-            min_confidence=cfg.page_contour_min_confidence,
-        )
+        detection = page_detection
+        if detection is None:
+            detection = detect_page_quads(
+                detection_image,
+                chosen_roi,
+                spine_ratio=ratio,
+                min_confidence=cfg.page_contour_min_confidence,
+            )
         spread["page_contours"] = detection
         debug_path = f"debug/page_contours/{spread['id']}.jpg"
         save_image(project / debug_path, draw_page_quads(image, detection))
