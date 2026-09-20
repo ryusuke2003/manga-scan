@@ -21,6 +21,7 @@ from .ingest import (
     skip_cover,
 )
 from .pipeline import edit, run
+from .processing_control import clear_cancel_request, request_cancel
 from .storage import project_lock, read_manifest
 
 
@@ -33,7 +34,13 @@ def create_app(projects, config=None):
     token = secrets.token_urlsafe(32)
     app.config["API_TOKEN"] = token
     guard = threading.Lock()
-    job = {"busy": False, "project": None, "action": None, "error": None}
+    job = {
+        "busy": False,
+        "project": None,
+        "action": None,
+        "error": None,
+        "cancel_requested": False,
+    }
 
     def project_path(name):
         path = (root / name).resolve()
@@ -223,7 +230,13 @@ def create_app(projects, config=None):
     def start_job(name, action, fn):
         if not guard.acquire(blocking=False):
             return jsonify(error="処理中です。完了後に操作してください"), 409
-        job.update(busy=True, project=name, action=action, error=None)
+        job.update(
+            busy=True,
+            project=name,
+            action=action,
+            error=None,
+            cancel_requested=False,
+        )
 
         def work():
             try:
@@ -232,7 +245,13 @@ def create_app(projects, config=None):
                 app.logger.exception("Job failed")
                 job["error"] = str(exc)
             finally:
-                job.update(busy=False, action=None)
+                if action == "process":
+                    clear_cancel_request(root / name)
+                job.update(
+                    busy=False,
+                    action=None,
+                    cancel_requested=False,
+                )
                 guard.release()
 
         threading.Thread(target=work, daemon=True).start()
@@ -248,7 +267,21 @@ def create_app(projects, config=None):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
         raw_roi = rotate_roi(roi, (-cfg.rotation) % 360).tolist()
+        clear_cancel_request(project)
         return start_job(name, "process", lambda: run(project, raw_roi))
+
+    @app.post("/api/projects/<name>/cancel")
+    def cancel_process(name):
+        project = project_path(name)
+        if (
+            not job["busy"]
+            or job["project"] != name
+            or job["action"] != "process"
+        ):
+            return jsonify(error="このプロジェクトは処理中ではありません"), 409
+        request_cancel(project)
+        job["cancel_requested"] = True
+        return jsonify(cancel_requested=True), 202
 
     @app.post("/api/projects/<name>/edit")
     def review(name):
