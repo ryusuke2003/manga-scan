@@ -9,6 +9,7 @@ from .cover_detect import detect_cover_quad
 from .perspective import rotate_roi, validate_roi
 from .rotation_detection import detect_video_rotation
 from .split import rotate_image
+from .spread_detect import detect_reference_spread, draw_reference_spread
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, probe
 
@@ -156,24 +157,51 @@ def set_setup_frame(project, kind, time, confirm=False):
             )
         else:
             reference = manifest.setdefault("reference", {})
+            reference_detection = None
+            raw_roi = None
+            debug_path = None
+            if confirm:
+                displayed = rotate_image(image, cfg.rotation)
+                reference_detection = detect_reference_spread(
+                    displayed,
+                    min_confidence=cfg.page_contour_min_confidence,
+                )
+                reference_detection["source"] = "auto_pages"
+                if reference_detection["detected"]:
+                    raw_roi = rotate_roi(
+                        reference_detection["roi"],
+                        (-cfg.rotation) % 360,
+                    ).tolist()
+                debug_path = "source/reference_detection.png"
+                save_image(
+                    project / debug_path,
+                    draw_reference_spread(displayed, reference_detection),
+                )
+
             reference.update(
                 time=timestamp,
                 frame=path,
                 preview=preview_path,
                 confirmed=bool(confirm),
+                detection=reference_detection,
+                detection_preview=debug_path,
             )
             if confirm:
-                detection = manifest.get("rotation_detection") or {}
-                detection["confirmed"] = True
-                manifest["rotation_detection"] = detection
+                rotation_detection = manifest.get("rotation_detection") or {}
+                rotation_detection["confirmed"] = True
+                manifest["rotation_detection"] = rotation_detection
                 manifest["warnings"] = [
                     warning
                     for warning in manifest.get("warnings", [])
                     if not warning.startswith("画像向きの自動判定に自信がありません")
                 ]
-            manifest["roi"] = None
+            manifest["roi"] = raw_roi
             manifest["message"] = (
-                "見開きの外周を4点で指定してください"
+                (
+                    "見開き外周を自動検出しました。範囲を確認して抽出を開始してください"
+                    if reference_detection and reference_detection["detected"]
+                    else "見開き外周を自動検出できませんでした。4点で指定してください"
+                )
                 if confirm
                 else "基準にする見開きフレームを選んでください"
             )
