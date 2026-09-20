@@ -1,5 +1,7 @@
 import re
+from contextlib import contextmanager
 
+import manga_scan.ui as ui_module
 from manga_scan.ui import create_app
 
 
@@ -42,15 +44,18 @@ def test_missing_file_in_existing_project_returns_404(tmp_path):
     assert client.get("/files/scan-test/pages/missing.png").status_code == 404
 
 
-def test_delete_project_requires_token_and_removes_project(tmp_path):
-    project = tmp_path / "scan-delete"
+def test_delete_project_requires_token_and_removes_only_project(tmp_path):
+    projects = tmp_path / "projects"
+    project = projects / "scan-delete"
+    source = tmp_path / "book.mp4"
+    source.write_bytes(b"original video")
     (project / "pages").mkdir(parents=True)
     (project / "manifest.json").write_text(
-        '{"source": "/tmp/book.mp4", "status": "complete", "pages": []}\n'
+        '{"source": "' + str(source) + '", "status": "complete", "pages": []}\n'
     )
     (project / "pages/page.png").write_bytes(b"page")
 
-    client = create_app(tmp_path).test_client()
+    client = create_app(projects).test_client()
     assert client.post("/api/projects/scan-delete/delete", json={}).status_code == 403
 
     token = client.get("/api/state").json["token"]
@@ -62,5 +67,51 @@ def test_delete_project_requires_token_and_removes_project(tmp_path):
     assert response.status_code == 200
     assert response.json == {"deleted": "scan-delete"}
     assert not project.exists()
+    assert source.read_bytes() == b"original video"
     assert client.get("/api/projects/scan-delete").status_code == 404
     assert not any(item["id"] == "scan-delete" for item in client.get("/api/state").json["projects"])
+
+
+def test_delete_project_returns_conflict_when_project_lock_is_busy(tmp_path, monkeypatch):
+    project = tmp_path / "scan-busy"
+    project.mkdir()
+    (project / "manifest.json").write_text(
+        '{"source": "/tmp/book.mp4", "status": "complete", "pages": []}\n'
+    )
+
+    @contextmanager
+    def busy_project_lock(_project):
+        raise ValueError("This project is busy in another process")
+        yield
+
+    monkeypatch.setattr(ui_module, "project_lock", busy_project_lock)
+    client = create_app(tmp_path).test_client()
+    token = client.get("/api/state").json["token"]
+    response = client.post(
+        "/api/projects/scan-busy/delete",
+        json={},
+        headers={"X-Manga-Token": token},
+    )
+    assert response.status_code == 409
+    assert project.exists()
+
+
+def test_delete_project_rejects_symlink_alias(tmp_path):
+    target = tmp_path / "scan-real"
+    target.mkdir()
+    (target / "manifest.json").write_text(
+        '{"source": "/tmp/book.mp4", "status": "complete", "pages": []}\n'
+    )
+    alias = tmp_path / "scan-alias"
+    alias.symlink_to(target, target_is_directory=True)
+
+    client = create_app(tmp_path).test_client()
+    token = client.get("/api/state").json["token"]
+    response = client.post(
+        "/api/projects/scan-alias/delete",
+        json={},
+        headers={"X-Manga-Token": token},
+    )
+    assert response.status_code == 400
+    assert target.exists()
+    assert alias.is_symlink()
