@@ -89,7 +89,7 @@ export default function App() {
     <main>
       <header><div><p className="eyebrow">VIDEO → PAGES → PDF</p><h1>{project ? (manifest?.source.split('/').pop() || '読み込み中…') : '漫画を、ページに。'}</h1></div><span className="badge">OFFLINE</span></header>
       {error && <div id="error" role="alert">{error}</div>}
-      {!project && <Setup busy={busy} onChoose={scanner.choose} onCreate={scanner.create} />}
+      {!project && <Setup busy={busy} defaults={server.defaults} onChoose={scanner.choose} onCreate={scanner.create} />}
       {manifest && <>
         {setupStage}
         <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{busy && manifest.status !== 'processing' ? '処理中…' : manifest.message}</strong><span>{Math.round(manifest.progress * 100)}%</span></div><progress max="1" value={manifest.progress} /><p className="muted">{manifest.warnings.join(' / ')}</p></section>
