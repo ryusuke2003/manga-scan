@@ -5,6 +5,10 @@ export function didJobFinish(wasBusy, job) {
   return Boolean(wasBusy && !job.busy);
 }
 
+export function shouldReportPollError(error, aborted, mutating) {
+  return error.name !== 'AbortError' && !aborted && !mutating;
+}
+
 export default function useScanner() {
   const [project, setProject] = useState(null);
   const [manifest, setManifest] = useState(null);
@@ -36,7 +40,7 @@ export default function useScanner() {
         if (finished) setRevision(value => value + 1);
         if (next.job.error && next.job.project === project) setError(next.job.error);
       } catch (err) {
-        if (err.name !== 'AbortError' && !controller.signal.aborted) setError(err.message);
+        if (shouldReportPollError(err, controller.signal.aborted, mutation.current)) setError(err.message);
       } finally {
         if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
       }
@@ -81,6 +85,9 @@ export default function useScanner() {
     selectProject,
     create: (video, config) => perform('/api/projects', { video, config }, result => selectProject(result.id)),
     choose: onSuccess => perform('/api/choose', {}, result => onSuccess(result.path)),
+    deleteProject: id => perform(`/api/projects/${encodeURIComponent(id)}/delete`, {}, () => {
+      if (id === project) selectProject(null);
+    }),
     start: roi => perform(`/api/projects/${encodeURIComponent(project)}/run`, { roi }),
     edit: (action, params = {}) => perform(`/api/projects/${encodeURIComponent(project)}/edit`, { action, ...params }),
   };

@@ -1,6 +1,7 @@
 """Loopback-only web UI. No CDN, analytics, external fetches, or upload service."""
 
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -13,7 +14,7 @@ from flask import Flask, abort, jsonify, request, send_file
 from .config import Config
 from .ingest import create_project
 from .pipeline import edit, run
-from .storage import read_manifest
+from .storage import project_lock, read_manifest
 
 
 def create_app(projects, config=None):
@@ -126,6 +127,26 @@ def create_app(projects, config=None):
     @app.get("/api/projects/<name>")
     def get_project(name):
         return jsonify(read_manifest(project_path(name)))
+
+    @app.post("/api/projects/<name>/delete")
+    def delete_project(name):
+        if not guard.acquire(blocking=False):
+            return jsonify(error="処理中です。完了後に削除してください"), 409
+        try:
+            entry = root / name
+            if entry.is_symlink():
+                raise ValueError("Symlinked projects cannot be deleted")
+            project = project_path(name)
+            try:
+                with project_lock(project):
+                    shutil.rmtree(project)
+            except ValueError as exc:
+                return jsonify(error=str(exc)), 409
+            if job["project"] == name:
+                job.update(project=None, error=None)
+            return jsonify(deleted=name)
+        finally:
+            guard.release()
 
     @app.get("/files/<name>/<path:filename>")
     def file(name, filename):
