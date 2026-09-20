@@ -12,7 +12,15 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
     .filter(spread => Number.isFinite(spread.start))
     .sort((a, b) => a.start - b.start);
   const pageTurnMissing = pageTurnMissingCandidates(manifest.page_turn_analysis);
-  const missing = pageTurnMissing ?? detectMissingPageCandidates(spreads);
+  const missing = pageTurnMissing === null
+    ? detectMissingPageCandidates(spreads)
+    : pageTurnMissing.filter(candidate => !spreads.some(spread => {
+      const time = spreadTime(spread);
+      return Number.isFinite(candidate.windowStart)
+        && Number.isFinite(candidate.windowEnd)
+        && time > candidate.windowStart
+        && time < candidate.windowEnd;
+    }));
   const usingPageTurns = pageTurnMissing !== null;
 
   return <section className="panel timeline-panel">
