@@ -145,7 +145,7 @@ describe('frontend helpers', () => {
 
   it('applies correction presets and detects custom overrides', () => {
     const base = buildInitialConfig();
-    expect(correctionPresetForConfig(base)).toBe('original');
+    expect(correctionPresetForConfig(base)).toBe('scan');
     const standard = applyCorrectionPreset(base, 'standard');
     expect(standard.perspective_mode).toBe('per_page');
     expect(standard.dewarp_mode).toBe('auto');
@@ -156,23 +156,12 @@ describe('frontend helpers', () => {
     expect(correctionPresetForConfig(applyCorrectionPreset(standard, 'scan'))).toBe('scan');
   });
 
-  it('submits opt-in finger repair from setup', () => {
-    const onCreate = vi.fn();
-    render(React.createElement(Setup, {
-      busy: false,
-      defaults: buildInitialConfig(),
-      onChoose: vi.fn(),
-      onCreate,
-    }));
-    fireEvent.change(screen.getByLabelText('動画のローカルパス'), {
-      target: { value: '/tmp/book.mp4' },
-    });
-    fireEvent.click(screen.getByLabelText(/別フレームから指を補修/));
-    fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
-    expect(onCreate).toHaveBeenCalledWith(
-      '/tmp/book.mp4',
-      expect.objectContaining({ finger_repair: true }),
-    );
+  it('uses the scan-style setup defaults', () => {
+    const config = buildInitialConfig();
+    expect(config.finger_repair).toBe(true);
+    expect(config.grayscale).toBe(true);
+    expect(config.candidate_selection_mode).toBe('spread');
+    expect(correctionPresetForConfig(config)).toBe('scan');
   });
 
   it('submits rotation as a numeric config value from the setup form', () => {
