@@ -8,6 +8,7 @@ from .config import Config
 from .cover_detect import detect_cover_quad
 from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .perspective import rotate_roi, validate_roi
+from .quality_safety import normalize_expected_page_count
 from .reference_candidates import scan_reference_candidates
 from .rotation_detection import detect_video_rotation
 from .split import rotate_image
@@ -49,7 +50,13 @@ def _prepare_video_source(videos, project, copy_source):
     return str(list_path), source_files
 
 
-def create_project(video, project, config=None, copy_source=False):
+def create_project(
+    video,
+    project,
+    config=None,
+    copy_source=False,
+    expected_page_count=None,
+):
     config = (config or Config()).validate()
     project = Path(project).expanduser().resolve()
     if project.exists() and any(project.iterdir()):
@@ -102,6 +109,7 @@ def create_project(video, project, config=None, copy_source=False):
         "sources": source_files,
         "metadata": metadata,
         "config": config.to_dict(),
+        "expected_page_count": normalize_expected_page_count(expected_page_count),
         "rotation_detection": rotation_detection,
         "roi": None,
         "cover": {
