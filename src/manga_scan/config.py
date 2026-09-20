@@ -44,7 +44,10 @@ class Config:
     white_target: int = 245
     white_strength: float = 0.6
     rotation: int = 0
+    dewarp_mode: str = "manual"
     dewarp_strength: float = 0.0
+    dewarp_max_strength: float = 0.25
+    dewarp_min_confidence: float = 0.6
     pdf_dpi: int = 300
     hwaccel: str = "none"
     save_lowres: bool = False
@@ -93,6 +96,8 @@ class Config:
             "page_contour_min_confidence": (0, 1),
             "hand_padding": (0, 0.1),
             "dewarp_strength": (0, 0.6),
+            "dewarp_max_strength": (0, 0.35),
+            "dewarp_min_confidence": (0, 1),
             "illumination_strength": (0, 1),
             "contrast": (0.5, 2),
             "white_target": (200, 255),
@@ -112,6 +117,7 @@ class Config:
             "image_format": ("png", "jpeg"),
             "split_mode": ("center", "auto"),
             "perspective_mode": ("spread", "per_page"),
+            "dewarp_mode": ("off", "manual", "auto"),
             "reading_order": ("rtl", "ltr"),
             "hwaccel": ("none", "videotoolbox"),
             "rotation": (0, 90, 180, 270),

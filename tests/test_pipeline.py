@@ -77,7 +77,12 @@ def test_sampling_and_seeking_use_presentation_time(video):
 
 def test_optional_cover_and_reference_time(video, tmp_path):
     project = tmp_path / "cover-book"
-    cfg = Config(hand_backend="none", analysis_width=480, candidates_per_spread=3)
+    cfg = Config(
+        hand_backend="none",
+        analysis_width=480,
+        candidates_per_spread=3,
+        dewarp_mode="auto",
+    )
     create_project(video, project, cfg)
 
     manifest = set_setup_frame(project, "cover", 0.2, confirm=True)
@@ -95,6 +100,17 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     assert manifest["spreads"][0]["start"] >= 1.6
     assert manifest["pages"][0]["side"] == "cover"
     assert len(manifest["pages"]) == 7
+    spread_pages = [page for page in manifest["pages"] if page["side"] != "cover"]
+    assert all(page["dewarp"]["mode"] == "auto" for page in spread_pages)
+    assert all((project / page["dewarp"]["before"]).is_file() for page in spread_pages)
+    manifest = edit(project, "toggle_dewarp", spread_id="spread_0001", side="right")
+    right = next(
+        page
+        for page in manifest["pages"]
+        if page["spread_id"] == "spread_0001" and page["side"] == "right"
+    )
+    assert right["dewarp"]["status"] == "disabled"
+    assert "right" in manifest["spreads"][0]["dewarp_disabled_sides"]
     assert len(PdfReader(project / "output/manga.pdf").pages) == 5
 
 

@@ -19,7 +19,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `page_detect.py` / `perspective.py`: 保守的な外周微調整、ROI検証、射影変換。
-- `split.py`: 背の推定、左右分割、保守的な白背景正規化、グレースケール、コントラスト、回転、任意の円筒リマップ。
+- `split.py`: 背の推定、左右分割、自動湾曲推定、左右別の保守的remap、白背景正規化、グレースケール、コントラスト、回転。
 - `illumination.py`: ページ輝度の低周波マップ推定と、Lab輝度/グレースケールへの保守的な照明補正。
 - `dedupe.py`: dHashと局所SSIM。左右半分も比較。
 - `export.py`: 画像PDF、分割コンタクトシート。
@@ -44,7 +44,7 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 除外はmanifestのフラグで行い、重複候補も画像を残す。
 初回解析で自動PDF生成。編集後は `pdf_stale=true` とし再出力を明示する。
 
-改善余地: optical flow併用、ページ単位で別々のベストフレーム選択、曲面推定、
+改善余地: optical flow併用、ページ単位で別々のベストフレーム選択、より高度な2D/3D曲面推定、
 追跡によるROI移動、複数動画の統合、画像追加、ドラッグ並べ替え、ジョブ再開。
 
 ## 4. アルゴリズム
@@ -94,10 +94,22 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 自動外周補正は元ROIより外へ広げず、各点最大2.5%の移動まで。検出失敗はROI fallbackと警告。
 デフォルトは手動ROI固定なので、漫画が動いた場合の背景混入を自動保証できない。
 
-円筒dewarpは明示設定時だけ水平方向に既存画素をリサンプルする。文字行も生成AIも使わない。
-この単純モデルは実際の本の曲面を推定しない。既定無効。
+湾曲補正は `off / manual / auto` を選べる。manualは従来の対称cylindrical remapを維持する。
+autoは左右ページを分割した後、それぞれ5つの高さ帯でSobel-x由来の縦エッジピークを取り、
+背表紙側のエッジ間隔中央値とページ中央側の中央値を比較する。複数帯で圧縮比が一貫している
+場合だけconfidenceを上げ、`dewarp_min_confidence` 未満なら画素を変更せずfallbackする。
 
-照明ムラ補正は既定無効。ON時は左右分割/任意dewarp後、白背景正規化・grayscale・contrast・rotation前に
+補正自体はページ外へ画素を生成せず、出力幅を維持した1次元の単調なx remap。
+右ページは左端、左ページは右端を背側として、その側へ近づくほど元画像の狭い範囲を
+多くの出力画素へ割り当てる。強度は `dewarp_max_strength` で上限を設ける。
+これは完全な3D復元ではなく、背側の横方向圧縮を軽減する保守的MVPである。
+
+auto時は補正前画像とremapグリッドを `debug/dewarp/` に残し、manifestの各pageへ
+strength / confidence / statusを保存する。レビューUIから左右ページ単位でautoを無効化できる。
+低confidence時は `dewarp_low_confidence` を要確認理由へ追加する。表紙は背側を決められないため
+auto対象外で、manualのみ適用可能。文字認識・生成AI・描き足しは行わない。
+
+照明ムラ補正は既定無効。ON時は左右分割/湾曲補正後、白背景正規化・grayscale・contrast・rotation前に
 ページ単位で補正する。カラー画像はLabのL成分だけ、グレースケール画像はその輝度を直接扱う。
 照明マップの推定だけを最大512pxへ縮小し、大きめのmorphological closingで線画・網点などの
 暗い高周波成分を抑えた後、Gaussian blurで低周波成分へ限定する。元画像を二値化せず、

@@ -19,7 +19,7 @@ from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
 from .perspective import validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
-from .split import enhance_page, spine_position, split_spread
+from .split import auto_dewarp_page, dewarp_debug_grid, enhance_page, spine_position, split_spread
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
@@ -66,12 +66,13 @@ def render_cover(project, manifest):
     cfg = Config.from_dict(manifest["config"])
     image = extract_frame(manifest["source"], cover["time"], hwaccel=cfg.hwaccel)
     rectified = warp_roi(image, cover["roi"])
+    manual_dewarp = cfg.dewarp_strength if cfg.dewarp_mode == "manual" else 0.0
     page_image = enhance_page(
         rectified,
         grayscale=cfg.grayscale,
         contrast=cfg.contrast,
         rotation=cfg.rotation,
-        dewarp_strength=cfg.dewarp_strength,
+        dewarp_strength=manual_dewarp,
         white_normalization=cfg.white_normalization,
         white_target=cfg.white_target,
         white_strength=cfg.white_strength,
@@ -159,13 +160,58 @@ def render_spread(project, manifest, spread):
     pages = []
     order = ["right", "left"] if cfg.reading_order == "rtl" else ["left", "right"]
     ext = "png" if cfg.image_format == "png" else "jpg"
+    disabled_sides = set(spread.get("dewarp_disabled_sides", []))
     for side in order:
+        source_page = sides[side]
+        dewarp = {"mode": cfg.dewarp_mode, "applied": False, "status": "off"}
+        manual_dewarp = 0.0
+        if cfg.dewarp_mode == "manual":
+            manual_dewarp = cfg.dewarp_strength
+            dewarp.update(
+                applied=bool(manual_dewarp),
+                status="applied" if manual_dewarp else "off",
+                strength=manual_dewarp,
+            )
+        elif cfg.dewarp_mode == "auto":
+            if side in disabled_sides:
+                dewarp.update(status="disabled")
+            else:
+                before = f"debug/dewarp/{spread['id']}_{side}_before.png"
+                before_image = enhance_page(
+                    source_page,
+                    grayscale=cfg.grayscale,
+                    contrast=cfg.contrast,
+                    rotation=cfg.rotation,
+                    dewarp_strength=0.0,
+                    white_normalization=cfg.white_normalization,
+                    white_target=cfg.white_target,
+                    white_strength=cfg.white_strength,
+                    illumination_correction=cfg.illumination_correction,
+                    illumination_strength=cfg.illumination_strength,
+                )
+                save_image(project / before, before_image)
+                corrected, estimate = auto_dewarp_page(
+                    source_page,
+                    side,
+                    cfg.dewarp_max_strength,
+                    cfg.dewarp_min_confidence,
+                )
+                source_page = corrected
+                dewarp.update(estimate)
+                dewarp["before"] = before
+                if estimate["strength"] > 0:
+                    grid = f"debug/dewarp/{spread['id']}_{side}_remap.png"
+                    save_image(
+                        project / grid,
+                        dewarp_debug_grid(sides[side].shape, side, estimate["strength"]),
+                    )
+                    dewarp["debug_grid"] = grid
         page_image = enhance_page(
-            sides[side],
+            source_page,
             grayscale=cfg.grayscale,
             contrast=cfg.contrast,
             rotation=cfg.rotation,
-            dewarp_strength=cfg.dewarp_strength,
+            dewarp_strength=manual_dewarp,
             white_normalization=cfg.white_normalization,
             white_target=cfg.white_target,
             white_strength=cfg.white_strength,
@@ -179,6 +225,9 @@ def render_spread(project, manifest, spread):
         thumb = cv2.resize(page_image, (max(1, round(w * min(1, 480 / h))), min(480, h)))
         preview = f"pages/{spread['id']}_{side}_thumb.jpg"
         save_image(project / preview, thumb)
+        page_suspect = spread["suspect"].copy()
+        if dewarp.get("status") == "low_confidence":
+            page_suspect.append("dewarp_low_confidence")
         pages.append(
             {
                 "id": f"{spread['id']}_{side}",
@@ -187,7 +236,8 @@ def render_spread(project, manifest, spread):
                 "path": name,
                 "preview": preview,
                 "enabled": not bool(spread.get("duplicate_of")),
-                "suspect": spread["suspect"].copy(),
+                "suspect": list(dict.fromkeys(page_suspect)),
+                "dewarp": dewarp,
             }
         )
     manifest["pdf_stale"] = True
@@ -376,7 +426,7 @@ def edit(project, action, **params):
             index = next(i for i, p in enumerate(manifest["pages"]) if p["id"] == params["page_id"])
             destination = max(0, min(len(manifest["pages"]) - 1, index + int(params["delta"])))
             manifest["pages"].insert(destination, manifest["pages"].pop(index))
-        elif action in ("select_candidate", "swap", "spine"):
+        elif action in ("select_candidate", "swap", "spine", "toggle_dewarp"):
             spread = next(s for s in manifest["spreads"] if s["id"] == params["spread_id"])
             indices = [i for i, p in enumerate(manifest["pages"]) if p["spread_id"] == spread["id"]]
             if action == "swap":
@@ -393,6 +443,16 @@ def edit(project, action, **params):
                     if not 0.25 <= ratio <= 0.75:
                         raise ValueError("Spine ratio must be 0.25..0.75")
                     spread["spine_ratio"] = ratio
+                elif action == "toggle_dewarp":
+                    side = params["side"]
+                    if side not in ("left", "right"):
+                        raise ValueError("Unknown page side")
+                    disabled = set(spread.get("dewarp_disabled_sides", []))
+                    if side in disabled:
+                        disabled.remove(side)
+                    else:
+                        disabled.add(side)
+                    spread["dewarp_disabled_sides"] = sorted(disabled)
                 else:
                     selection = int(params["candidate_id"])
                     if selection not in [c["id"] for c in spread["candidates"]]:

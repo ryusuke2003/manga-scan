@@ -41,7 +41,10 @@ white_normalization = false # Opt-in: gently brighten only paper-like highlights
 white_target = 245 # 200..255; target for estimated paper white
 white_strength = 0.6 # 0..1; darker artwork is protected by a luminance mask
 rotation = 0 # Clockwise, after split: 0 / 90 / 180 / 270
-dewarp_strength = 0.0 # 0 = off; experimental symmetric cylindrical remap, 0..0.6
+dewarp_mode = "manual" # "off" / "manual" / "auto"
+dewarp_strength = 0.0 # manual mode only; legacy symmetric cylindrical remap, 0..0.6
+dewarp_max_strength = 0.25 # auto mode upper bound; keep conservative
+dewarp_min_confidence = 0.6 # auto mode falls back without remap below this confidence
 pdf_dpi = 300 # Physical page size only; no pixel resampling
 hwaccel = "none" # Mac: "videotoolbox"; CPU fallback if hardware initialization fails
 save_lowres = false # true writes all sampled small frames; otherwise streamed
