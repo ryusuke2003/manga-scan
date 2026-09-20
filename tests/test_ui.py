@@ -10,9 +10,9 @@ def test_local_ui_token_origin_host_and_static_assets(tmp_path):
     response = client.get("/")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    script = re.search(r'<script[^>]+src="([^"]+)"', html)
-    assert script, "Vite build should reference a JavaScript asset"
-    assert client.get(script.group(1)).status_code == 200
+    assets = re.findall(r'(?:src|href)="(/static/[^"]+)"', html)
+    assert assets, "Vite build should reference static assets"
+    assert all(client.get(asset).status_code == 200 for asset in assets)
 
     assert client.post("/api/projects", json={}).status_code == 403
     token = client.get("/api/state").json["token"]
