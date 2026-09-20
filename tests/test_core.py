@@ -111,7 +111,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.hand_backend == "mediapipe"
     assert cfg.finger_repair is True
     assert cfg.candidate_selection_mode == "spread"
-    assert cfg.grayscale is True
+    assert cfg.grayscale is False
     assert cfg.refine_quad is True
     assert cfg.perspective_mode == "spread"
     assert cfg.page_contour_min_confidence == pytest.approx(0.55)

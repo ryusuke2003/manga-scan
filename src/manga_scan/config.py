@@ -40,7 +40,7 @@ class Config:
     reading_order: str = "rtl"
     image_format: str = "png"
     jpeg_quality: int = 92
-    grayscale: bool = True
+    grayscale: bool = False
     contrast: float = 1.0
     illumination_correction: bool = True
     illumination_strength: float = 0.7

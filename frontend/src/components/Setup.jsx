@@ -8,7 +8,7 @@ const FALLBACK_CONFIG = {
   hand_backend: 'mediapipe',
   finger_repair: true,
   candidate_selection_mode: 'spread',
-  grayscale: true,
+  grayscale: false,
   rotation: 0,
   auto_rotation: true,
   refine_quad: true,

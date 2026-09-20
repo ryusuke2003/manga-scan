@@ -37,7 +37,7 @@ gutter_fraction = 0.0 # Keep all pixels by default
 reading_order = "rtl"
 image_format = "png" # Or "jpeg"
 jpeg_quality = 92
-grayscale = true
+grayscale = false
 contrast = 1.0
 illumination_correction = true # Low-frequency lighting/shadow normalization
 illumination_strength = 0.7 # 0 = no effect, 1 = full correction
