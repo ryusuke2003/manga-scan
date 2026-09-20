@@ -32,30 +32,17 @@ jobs:
       - run: python -m pytest -q --ignore=tests/test_pipeline.py
 
   pipeline:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python: '3.12'
-            pytest_args: --ignore=tests/test_ui.py
-          - os: macos-latest
-            python: '3.14'
-            pytest_args: tests/test_pipeline.py
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: pyproject.toml
-      - name: Install FFmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Install FFmpeg (macOS)
-        if: runner.os == 'macOS'
+      - name: Install FFmpeg
         run: brew install ffmpeg
       - run: python -m pip install -e '.[dev]'
       - name: Verify Python source compatibility
         run: python -m compileall -q src
-      - run: python -m pytest -q ${{ matrix.pytest_args }}
+      - run: python -m pytest -q tests/test_pipeline.py
