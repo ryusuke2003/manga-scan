@@ -145,7 +145,7 @@ class Config:
             data["finger_repair"] = False
         # Numeric rotation existed before auto detection. Keep old configs and
         # manifests manual unless they explicitly opt into the new behavior.
-        if "rotation" in data and "auto_rotation" not in data:
+        if data.get("rotation") in (90, 180, 270) and "auto_rotation" not in data:
             data["auto_rotation"] = False
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
