@@ -322,11 +322,47 @@ def _persist_finger_repair_component_debug(project, repair, stem):
     if not isinstance(repair, dict) or "components" not in repair:
         return repair
     components = repair.get("components")
-    if not components or repair.get("components_debug"):
+    if not components:
         return repair
 
+    local_components = []
+    applied_component_ids = set()
+    max_shift = 0.0
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        component_id = component.get("component_id")
+        for donor in component.get("donors", []):
+            if not isinstance(donor, dict) or donor.get("method") != "local":
+                continue
+            dx = float(donor.get("dx", 0.0))
+            dy = float(donor.get("dy", 0.0))
+            local_components.append(
+                {
+                    "component_id": component_id,
+                    "candidate_id": donor.get("candidate_id"),
+                    "local_score": donor.get("local_score"),
+                    "dx": dx,
+                    "dy": dy,
+                    "coverage": donor.get("coverage"),
+                }
+            )
+            applied_component_ids.add(component_id)
+            max_shift = max(max_shift, math.hypot(dx, dy))
+
+    if local_components and "local_alignment" not in repair:
+        repair["local_alignment"] = {
+            "component_count": len(applied_component_ids),
+            "max_shift_px": round(max_shift, 3),
+            "components": local_components,
+        }
+
+    if repair.get("components_debug"):
+        return repair
     path = f"debug/finger_repair/{stem}_components.json"
     payload = {"components": components}
+    if repair.get("local_alignment"):
+        payload["local_alignment"] = repair["local_alignment"]
     for key in ("component_count", "rejected_donors", "rejection_counts"):
         if key in repair:
             payload[key] = repair[key]
