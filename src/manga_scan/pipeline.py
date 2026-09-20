@@ -14,7 +14,13 @@ import numpy as np
 from . import pipeline_render_helpers as render_helpers
 from .config import Config
 from .dedupe import compare
-from .export import contact_sheets, export_cbz, export_pdf
+from .export import (
+    contact_sheets,
+    export_cbz,
+    export_pdf,
+    metadata_output_stem,
+    normalize_book_metadata,
+)
 from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_quality_checks
 from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
@@ -916,15 +922,33 @@ def _refresh_adjacent_final_quality(project, manifest, cfg):
         previous_image = image
 
 
+def _managed_previous_export(project, output, manifest_path, suffix):
+    """Return a previous export only when it is a direct child of project/output."""
+    if not manifest_path or not isinstance(manifest_path, str):
+        return None
+    relative = Path(manifest_path)
+    if relative.is_absolute():
+        return None
+    candidate = (project / relative).resolve(strict=False)
+    output_root = output.resolve(strict=False)
+    if candidate.parent != output_root or candidate.suffix.lower() != suffix:
+        return None
+    return candidate
+
+
 def build_exports(project, manifest):
     cfg = Config.from_dict(manifest["config"])
     _refresh_adjacent_final_quality(project, manifest, cfg)
     paths = [project / p["path"] for p in manifest["pages"] if p["enabled"]]
     output = project / "output"
-    pdf = output / "manga.pdf"
-    cbz = output / "manga.cbz"
-    next_pdf = output / "manga.next.pdf"
-    next_cbz = output / "manga.next.cbz"
+    metadata = normalize_book_metadata(manifest.get("book_metadata"))
+    stem = metadata_output_stem(metadata)
+    pdf = output / f"{stem}.pdf"
+    cbz = output / f"{stem}.cbz"
+    next_pdf = output / f"{stem}.next.pdf"
+    next_cbz = output / f"{stem}.next.cbz"
+    previous_pdf = _managed_previous_export(project, output, manifest.get("pdf"), ".pdf")
+    previous_cbz = _managed_previous_export(project, output, manifest.get("cbz"), ".cbz")
     try:
         export_pdf(
             paths,
@@ -932,17 +956,21 @@ def build_exports(project, manifest):
             cfg.pdf_dpi,
             cfg.image_format,
             cfg.jpeg_quality,
+            metadata,
         )
-        export_cbz(paths, next_cbz)
+        export_cbz(paths, next_cbz, metadata)
         next_pdf.replace(pdf)
         next_cbz.replace(cbz)
+        for previous, current in ((previous_pdf, pdf), (previous_cbz, cbz)):
+            if previous and previous != current:
+                previous.unlink(missing_ok=True)
     finally:
         next_pdf.unlink(missing_ok=True)
         next_cbz.unlink(missing_ok=True)
 
     manifest["pdf_stale"] = False
-    manifest["pdf"] = "output/manga.pdf"
-    manifest["cbz"] = "output/manga.cbz"
+    manifest["pdf"] = str(pdf.relative_to(project))
+    manifest["cbz"] = str(cbz.relative_to(project))
     contact_sheets(project, manifest["pages"])
     save_manifest(project, manifest)
 
@@ -1524,6 +1552,15 @@ def edit(project, action, **params):
                 save_manifest(project, manifest)
                 raise
             manifest["message"] = "PDF / CBZを出力しました"
+            save_manifest(project, manifest)
+            return manifest
+        if action == "book_metadata":
+            metadata = normalize_book_metadata(params.get("metadata"))
+            if metadata == manifest.get("book_metadata", {}):
+                return manifest
+            manifest["book_metadata"] = metadata
+            manifest["pdf_stale"] = True
+            manifest["message"] = "書籍メタデータを更新しました。PDF / CBZを再出力してください"
             save_manifest(project, manifest)
             return manifest
         if action in ("undo_page_edit", "redo_page_edit"):
