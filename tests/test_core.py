@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
+import manga_scan.split as split_module
 from manga_scan.config import Config
 from manga_scan.dedupe import compare, dhash, ssim
 from manga_scan.hand import overlap_from_landmarks
@@ -209,6 +210,18 @@ def test_auto_curvature_dewarp_improves_synthetic_spine_compression(side):
     assert corrected.dtype == distorted.dtype
     assert after["compression_ratio"] is not None
     assert abs(after["compression_ratio"] - 1) < abs(before["compression_ratio"] - 1)
+
+
+def test_curvature_confidence_rejects_jagged_scanline_measurements(monkeypatch):
+    image = synthetic_line_page()
+    ratios = iter([0.70, 1.08, 0.72, 1.05, 0.69, 1.10, 0.73, 1.04, 0.71])
+    monkeypatch.setattr(split_module, "_spacing_ratio", lambda *args: next(ratios))
+
+    estimate = estimate_curvature(image, "right", max_strength=0.25)
+
+    assert estimate["bands"] == 9
+    assert estimate["strength"] > 0
+    assert estimate["confidence"] < 0.6
 
 
 @pytest.mark.parametrize("side", ["left", "right"])
