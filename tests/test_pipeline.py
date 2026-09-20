@@ -102,7 +102,12 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     assert len(manifest["pages"]) == 7
     spread_pages = [page for page in manifest["pages"] if page["side"] != "cover"]
     assert all(page["dewarp"]["mode"] == "auto" for page in spread_pages)
+    assert all("strength_profile" in page["dewarp"] for page in spread_pages)
     assert all((project / page["dewarp"]["before"]).is_file() for page in spread_pages)
+    assert all(
+        "debug_grid" not in page["dewarp"] or (project / page["dewarp"]["debug_grid"]).is_file()
+        for page in spread_pages
+    )
     manifest = edit(project, "toggle_dewarp", spread_id="spread_0001", side="right")
     right = next(
         page
