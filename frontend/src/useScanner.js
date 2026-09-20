@@ -193,12 +193,26 @@ export default function useScanner() {
     project, manifest, server, error, revision,
     busy: pending || server.job.busy || !server.token,
     selectProject,
-    create: (video, config) => perform(
+    create: (video, config, expectedPageCount = null) => perform(
       '/api/projects',
-      { videos: Array.isArray(video) ? video : [video], config },
+      {
+        videos: Array.isArray(video) ? video : [video],
+        config,
+        expected_page_count: expectedPageCount,
+      },
+      result => selectProject(result.id),
+    ),
+    createImages: (folder, config, expectedPageCount = null) => perform(
+      '/api/image-projects',
+      { folder, config, expected_page_count: expectedPageCount },
       result => selectProject(result.id),
     ),
     choose: onSuccess => perform('/api/choose', {}, result => onSuccess(result.path)),
+    chooseFolder: onSuccess => perform(
+      '/api/choose-folder',
+      {},
+      result => onSuccess(result.path),
+    ),
     deleteProject: id => perform(
       `/api/projects/${encodeURIComponent(id)}/delete`,
       {},
