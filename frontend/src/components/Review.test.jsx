@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import Review, { fingerRepairCoverageSummary, localAlignmentSummary } from './Review.jsx';
+import Review, { fingerRepairCoverageSummary, localAlignmentSummary, qualityReviewSummary } from './Review.jsx';
 import Setup from './Setup.jsx';
 
 const manifest = {
@@ -243,4 +243,98 @@ it('shows glare metrics and generalized occlusion repair metadata', () => {
     && node.textContent.includes('遮蔽補修: 完了')
     && node.textContent.includes('donor #2'))).toBeTruthy();
   expect(screen.getAllByText('反射マスク ↗').length).toBeGreaterThan(0);
+});
+
+
+it('groups final output QA reasons in the review summary', () => {
+  const pages = [
+    {
+      id: 'a',
+      enabled: true,
+      suspect: ['final_unresolved_finger', 'final_edge_crop_suspected'],
+      final_quality: { reasons: ['final_unresolved_finger', 'final_edge_crop_suspected'] },
+      finger_repair: { occlusion_kinds: ['finger'] },
+    },
+    {
+      id: 'b',
+      enabled: true,
+      suspect: ['final_glare_residual', 'final_duplicate_suspected'],
+      final_quality: { reasons: ['final_glare_residual', 'final_duplicate_suspected'] },
+      finger_repair: { occlusion_kinds: ['glare'] },
+    },
+    {
+      id: 'c',
+      enabled: false,
+      suspect: ['final_near_blank_white'],
+      final_quality: { reasons: ['final_near_blank_white'] },
+    },
+  ];
+
+  expect(qualityReviewSummary(pages)).toEqual({
+    total: 2,
+    categories: [
+      { label: '指補修', count: 1 },
+      { label: 'ページ輪郭', count: 1 },
+      { label: '反射', count: 1 },
+      { label: '重複疑い', count: 1 },
+    ],
+  });
+});
+
+
+it('classifies generalized occlusion failures by their recorded kind', () => {
+  const pages = [
+    {
+      id: 'finger',
+      enabled: true,
+      suspect: ['occlusion_repair_incomplete'],
+      finger_repair: { occlusion_kinds: ['finger'] },
+    },
+    {
+      id: 'glare',
+      enabled: true,
+      suspect: ['occlusion_repair_incomplete'],
+      finger_repair: { occlusion_kinds: ['glare'] },
+    },
+  ];
+
+  expect(qualityReviewSummary(pages)).toEqual({
+    total: 2,
+    categories: [
+      { label: '指補修', count: 1 },
+      { label: '反射', count: 1 },
+    ],
+  });
+});
+
+
+it('renders final output QA summary and adjacent duplicate detail', () => {
+  const withFinalQa = {
+    ...manifest,
+    pages: [{
+      ...manifest.pages[0],
+      suspect: ['final_glare_residual', 'final_duplicate_suspected'],
+      final_quality: {
+        reasons: ['final_glare_residual', 'final_duplicate_suspected'],
+        metrics: { glare_fraction: .004 },
+        adjacent_duplicate: {
+          other_page_id: 'previous_page',
+          ssim: .971,
+          hash_distance: 4,
+        },
+      },
+    }],
+  };
+
+  render(<Review manifest={withFinalQa} file={path => path} busy={false} onEdit={vi.fn()} />);
+
+  expect(screen.getByLabelText('最終品質チェック')).toBeTruthy();
+  expect(screen.getByText('要確認 1件')).toBeTruthy();
+  expect(screen.getByText('反射 1')).toBeTruthy();
+  expect(screen.getByText('重複疑い 1')).toBeTruthy();
+  expect(screen.getByText((_text, node) => node.tagName === 'SPAN'
+    && node.textContent.includes('完成画像QA:')
+    && node.textContent.includes('反射が残っている')
+    && node.textContent.includes('前ページとほぼ同一'))).toBeTruthy();
+  expect(screen.getByText(/前ページ previous_page と類似 · SSIM 97.1%/)).toBeTruthy();
 });
