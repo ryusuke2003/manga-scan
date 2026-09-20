@@ -241,7 +241,23 @@ manga-scan ui --config config.toml --projects projects --port 8766
 
 ### `No stable intervals found`
 
-各見開きで静止する時間を長くしてください。それでも検出できない場合は `config.toml` の `stable_frames` や `motion_threshold` を調整します。
+見開きとして採用できる「連続した低motion区間」が1件も見つからなかった状態です。
+デフォルトは `video_sample_fps=10` / `stable_frames=5` なので、目安として約0.5秒以上、
+`motion_threshold=0.012` 以下の状態が続く必要があります。肉眼で止まって見えても、
+カメラの微振動やAF/AEの変化でmotionが閾値を超えることがあります。
+
+まずは各見開きで手を引いて静止する時間を長くしてください。それでも検出できない場合は、
+`projects/<project-id>/debug/motion.csv` の `motion` 列を確認してから、例えば次のように少し緩めます。
+
+```toml
+stable_frames = 3
+motion_threshold = 0.018
+turn_threshold = 0.025
+```
+
+`turn_threshold >= motion_threshold` は維持してください。設定はプロジェクト作成時に
+`config.resolved.json` へスナップショットされるため、`config.toml` を変更した後は
+**新しいプロジェクトを作って再解析**するのが確実です。
 
 ### MediaPipeがmacOSで異常終了する
 
@@ -357,6 +373,7 @@ dewarp_strength = 0.15
 | 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
 | 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
+| 横向き撮影で上下に割れそう | `rotation=90` または `270`。見開き全体を先に回転してから見た目上の左右へ分割 |
 | ページの端/中央が緩く暗い | `illumination_correction=true`。強すぎる場合は `illumination_strength` を0.4〜0.7へ下げる |
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
