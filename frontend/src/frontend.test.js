@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { fileUrl } from './api.js';
 import { clampTime } from './components/FrameSelector.jsx';
 import { normalizedPoint } from './components/RoiSelector.jsx';
+import Setup, {
+  applyCorrectionPreset,
+  buildInitialConfig,
+  correctionPresetForConfig,
+} from './components/Setup.jsx';
 import { detectMissingPageCandidates, timelinePercent } from './timeline.js';
 import { didJobFinish, shouldReportPollError } from './useScanner.js';
 
@@ -84,5 +91,41 @@ describe('frontend helpers', () => {
     expect(shouldReportPollError(error, false, true)).toBe(false);
     expect(shouldReportPollError(error, true, false)).toBe(false);
     expect(shouldReportPollError(Object.assign(new Error('aborted'), { name: 'AbortError' }), false, false)).toBe(false);
+  });
+
+  it('initializes correction controls from server defaults', () => {
+    const config = buildInitialConfig({ perspective_mode: 'per_page', page_contour_min_confidence: 0.7, illumination_correction: true, illumination_strength: 0.45 });
+    expect(config.perspective_mode).toBe('per_page');
+    expect(config.page_contour_min_confidence).toBe(0.7);
+    expect(config.illumination_strength).toBe(0.45);
+  });
+
+  it('applies correction presets and detects custom overrides', () => {
+    const base = buildInitialConfig();
+    expect(correctionPresetForConfig(base)).toBe('original');
+    const standard = applyCorrectionPreset(base, 'standard');
+    expect(standard.perspective_mode).toBe('per_page');
+    expect(standard.dewarp_mode).toBe('auto');
+    expect(standard.illumination_correction).toBe(true);
+    expect(standard.white_normalization).toBe(false);
+    expect(correctionPresetForConfig(standard)).toBe('standard');
+    expect(correctionPresetForConfig({ ...standard, illumination_strength: 0.4 })).toBe('custom');
+    expect(correctionPresetForConfig(applyCorrectionPreset(standard, 'scan'))).toBe('scan');
+  });
+
+  it('submits the selected correction preset from the setup form', () => {
+    const onCreate = vi.fn();
+    render(React.createElement(Setup, { busy: false, defaults: buildInitialConfig(), onChoose: vi.fn(), onCreate }));
+    fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/book.mp4' } });
+    fireEvent.click(screen.getByRole('button', { name: /^標準補正 \/ おすすめ/ }));
+    fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
+    expect(onCreate).toHaveBeenCalledWith('/tmp/book.mp4', expect.objectContaining({
+      refine_quad: true,
+      perspective_mode: 'per_page',
+      split_mode: 'auto',
+      dewarp_mode: 'auto',
+      illumination_correction: true,
+      white_normalization: false,
+    }));
   });
 });
