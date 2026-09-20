@@ -20,6 +20,7 @@ export default function FrameSelector({
   onSkip,
 }) {
   const [value, setValue] = useState(String(time));
+  const [loadedImageUrl, setLoadedImageUrl] = useState(null);
 
   useEffect(() => setValue(String(time)), [time]);
 
@@ -29,30 +30,45 @@ export default function FrameSelector({
     onPreview(selected);
   };
 
-  const selected = clampTime(value, duration);
+  const numericValue = Number(value);
+  const hasInput = String(value).trim() !== '' && Number.isFinite(numericValue);
+  const maxTime = Math.max(0, duration - 0.001);
+  const inputInRange = hasInput && numericValue >= 0 && numericValue <= maxTime;
+  const selected = hasInput ? clampTime(numericValue, duration) : null;
+  const previewed = clampTime(time, duration);
+  const previewIsCurrent = inputInRange
+    && Math.abs(numericValue - previewed) < 0.0005
+    && loadedImageUrl === imageUrl;
 
   return <section className="panel">
     <p className="step">{step}</p>
     <h2>{title}</h2>
     <p className="muted">{description}</p>
     <div className="frame-wrap">
-      <img className="frame-preview" src={imageUrl} alt="選択中の動画フレーム" />
+      <img
+        key={imageUrl}
+        className="frame-preview"
+        src={imageUrl}
+        alt="選択中の動画フレーム"
+        onLoad={() => setLoadedImageUrl(imageUrl)}
+      />
     </div>
     <div className="frame-controls">
-      <button type="button" disabled={busy} onClick={() => preview(selected - 1)}>−1秒</button>
-      <button type="button" disabled={busy} onClick={() => preview(selected - 0.1)}>−0.1秒</button>
+      <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 1)}>−1秒</button>
+      <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 0.1)}>−0.1秒</button>
       <label>動画の秒数
-        <input type="number" min="0" max={Math.max(0, duration - 0.001)} step="0.1"
-          value={value} onChange={event => setValue(event.target.value)} />
+        <input type="number" min="0" max={maxTime} step="0.1"
+          value={value} disabled={busy} onChange={event => setValue(event.target.value)} />
       </label>
-      <button type="button" disabled={busy} onClick={() => preview(value)}>プレビュー更新</button>
-      <button type="button" disabled={busy} onClick={() => preview(selected + 0.1)}>＋0.1秒</button>
-      <button type="button" disabled={busy} onClick={() => preview(selected + 1)}>＋1秒</button>
+      <button type="button" disabled={busy || selected === null} onClick={() => preview(selected)}>プレビュー更新</button>
+      <button type="button" disabled={busy || selected === null} onClick={() => preview(selected + 0.1)}>＋0.1秒</button>
+      <button type="button" disabled={busy || selected === null} onClick={() => preview(selected + 1)}>＋1秒</button>
     </div>
+    {!previewIsCurrent && <p className="muted">時刻を変更した場合は「プレビュー更新」で画像を確認してから確定してください。</p>}
     <div className="row frame-actions">
       {onSkip && <button type="button" disabled={busy} onClick={onSkip}>表紙なしで進む</button>}
-      <button type="button" className="primary" disabled={busy}
-        onClick={() => onConfirm(selected)}>{confirmLabel}</button>
+      <button type="button" className="primary" disabled={busy || !previewIsCurrent}
+        onClick={() => onConfirm(previewed)}>{confirmLabel}</button>
     </div>
   </section>;
 }
