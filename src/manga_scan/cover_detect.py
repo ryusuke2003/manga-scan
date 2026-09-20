@@ -69,6 +69,18 @@ def _axis_lines(raw_lines, width, height):
     return horizontal, vertical
 
 
+def _boundary_line_count(quad, width, height):
+    """Count candidate sides that hug the image boundary."""
+    return sum(
+        (
+            np.all(quad[[0, 3], 0] < width * 0.01),
+            np.all(quad[[1, 2], 0] > width * 0.99),
+            np.all(quad[[0, 1], 1] < height * 0.01),
+            np.all(quad[[2, 3], 1] > height * 0.99),
+        )
+    )
+
+
 def detect_cover_quad(
     image,
     min_confidence=0.62,
@@ -158,14 +170,7 @@ def detect_cover_quad(
             area_score = min(area_ratio / 0.3, 1.0)
             aspect_score = math.exp(-abs(math.log(aspect / target_aspect)))
             rank_score = sum(math.exp(-line[3] / 160) for line in (top, bottom, left, right)) / 4
-            boundary_lines = sum(
-                (
-                    np.all(quad[:, 0] < width * 0.01),
-                    np.all(quad[:, 0] > width * 0.99),
-                    np.all(quad[:, 1] < height * 0.01),
-                    np.all(quad[:, 1] > height * 0.99),
-                )
-            )
+            boundary_lines = _boundary_line_count(quad, width, height)
             preliminary = (
                 0.28 * area_score
                 + 0.20 * aspect_score
@@ -181,13 +186,14 @@ def detect_cover_quad(
         support = _edge_support(distance, quad)
         scored.append((preliminary + 0.28 * support, support, quad))
     confidence, support, quad = max(scored, key=lambda candidate: candidate[0])
+    confidence = max(0.0, min(1.0, float(confidence)))
     detected = confidence >= min_confidence and support >= 0.28
     if not detected:
-        return {"detected": False, "confidence": round(float(confidence), 4), "roi": None}
+        return {"detected": False, "confidence": round(confidence, 4), "roi": None}
     normalized = quad / np.asarray([max(width - 1, 1), max(height - 1, 1)], dtype=np.float32)
     normalized = np.clip(normalized, 0, 1)
     try:
         roi = validate_roi(normalized).tolist()
     except ValueError:
-        return {"detected": False, "confidence": round(float(confidence), 4), "roi": None}
-    return {"detected": True, "confidence": round(float(confidence), 4), "roi": roi}
+        return {"detected": False, "confidence": round(confidence, 4), "roi": None}
+    return {"detected": True, "confidence": round(confidence, 4), "roi": roi}
