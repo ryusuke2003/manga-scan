@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -32,7 +33,7 @@ def video(tmp_path_factory):
 
 def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     project = tmp_path / "book"
-    cfg = Config(hand_backend="none", analysis_width=480, candidates_per_spread=3)
+    cfg = Config(hand_backend="none", finger_repair=False, analysis_width=480, candidates_per_spread=3)
     create_project(video, project, cfg)
     manifest = run(project, ROI)
     assert manifest["status"] == "complete"
@@ -57,7 +58,26 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert len(PdfReader(project / "output/manga.pdf").pages) == 5
     manifest = edit(project, "add_frame", time=0.8)
     assert len(manifest["pages"]) == 10
-    assert "manual_frame" in manifest["spreads"][1]["suspect"]
+    manual_spread = next(
+        spread
+        for spread in manifest["spreads"]
+        if "manual_frame" in spread.get("extra_suspect", [])
+    )
+    manual_reason = "manual_frame_motion_unmeasured"
+    assert "manual_frame" in manual_spread["suspect"]
+    assert manual_reason in manual_spread["suspect"]
+    candidate = manual_spread["candidates"][0]
+    assert manual_reason in candidate["suspect"]
+    assert manual_reason in manual_spread["extra_suspect"]
+    candidate_json = json.loads(
+        (project / Path(candidate["path"]).with_suffix(".json")).read_text()
+    )
+    assert manual_reason in candidate_json["suspect"]
+    manual_pages = [
+        page for page in manifest["pages"] if page["spread_id"] == manual_spread["id"]
+    ]
+    assert len(manual_pages) == 2
+    assert all(manual_reason in page["suspect"] for page in manual_pages)
     assert read_manifest(project)["pdf_stale"]
     with pytest.raises(ValueError, match="already processed"):
         run(project, ROI)
@@ -80,6 +100,7 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     project = tmp_path / "cover-book"
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         analysis_width=480,
         candidates_per_spread=3,
         dewarp_mode="auto",
@@ -160,6 +181,7 @@ def test_candidate_review_preview_uses_configured_rotation(video, tmp_path):
     project = tmp_path / "rotated-review"
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         analysis_width=480,
         candidates_per_spread=3,
         candidate_selection_mode="per_page",
@@ -218,7 +240,7 @@ def test_rotation_metadata_shared_by_preview_and_analysis(video, tmp_path):
     frame = extract_frame(output)
     assert frame.shape == (480, 320, 3)
     project = tmp_path / "rotated-project"
-    manifest = create_project(output, project, Config(hand_backend="none"))
+    manifest = create_project(output, project, Config(hand_backend="none", finger_repair=False))
     assert manifest["metadata"]["display_width"] == 320
     assert manifest["metadata"]["display_height"] == 480
     assert manifest["config"]["rotation"] == 0
