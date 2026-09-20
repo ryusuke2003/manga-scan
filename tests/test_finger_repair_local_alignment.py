@@ -73,6 +73,10 @@ def test_local_alignment_repairs_residual_component_shift():
     assert donor_meta["method"] == "local"
     assert abs(donor_meta["dx"]) >= 1 or abs(donor_meta["dy"]) >= 1
     assert donor_meta["context_residual"] < 0.18
+    local = metadata["local_alignment"]
+    assert local["component_count"] == 1
+    assert local["components"][0]["donor_candidate_id"] == 7
+    assert local["max_shift_px"] > 0
     assert np.mean(
         np.abs(repaired[target_mask > 0].astype(int) - clean[target_mask > 0].astype(int))
     ) < 12
