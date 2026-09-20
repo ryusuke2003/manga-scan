@@ -101,18 +101,25 @@ function Spread({ spread, config, file, busy, onEdit }) {
   </details>;
 }
 
-export default function Review({ manifest, file, busy, onEdit }) {
+export default function Review({ manifest, file, busy, exporting = false, onEdit }) {
   const [suspectsOnly, setSuspectsOnly] = useState(false);
   const [showExcluded, setShowExcluded] = useState(false);
   const [timestamp, setTimestamp] = useState('');
   const enabled = manifest.pages.filter(page => page.enabled);
   let number = 0;
   const numbered = manifest.pages.map(page => ({ ...page, number: page.enabled ? ++number : null }));
+  const pdfReady = Boolean(manifest.pdf && !manifest.pdf_stale);
+  const exportLabel = exporting ? 'PDF生成中…' : (pdfReady ? 'PDFを再出力' : 'PDFを出力');
+  const exportStatus = exporting
+    ? 'PDFを生成中です。完了すると最新版を「PDFを開く」から確認できます。'
+    : manifest.pdf_stale
+      ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。'
+      : '現在のページ順・画質でPDFを出力済みです。';
   return <section>
     <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(page => page.suspect.length).length}</h2></div>
-      <div className="row"><button className="primary" disabled={busy || !enabled.length} onClick={() => onEdit('export')}>PDFを出力</button>
-        {manifest.pdf && !manifest.pdf_stale && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
-    <p className="muted">{manifest.pdf_stale ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。' : '現在のページ順・画質でPDFを出力済みです。'}</p>
+      <div className="row"><button className="primary" aria-busy={exporting ? 'true' : undefined} disabled={busy || !enabled.length} onClick={() => onEdit('export')}>{exportLabel}</button>
+        {pdfReady && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
+    <p className="muted">{exportStatus}</p>
     <VideoTimeline
       manifest={manifest}
       busy={busy}
