@@ -15,6 +15,7 @@ from manga_scan.split import (
     auto_dewarp_page,
     dewarp_debug_grid,
     dewarp_page,
+    dewarp_page_profile,
     enhance_page,
     estimate_curvature,
     normalize_white_background,
@@ -48,6 +49,22 @@ def compress_spine(image, side, strength):
     else:
         source_u = 1.0 - np.power(1.0 - u, 1.0 / gamma)
     map_x = np.tile(source_u * (w - 1), (h, 1)).astype(np.float32)
+    map_y = np.tile(np.arange(h, dtype=np.float32)[:, None], (1, w))
+    return cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def compress_spine_profile(image, side, strength_profile):
+    h, w = image.shape[:2]
+    ys = np.asarray([point["y"] * max(1, h - 1) for point in strength_profile], dtype=np.float32)
+    strengths = np.asarray([point["strength"] for point in strength_profile], dtype=np.float32)
+    row_strengths = np.interp(np.arange(h, dtype=np.float32), ys, strengths)
+    gamma = 1.0 + 3.0 * row_strengths[:, None]
+    u = np.linspace(0, 1, w, dtype=np.float32)[None, :]
+    if side == "right":
+        source_u = np.power(u, 1.0 / gamma)
+    else:
+        source_u = 1.0 - np.power(1.0 - u, 1.0 / gamma)
+    map_x = (source_u * (w - 1)).astype(np.float32)
     map_y = np.tile(np.arange(h, dtype=np.float32)[:, None], (1, w))
     return cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
@@ -195,6 +212,51 @@ def test_auto_curvature_dewarp_improves_synthetic_spine_compression(side):
     assert abs(after["compression_ratio"] - 1) < abs(before["compression_ratio"] - 1)
 
 
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_profiled_dewarp_handles_height_varying_book_curve(side):
+    flat = synthetic_line_page()
+    profile = [
+        {"y": 0.0, "strength": 0.05},
+        {"y": 0.25, "strength": 0.11},
+        {"y": 0.5, "strength": 0.24},
+        {"y": 0.75, "strength": 0.15},
+        {"y": 1.0, "strength": 0.07},
+    ]
+    distorted = compress_spine_profile(flat, side, profile)
+    corrected = dewarp_page_profile(distorted, side, profile)
+
+    before_error = np.mean(np.abs(distorted.astype(np.int16) - flat.astype(np.int16)))
+    after_error = np.mean(np.abs(corrected.astype(np.int16) - flat.astype(np.int16)))
+    assert after_error < before_error * 0.85
+    assert corrected.shape == flat.shape
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_auto_curvature_estimates_height_profile(side):
+    flat = synthetic_line_page()
+    distorted = compress_spine_profile(
+        flat,
+        side,
+        [
+            {"y": 0.0, "strength": 0.04},
+            {"y": 0.5, "strength": 0.25},
+            {"y": 1.0, "strength": 0.06},
+        ],
+    )
+    corrected, info = auto_dewarp_page(
+        distorted,
+        side,
+        max_strength=0.3,
+        min_confidence=0.55,
+    )
+
+    assert info["applied"]
+    assert len(info["strength_profile"]) == 9
+    assert info["profile_variation"] >= 0.015
+    assert info["strength"] == max(point["strength"] for point in info["strength_profile"])
+    assert corrected.shape == distorted.shape
+
+
 def test_auto_curvature_dewarp_falls_back_on_low_information_page():
     blank = np.full((160, 240, 3), 230, dtype=np.uint8)
     corrected, info = auto_dewarp_page(blank, "right")
@@ -206,8 +268,13 @@ def test_auto_curvature_dewarp_falls_back_on_low_information_page():
 
 def test_curvature_dewarp_keeps_bounds_without_holes():
     image = np.full((120, 150, 3), 180, dtype=np.uint8)
-    corrected = dewarp_page(image, "left", 0.25)
-    grid = dewarp_debug_grid(image.shape, "left", 0.25)
+    profile = [
+        {"y": 0.0, "strength": 0.05},
+        {"y": 0.5, "strength": 0.25},
+        {"y": 1.0, "strength": 0.08},
+    ]
+    corrected = dewarp_page_profile(image, "left", profile)
+    grid = dewarp_debug_grid(image.shape, "left", 0.25, profile)
     assert corrected.shape == image.shape
     assert corrected.dtype == image.dtype
     assert grid.shape == image.shape
