@@ -155,6 +155,67 @@ def _install_split_geometry(monkeypatch):
     monkeypatch.setattr(pipeline, "candidate_page_hand_mask", fake_page_mask)
 
 
+def test_temporal_mask_augments_candidate_hand_score(tmp_path, monkeypatch):
+    image = _image()
+    cfg = Config(
+        hand_backend="mediapipe",
+        finger_repair=True,
+        candidate_selection_mode="spread",
+        refine_quad=False,
+    )
+    records = []
+    for candidate_id in range(4):
+        path = f"candidate_{candidate_id}.png"
+        mask_path = f"candidate_{candidate_id}_hand_mask.png"
+        save_image(tmp_path / path, image)
+        save_image(tmp_path / mask_path, np.zeros(image.shape[:2], np.uint8))
+        records.append(
+            {
+                "id": candidate_id,
+                "path": path,
+                "hand_mask": mask_path,
+                "roi": ROI,
+                "metrics": {
+                    "motion": 0.0,
+                    "sharpness": 1.0,
+                    "hand_overlap": 0.0,
+                    "distortion": 0.0,
+                    "flatness_proxy": 0.0,
+                    "clipping": 0.0,
+                    "exposure": 0.0,
+                    "score": 0.0,
+                },
+                "page_metrics": {},
+                "page_suspect": {},
+                "suspect": [],
+            }
+        )
+
+    temporal = np.zeros(image.shape[:2], np.uint8)
+    temporal[20:40, 0:18] = 255
+    monkeypatch.setattr(
+        pipeline,
+        "temporal_transient_mask",
+        lambda *_a, **_k: temporal.copy(),
+    )
+
+    pipeline._augment_temporal_hand_masks(tmp_path, records, cfg)
+
+    for record in records:
+        combined = cv2.imread(
+            str(tmp_path / record["hand_mask"]),
+            cv2.IMREAD_GRAYSCALE,
+        )
+        saved_temporal = cv2.imread(
+            str(tmp_path / record["temporal_hand_mask"]),
+            cv2.IMREAD_GRAYSCALE,
+        )
+        assert np.any(combined > 0)
+        np.testing.assert_array_equal(saved_temporal, temporal)
+        assert record["temporal_hand_overlap"] > 0
+        assert record["metrics"]["hand_overlap"] > 0
+
+
 def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monkeypatch):
     _, _, manifest, spread = _fixture(tmp_path, monkeypatch, output_layout="spread")
 
