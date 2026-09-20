@@ -60,25 +60,27 @@ def detect_glare_mask(image, roi=None):
     local_background = cv2.GaussianBlur(gray, (0, 0), sigmaX=sigma, sigmaY=sigma)
     local_delta = gray.astype(np.float32) - local_background.astype(np.float32)
 
-    candidate = (
+    bright = (
         (gray.astype(np.float32) >= bright_threshold)
         & (saturation <= 65)
-        & (local_delta >= 8.0)
         & (roi_mask > 0)
     ).astype(np.uint8)
-
-    candidate = cv2.morphologyEx(
-        candidate,
+    bright = cv2.morphologyEx(
+        bright,
         cv2.MORPH_OPEN,
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
     )
-    candidate = cv2.morphologyEx(
-        candidate,
+    bright = cv2.morphologyEx(
+        bright,
         cv2.MORPH_CLOSE,
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
     )
+    # Local contrast is used as a seed rather than as the final mask. This
+    # keeps the saturated center of a broad reflection connected to its
+    # high-contrast boundary instead of returning only a thin halo.
+    seed = (bright > 0) & (local_delta >= 8.0)
 
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(candidate, connectivity=8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(bright, connectivity=8)
     roi_area = int(np.count_nonzero(roi_mask))
     min_area = max(12, round(roi_area * 0.00005))
     max_area = max(min_area, round(roi_area * 0.25))
@@ -89,7 +91,7 @@ def detect_glare_mask(image, roi=None):
     )
     edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 120)
 
-    accepted = np.zeros_like(candidate)
+    accepted = np.zeros_like(bright)
     for label in range(1, count):
         area = int(stats[label, cv2.CC_STAT_AREA])
         if area < min_area or area > max_area:
@@ -107,10 +109,14 @@ def detect_glare_mask(image, roi=None):
         if np.count_nonzero(ring) < max(24, round(area * 0.15)):
             continue
 
+        seed_pixels = int(np.count_nonzero(seed & component))
+        if seed_pixels < max(4, round(area * 0.03)):
+            continue
+
         inside_brightness = float(np.median(gray[component]))
         ring_brightness = float(np.median(gray[ring]))
         contrast = inside_brightness - ring_brightness
-        delta_median = float(np.median(local_delta[component]))
+        delta_peak = float(np.percentile(local_delta[component], 85.0))
         ring_edge_density = float(np.mean(edges[ring] > 0))
         inside_edge_density = float(np.mean(edges[component] > 0))
 
@@ -119,7 +125,7 @@ def detect_glare_mask(image, roi=None):
         # luminance contrast is also accepted for glare over otherwise blank
         # paper, where no surrounding line may exist.
         detail_loss = ring_edge_density >= inside_edge_density + 0.01
-        if contrast < 8.0 or delta_median < 8.0:
+        if contrast < 8.0 or delta_peak < 8.0:
             continue
         if contrast < 14.0 and not detail_loss:
             continue
