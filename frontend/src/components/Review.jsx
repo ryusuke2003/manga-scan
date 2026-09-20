@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価' };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
+const pageSideLabel = side => side === 'cover' ? '表紙' : (side === 'right' ? '右ページ' : '左ページ');
 
 function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
@@ -50,7 +51,7 @@ export default function Review({ manifest, file, busy, onEdit }) {
     </div>
     <div className="page-grid">{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || page.suspect.length)).map(page => <article key={page.id} className={`page-card ${page.suspect.length ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'}`}>
       <ImageLink file={file} path={page.path} preview={page.preview} />
-      <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {page.side === 'right' ? '右ページ' : '左ページ'}</h3>
+      <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
       <div className="row"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
         <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
