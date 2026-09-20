@@ -43,7 +43,8 @@ illumination_strength = 0.7 # 0 = no effect, 1 = full correction
 white_normalization = false # Opt-in: gently brighten only paper-like highlights
 white_target = 245 # 200..255; target for estimated paper white
 white_strength = 0.6 # 0..1; darker artwork is protected by a luminance mask
-rotation = 0 # Clockwise: spreads rotate before left/right split; cover rotates before output
+rotation = 0 # Resolved/manual rotation: 0 / 90 / 180 / 270
+auto_rotation = true # Detect once when creating a project, then confirm in the setup preview # Clockwise: spreads rotate before left/right split; cover rotates before output
 dewarp_mode = "manual" # "off" / "manual" / "auto"
 dewarp_strength = 0.0 # manual mode only; legacy symmetric cylindrical remap, 0..0.6
 dewarp_max_strength = 0.25 # auto 2D profile upper bound per image row; keep conservative
