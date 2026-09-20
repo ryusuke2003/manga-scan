@@ -11,7 +11,7 @@ from manga_scan.motion import Sample, StableDetector, choose_candidates, motion_
 from manga_scan.page_detect import refine_quad
 from manga_scan.perspective import validate_roi, warp_roi
 from manga_scan.score import composite_score, sharpness, suspect_reasons
-from manga_scan.split import enhance_page, split_spread
+from manga_scan.split import enhance_page, normalize_white_background, split_spread
 
 ROI = [[0, 0], [1, 0], [1, 1], [0, 1]]
 
@@ -122,6 +122,34 @@ def test_auto_spine_and_correction():
     assert corrected.shape == (200, 120)
 
 
+def test_white_normalization_brightens_paper_without_lifting_dark_art():
+    image = np.full((120, 160, 3), (205, 218, 230), np.uint8)
+    image[15:45, 15:55] = (20, 20, 20)
+    image[60:90, 15:55] = (155, 155, 155)
+
+    corrected = normalize_white_background(image, target=245, strength=0.8)
+
+    paper_before = image[0, 0].astype(int)
+    paper_after = corrected[0, 0].astype(int)
+    assert paper_after.mean() > paper_before.mean()
+    assert np.ptp(paper_after) < np.ptp(paper_before)
+    assert np.abs(corrected[25, 25].astype(int) - image[25, 25].astype(int)).max() <= 2
+    assert np.abs(corrected[75, 25].astype(int) - image[75, 25].astype(int)).max() <= 4
+
+
+def test_white_normalization_grayscale_and_disabled_compatibility():
+    image = np.full((80, 100), 220, np.uint8)
+    image[20:60, 20:50] = 140
+
+    corrected = normalize_white_background(image, target=245, strength=0.6)
+    assert corrected[0, 0] > image[0, 0]
+    assert corrected[30, 30] == image[30, 30]
+    np.testing.assert_array_equal(
+        enhance_page(image, white_normalization=False),
+        image,
+    )
+
+
 def test_sharpness_and_score_penalties():
     image = pattern()
     assert sharpness(image) > sharpness(cv2.GaussianBlur(image, (9, 9), 3))
@@ -165,6 +193,9 @@ def test_hand_union_intersection_only_on_page():
         {"motion_weight": float("nan")},
         {"stable_frames": 2.5},
         {"grayscale": "false"},
+        {"white_normalization": "true"},
+        {"white_target": 199},
+        {"white_strength": 1.1},
     ],
 )
 def test_config_rejects_invalid_values(data):
