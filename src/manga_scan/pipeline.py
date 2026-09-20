@@ -426,27 +426,28 @@ def render_spread(project, manifest, spread):
             elif np.any(target_mask > 127):
                 target_mask_path = f"debug/finger_repair/{spread['id']}_{side}_target.png"
                 save_image(project / target_mask_path, target_mask)
-                donors = []
-                for donor_record in _finger_donor_candidates(
-                    spread,
-                    side,
-                    selected_pages[side],
-                )[:5]:
-                    donor_data = load_candidate(donor_record["id"])
-                    donor_mask = candidate_page_hand_mask(project, donor_data, side, cfg)
-                    if donor_mask is None:
-                        continue
-                    donors.append(
-                        {
+                def donor_pages():
+                    for donor_record in _finger_donor_candidates(
+                        spread,
+                        side,
+                        selected_pages[side],
+                    )[:5]:
+                        donor_data = load_candidate(donor_record["id"])
+                        donor_mask = candidate_page_hand_mask(
+                            project, donor_data, side, cfg
+                        )
+                        if donor_mask is None:
+                            continue
+                        yield {
                             "candidate_id": donor_record["id"],
                             "image": donor_data["sides"][side],
                             "mask": donor_mask,
                         }
-                    )
+
                 source_page, finger_repair, unresolved = repair_finger_regions(
                     source_page,
                     target_mask,
-                    donors,
+                    donor_pages(),
                     min_coverage=cfg.finger_repair_min_coverage,
                 )
                 finger_repair["target_mask"] = target_mask_path
