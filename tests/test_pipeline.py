@@ -7,7 +7,7 @@ import pytest
 from pypdf import PdfReader
 
 from manga_scan.config import Config
-from manga_scan.ingest import create_project
+from manga_scan.ingest import create_project, set_cover_roi, set_setup_frame
 from manga_scan.pipeline import edit, run
 from manga_scan.storage import read_manifest
 from manga_scan.video import extract_frame, probe, sample_frames
@@ -68,7 +68,33 @@ def test_sampling_and_seeking_use_presentation_time(video):
     frames = list(sample_frames(video, 10, (240, 160)))
     assert len(frames) == 60
     assert frames[-1][1] == 5.9
+    late = list(sample_frames(video, 10, (240, 160), start_time=1.6))
+    assert late[0][1] == pytest.approx(1.6)
+    assert late[-1][1] == pytest.approx(5.9)
     assert extract_frame(video, 1.8).shape == (320, 480, 3)
+
+
+def test_optional_cover_and_reference_time(video, tmp_path):
+    project = tmp_path / "cover-book"
+    cfg = Config(hand_backend="none", analysis_width=480, candidates_per_spread=3)
+    create_project(video, project, cfg)
+
+    manifest = set_setup_frame(project, "cover", 0.2, confirm=True)
+    assert manifest["cover"]["status"] == "frame_selected"
+    assert (project / "source/cover_frame.png").is_file()
+    manifest = set_cover_roi(project, ROI)
+    assert manifest["cover"]["status"] == "ready"
+
+    manifest = set_setup_frame(project, "reference", 1.6, confirm=True)
+    assert manifest["reference"]["confirmed"]
+    assert (project / "source/reference_frame.png").is_file()
+
+    manifest = run(project, ROI)
+    assert len(manifest["spreads"]) == 3
+    assert manifest["spreads"][0]["start"] >= 1.6
+    assert manifest["pages"][0]["side"] == "cover"
+    assert len(manifest["pages"]) == 7
+    assert len(PdfReader(project / "output/manga.pdf").pages) == 5
 
 
 def test_bad_roi_and_missing_model_fail_early(video, tmp_path):
