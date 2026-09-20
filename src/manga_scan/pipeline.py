@@ -220,7 +220,8 @@ def detect_spread_page_consensus(project, spread, cfg, anchor_ids=None):
             continue
         upright = rotate_image(image, cfg.rotation)
         override = overrides.get(str(record["id"]))
-        roi = rotate_roi(override or record["roi"], cfg.rotation).tolist()
+        source_roi = override if override is not None else record["roi"]
+        roi = rotate_roi(source_roi, cfg.rotation).tolist()
         detection = detect_page_quads(
             upright,
             roi,
@@ -759,16 +760,19 @@ def render_spread(project, manifest, spread):
             for side in ("left", "right")
             if selected_pages[side] == candidate_id
         ]
-        sides = rectify_spread_pages(
-            project,
-            image,
-            rectified,
-            roi,
-            state,
-            cfg,
-            page_detection=page_consensus if consensus_sides else None,
-            consensus_sides=consensus_sides,
-        )
+        if page_consensus is not None and consensus_sides:
+            sides = rectify_spread_pages(
+                project,
+                image,
+                rectified,
+                roi,
+                state,
+                cfg,
+                page_detection=page_consensus,
+                consensus_sides=consensus_sides,
+            )
+        else:
+            sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
         cache[candidate_id] = {
             "chosen": chosen,
             "rectified": rectified,
