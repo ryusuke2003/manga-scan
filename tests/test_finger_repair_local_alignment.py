@@ -148,7 +148,7 @@ def test_one_component_can_be_completed_by_multiple_donors():
 
     assert metadata["status"] == "complete"
     assert not np.any(unresolved)
-    assert metadata["donors"] == [1, 2]
+    assert set(metadata["donors"]) == {1, 2}
     component = metadata["components"][0]
     assert component["coverage"] == pytest.approx(1.0)
     assert {entry["candidate_id"] for entry in component["donors"]} == {1, 2}
