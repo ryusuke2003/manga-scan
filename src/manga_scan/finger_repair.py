@@ -27,6 +27,12 @@ def _binary_mask(mask, shape):
     height, width = shape[:2]
     if mask.shape != (height, width):
         mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+
+    # Keep normalization idempotent. Internal alignment code intentionally
+    # passes masks through this helper more than once, so an already-normalized
+    # 0/1 mask must not be erased by the 8-bit 0/255 threshold.
+    if mask.size and float(np.max(mask)) <= 1.0:
+        return (mask > 0).astype(np.uint8)
     return (mask > 127).astype(np.uint8)
 
 
