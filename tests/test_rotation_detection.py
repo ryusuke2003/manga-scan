@@ -72,6 +72,22 @@ def test_rotation_detection_recovers_landscape_axis(monkeypatch, source_rotate_c
     assert max(scores["90"], scores["270"]) > max(scores["0"], scores["180"])
 
 
+def test_rotation_detection_warns_when_extra_samples_fail(monkeypatch):
+    first = _spread_like_image()
+
+    def fail_seek(*_args, **_kwargs):
+        raise RuntimeError("seek failed")
+
+    monkeypatch.setattr(rotation_module, "extract_frame", fail_seek)
+    monkeypatch.setattr(rotation_module, "_confidence", lambda *_args: 0.95)
+
+    result = detect_video_rotation("unused.mov", _metadata(), first)
+
+    assert result["sample_times"] == [0.0]
+    assert result["sample_count"] == 1
+    assert result["confidence"] == 0.55
+
+
 def test_manual_rotation_refreshes_setup_previews(tmp_path):
     project = tmp_path / "scan"
     (project / "source").mkdir(parents=True)
