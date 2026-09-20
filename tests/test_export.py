@@ -1,9 +1,11 @@
 import zipfile
 
 import numpy as np
+import pytest
 from PIL import Image
 from pypdf import PdfReader
 
+import manga_scan.pipeline as pipeline
 from manga_scan.config import Config
 from manga_scan.export import export_cbz, export_pdf
 from manga_scan.pipeline import edit
@@ -51,8 +53,6 @@ def test_cbz_preserves_page_bytes_order_and_uses_store_mode(tmp_path):
 def test_cbz_export_fails_without_destroying_previous_archive(tmp_path):
     output = tmp_path / "old.cbz"
     output.write_bytes(b"previous")
-    import pytest
-
     with pytest.raises(Exception):
         export_cbz([tmp_path / "missing.png"], output)
     assert output.read_bytes() == b"previous"
@@ -61,8 +61,6 @@ def test_cbz_export_fails_without_destroying_previous_archive(tmp_path):
 def test_export_fails_without_destroying_previous_pdf(tmp_path):
     output = tmp_path / "old.pdf"
     output.write_bytes(b"previous")
-    import pytest
-
     with pytest.raises(Exception):
         export_pdf([tmp_path / "missing.png"], output)
     assert output.read_bytes() == b"previous"
@@ -102,9 +100,6 @@ def test_combined_export_failure_keeps_previous_pdf_and_cbz(tmp_path, monkeypatc
             "message": "完了",
         },
     )
-
-    import manga_scan.pipeline as pipeline
-    import pytest
 
     monkeypatch.setattr(
         pipeline,
