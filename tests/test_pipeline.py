@@ -40,6 +40,8 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert manifest["status"] == "complete"
     assert len(manifest["spreads"]) == 4
     assert len(manifest["pages"]) == 8
+    assert all("final_quality" in page for page in manifest["pages"])
+    assert all("reasons" in page["final_quality"] for page in manifest["pages"])
     assert sum(p["enabled"] for p in manifest["pages"]) == 6
     assert manifest["spreads"][2]["duplicate_of"] == "spread_0002"
     assert [p["side"] for p in manifest["pages"]][:2] == ["right", "left"]
@@ -322,6 +324,7 @@ def test_default_spread_output_pdf_cover_and_manual_add(video, tmp_path):
     assert manifest["config"]["output_layout"] == "spread"
     assert len(manifest["pages"]) == 5  # One cover + four complete spreads.
     assert [p["side"] for p in manifest["pages"]] == ["cover"] + ["spread"] * 4
+    assert all("final_quality" in page for page in manifest["pages"])
     assert len(PdfReader(project / "output/manga.pdf").pages) == 4  # One duplicate excluded.
     first = manifest["pages"][1]
     image = cv2.imread(str(project / first["path"]))
