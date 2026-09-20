@@ -95,6 +95,40 @@ it('labels whole pages and offers layout switching and crop correction', () => {
   expect(onEdit).toHaveBeenCalledWith('output_layout', { spread_id: 's', layout: 'split' });
 });
 
+it('opens the fullscreen viewer and changes zoom without leaving Review', () => {
+  render(<Review manifest={manifest} file={path => path} busy={false} onEdit={vi.fn()} />);
+
+  fireEvent.click(screen.getByRole('button', { name: '全画面で確認・ズーム' }));
+  const dialog = screen.getByRole('dialog', { name: 'ページ全画面ビューア' });
+  expect(dialog).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: 'ズーム 200%' }));
+  const image = dialog.querySelector('img[alt="s_whole 補正後"]');
+  expect(image).toBeTruthy();
+  expect(image.style.width).toBe('200%');
+
+  fireEvent.click(screen.getByRole('button', { name: '元画像' }));
+  expect(dialog.querySelector('img[alt="s_whole 元画像"]')).toBeTruthy();
+
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: 'ページ全画面ビューア' })).toBeNull();
+});
+
+it('requests a high-fps rescan only for the current page', () => {
+  const onEdit = vi.fn();
+  render(<Review manifest={manifest} file={path => path} busy={false} onEdit={onEdit} />);
+
+  fireEvent.change(screen.getByLabelText('s_whole 再探索範囲'), { target: { value: '2' } });
+  fireEvent.change(screen.getByLabelText('s_whole 再探索fps'), { target: { value: '30' } });
+  fireEvent.click(screen.getByRole('button', { name: '高fpsで再探索' }));
+
+  expect(onEdit).toHaveBeenCalledWith('rescan_candidates', {
+    page_id: 's_whole',
+    radius: 2,
+    fps: 30,
+  });
+});
+
 it('can discard a manual crop and return to automatic detection', () => {
   const onEdit = vi.fn();
   const manual = {

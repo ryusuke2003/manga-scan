@@ -96,6 +96,49 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
         run(project, ROI)
 
 
+def test_page_scoped_high_fps_rescan_adds_candidates_without_switching_selection(video, tmp_path):
+    project = tmp_path / "rescan-book"
+    cfg = Config(
+        output_layout="spread",
+        hand_backend="none",
+        finger_repair=False,
+        analysis_width=480,
+        candidates_per_spread=3,
+    )
+    create_project(video, project, cfg)
+    initial = run(project, ROI)
+
+    page = next(page for page in initial["pages"] if page["side"] == "spread")
+    spread = next(item for item in initial["spreads"] if item["id"] == page["spread_id"])
+    selected_before = spread["selected"]
+    candidate_count_before = len(spread["candidates"])
+
+    rescanned = edit(
+        project,
+        "rescan_candidates",
+        page_id=page["id"],
+        radius=0.5,
+        fps=60,
+    )
+    updated = next(item for item in rescanned["spreads"] if item["id"] == spread["id"])
+    rescan = updated["candidate_rescan"]
+
+    assert rescan["requested_fps"] == 60
+    assert rescan["effective_fps"] == pytest.approx(30)
+    assert rescan["added"] > 0
+    assert len(updated["candidates"]) == candidate_count_before + rescan["added"]
+    assert updated["selected"] == selected_before
+    assert set(rescan["candidate_ids"]).issubset({item["id"] for item in updated["candidates"]})
+    assert all(
+        item.get("rescan", {}).get("center_time") == pytest.approx(page["candidate_time"])
+        for item in updated["candidates"]
+        if item["id"] in rescan["candidate_ids"]
+    )
+    assert rescanned["pdf_stale"] is True
+    refreshed = next(item for item in rescanned["pages"] if item["id"] == page["id"])
+    assert (project / refreshed["path"]).is_file()
+
+
 def test_cancelled_processing_resumes_after_completed_spread(video, tmp_path, monkeypatch):
     project = tmp_path / "resume-book"
     cfg = Config(
