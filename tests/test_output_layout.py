@@ -21,6 +21,7 @@ def fixture(tmp_path, monkeypatch, rotation=0):
         grayscale=False,
         illumination_correction=False,
         white_normalization=False,
+        page_background_fill="preserve",
     )
     spread = {
         "id": "spread_0001",
@@ -96,6 +97,68 @@ def test_whole_spread_auto_crop_uses_outer_corners_from_both_pages(tmp_path, mon
     assert spread["page_contours"] == detected
     assert (tmp_path / spread["page_contour_debug"]).is_file()
     assert "page_contour_low_confidence" not in page["suspect"]
+
+
+def test_whole_spread_background_fill_hides_desk_only_with_trusted_pages(
+    tmp_path,
+    monkeypatch,
+):
+    image, manifest, spread = fixture(tmp_path, monkeypatch)
+    manifest["config"]["page_background_fill"] = "white"
+    detected = {
+        "detected": True,
+        "confidence": .9,
+        "left": {
+            "quad": [[.08, .12], [.49, .14], [.49, .86], [.08, .88]],
+            "confidence": .92,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": [[.51, .14], [.92, .10], [.94, .90], [.51, .86]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+    }
+    monkeypatch.setattr(pipeline, "detect_page_quads", lambda *_a, **_k: detected)
+
+    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+    output = cv2.imread(str(tmp_path / page["path"]))
+
+    assert page["background_fill"]["status"] == "applied"
+    assert page["background_fill"]["mode"] == "white"
+    assert page["background_fill"]["confidence"] == pytest.approx(.9)
+    assert page["background_fill"]["mask"]
+    assert (tmp_path / page["background_fill"]["mask"]).is_file()
+    # The desk corner inside the rectangular warp is concealed.
+    assert np.all(output[2, 2] >= 245)
+    # The photographed gutter remains protected rather than being whitened.
+    center = output.shape[1] // 2
+    expected = pipeline.warp_roi(image, page["crop"]["roi"])
+    np.testing.assert_allclose(output[output.shape[0] // 2, center], expected[expected.shape[0] // 2, center], atol=1)
+
+
+def test_whole_spread_background_fill_skips_uncertain_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    image, manifest, spread = fixture(tmp_path, monkeypatch)
+    manifest["config"]["page_background_fill"] = "white"
+    detection = {
+        "detected": False,
+        "confidence": .2,
+        "left": {"quad": ROI, "confidence": .8, "detected": True, "touches_frame": False},
+        "right": {"quad": ROI, "confidence": .2, "detected": False, "touches_frame": False},
+    }
+    monkeypatch.setattr(pipeline, "detect_page_quads", lambda *_a, **_k: detection)
+
+    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+    output = cv2.imread(str(tmp_path / page["path"]))
+
+    np.testing.assert_array_equal(output, image)
+    assert page["background_fill"]["status"] == "unavailable"
+    assert not page["background_fill"]["applied"]
 
 
 def test_whole_spread_auto_crop_falls_back_when_either_page_is_uncertain(
