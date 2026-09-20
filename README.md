@@ -305,7 +305,7 @@ ruff check src tests scripts
 
 PythonのUI統合テストは、Viteで生成された `src/manga_scan/static/` をFlaskから実際に配信できることも確認します。そのため **Pythonテストの前にフロントをbuild** してください。
 
-GitHub Actionsでは、Ubuntu/Python 3.14でNode 22のフロントテスト・ビルドと軽量Pythonテストを先に実行し、FFmpegを使うパイプライン統合テストだけをUbuntu/Python 3.12とmacOS/Python 3.14で並列実行します。PRブランチではpushとpull_requestの二重実行を避け、同じPRへの古い実行は新しいpush時に自動キャンセルします。
+GitHub Actionsでは、Ubuntu/Python 3.14でNode 22のフロントテスト・ビルドと軽量Pythonテストを先に実行します。Ubuntu/Python 3.12ではUI以外のPythonテストとソース互換性を確認し、macOS/Python 3.14ではFFmpegを使うパイプライン統合テストを実行します。PRブランチではpushとpull_requestの二重実行を避け、同じPRへの古い実行は新しいpush時に自動キャンセルします。
 
 ### React/Viteを開発モードで動かす
 
