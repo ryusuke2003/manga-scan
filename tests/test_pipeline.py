@@ -181,6 +181,7 @@ def test_candidate_review_preview_uses_configured_rotation(video, tmp_path):
     project = tmp_path / "rotated-review"
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         analysis_width=480,
         candidates_per_spread=3,
         candidate_selection_mode="per_page",
