@@ -379,7 +379,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
         upright, roi, crop = _whole_spread_geometry(source, record, spread, cfg)
         page = warp_roi(upright, roi)
         mask = None
-        if cfg.finger_repair and record.get("hand_mask"):
+        if cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
             saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
             if saved is not None:
                 saved = cv2.resize(
@@ -488,6 +488,11 @@ def _render_whole_spread(project, manifest, spread, cfg):
         suspect.append("page_contour_low_confidence")
     if detection and any(detection[side]["touches_frame"] for side in ("left", "right")):
         suspect.append("source_frame_clipped")
+    if mask is not None:
+        suspect = [reason for reason in suspect if reason != "hand_overlap"]
+        final_hand_overlap = float(np.mean(mask > 127))
+        if final_hand_overlap >= cfg.suspect_hand_overlap:
+            suspect.append("hand_overlap")
     if repair["status"] in ("clean", "complete"):
         suspect = [reason for reason in suspect if reason != "hand_overlap"]
     elif repair["status"] in ("incomplete", "unavailable"):
