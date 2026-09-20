@@ -322,7 +322,7 @@ def _persist_finger_repair_component_debug(project, repair, stem):
     if not isinstance(repair, dict) or "components" not in repair:
         return repair
     components = repair.get("components")
-    if components is None or repair.get("components_debug"):
+    if not components or repair.get("components_debug"):
         return repair
 
     path = f"debug/finger_repair/{stem}_components.json"
