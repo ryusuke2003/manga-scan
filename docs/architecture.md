@@ -128,7 +128,7 @@ confidenceを下げ、`dewarp_min_confidence` 未満なら画素を一切変更�
 
 auto時は補正前画像と、実際の高さ別remapを描いたグリッドを `debug/dewarp/` に残す。
 manifestの各pageには peak strength / mean strength / profile variation / strength_profile /
-confidence / statusを保存する。レビューUIでは最大補正量と上下差を表示し、左右ページ単位で
+confidence / statusを保存する。レビューUIでは最大補正量と高さ方向差を表示し、左右ページ単位で
 autoを無効化できる。低confidence時は `dewarp_low_confidence` を要確認理由へ追加する。
 表紙は背側を決められないためauto対象外で、manualのみ適用可能。文字認識・生成AI・描き足しは行わない。
 
