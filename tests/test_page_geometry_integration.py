@@ -27,6 +27,7 @@ def test_per_page_mode_connects_contour_detection_to_independent_warp(tmp_path):
     spread = {"id": "spread_0001", "extra_suspect": []}
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         perspective_mode="per_page",
         page_contour_min_confidence=0.5,
     )
@@ -76,6 +77,7 @@ def test_render_spread_rotated_per_page_integration(
     expected_spread = {"id": "expected", "extra_suspect": []}
     expected_cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         perspective_mode="per_page",
         page_contour_min_confidence=0.5,
     )
@@ -93,11 +95,16 @@ def test_render_spread_rotated_per_page_integration(
     render_dir.mkdir()
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         perspective_mode="per_page",
         page_contour_min_confidence=0.5,
         rotation=rotation,
         reading_order="ltr",
         image_format="png",
+        grayscale=False,
+        dewarp_mode="off",
+        illumination_correction=False,
+        white_normalization=False,
     )
     manifest = {
         "source": "unused.mp4",
@@ -155,6 +162,7 @@ def test_low_confidence_contours_fall_back_to_legacy_spread_split(tmp_path):
     spread = {"id": "spread_0002", "extra_suspect": []}
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         perspective_mode="per_page",
         page_contour_min_confidence=0.5,
     )
@@ -176,11 +184,11 @@ def test_low_confidence_contours_fall_back_to_legacy_spread_split(tmp_path):
     assert (tmp_path / spread["page_contour_debug"]).is_file()
 
 
-def test_default_spread_mode_is_pixel_compatible_and_skips_detection(tmp_path):
+def test_explicit_spread_mode_is_pixel_compatible_and_skips_detection(tmp_path):
     image = synthetic_spread()
     rectified = warp_roi(image, REFERENCE)
     spread = {"id": "spread_0003", "extra_suspect": []}
-    cfg = Config(hand_backend="none")
+    cfg = Config(hand_backend="none", finger_repair=False, perspective_mode="spread")
     expected, expected_spine = split_spread(
         rectified,
         cfg.spine_ratio,

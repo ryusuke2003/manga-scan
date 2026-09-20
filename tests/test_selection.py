@@ -98,10 +98,14 @@ def test_render_spread_rotates_before_left_right_split(tmp_path, monkeypatch):
 
     cfg = Config(
         hand_backend="none",
+        finger_repair=False,
         rotation=90,
         dewarp_mode="off",
         perspective_mode="spread",
         image_format="png",
+        grayscale=False,
+        illumination_correction=False,
+        white_normalization=False,
     )
     manifest = {"config": cfg.to_dict(), "source": "unused.mov"}
     spread = {
