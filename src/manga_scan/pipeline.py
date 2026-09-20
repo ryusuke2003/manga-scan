@@ -103,8 +103,16 @@ def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
 
     ratio = spread.get("spine_ratio", cfg.spine_ratio)
     if cfg.perspective_mode == "per_page":
+        detection_image = image
+        if image.shape[1] > cfg.analysis_width:
+            scale = cfg.analysis_width / image.shape[1]
+            detection_image = cv2.resize(
+                image,
+                (cfg.analysis_width, max(2, round(image.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
         detection = detect_page_quads(
-            image,
+            detection_image,
             chosen_roi,
             spine_ratio=ratio,
             min_confidence=cfg.page_contour_min_confidence,
