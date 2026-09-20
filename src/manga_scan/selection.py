@@ -12,12 +12,14 @@ def page_quality_metrics(
     config,
     distortion=0.0,
     flatness_proxy=0.0,
+    glare_overlap=0.0,
 ):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     metrics = {
         "sharpness": sharpness(image),
         "motion": float(motion),
         "hand_overlap": hand_overlap,
+        "glare_overlap": float(glare_overlap),
         "distortion": float(distortion),
         "flatness_proxy": float(flatness_proxy),
         "clipping": float(np.mean((gray <= 2) | (gray >= 253))),
@@ -27,9 +29,19 @@ def page_quality_metrics(
     return metrics
 
 
-def score_candidate_pages(rectified, hand_mask, motion, config, geometry_metrics, hand_enabled):
+def score_candidate_pages(
+    rectified,
+    hand_mask,
+    motion,
+    config,
+    geometry_metrics,
+    hand_enabled,
+    glare_mask=None,
+):
     rectified = rotate_image(rectified, config.rotation)
     hand_mask = rotate_image(hand_mask, config.rotation)
+    if glare_mask is not None:
+        glare_mask = rotate_image(glare_mask, config.rotation)
     pages, spine = split_spread(
         rectified,
         config.spine_ratio,
@@ -52,6 +64,18 @@ def score_candidate_pages(rectified, hand_mask, motion, config, geometry_metrics
     else:
         overlaps = {"left": None, "right": None}
 
+    if glare_mask is not None:
+        glare_pages = {
+            "left": glare_mask[:, :left_end],
+            "right": glare_mask[:, right_start:],
+        }
+        glare_overlaps = {
+            side: float(np.mean(glare_pages[side] > 127))
+            for side in ("left", "right")
+        }
+    else:
+        glare_overlaps = {"left": 0.0, "right": 0.0}
+
     page_metrics = {}
     for side in ("left", "right"):
         page_metrics[side] = page_quality_metrics(
@@ -61,6 +85,7 @@ def score_candidate_pages(rectified, hand_mask, motion, config, geometry_metrics
             config,
             distortion=geometry_metrics["distortion"],
             flatness_proxy=geometry_metrics["flatness_proxy"],
+            glare_overlap=glare_overlaps[side],
         )
     return page_metrics, spine
 
