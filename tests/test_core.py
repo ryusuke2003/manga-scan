@@ -103,6 +103,29 @@ def test_candidates_span_interval_including_late_hand_withdrawal():
     assert len({s.index for s in chosen}) == 7
 
 
+
+def test_scan_style_defaults_and_hand_disabled_compatibility():
+    cfg = Config().validate()
+    assert cfg.reading_order == "rtl"
+    assert cfg.image_format == "png"
+    assert cfg.jpeg_quality == 92
+    assert cfg.hand_backend == "mediapipe"
+    assert cfg.finger_repair is True
+    assert cfg.candidate_selection_mode == "spread"
+    assert cfg.grayscale is True
+    assert cfg.refine_quad is True
+    assert cfg.perspective_mode == "per_page"
+    assert cfg.page_contour_min_confidence == pytest.approx(0.55)
+    assert cfg.split_mode == "auto"
+    assert cfg.dewarp_mode == "auto"
+    assert cfg.illumination_correction is True
+    assert cfg.white_normalization is True
+
+    disabled = Config.from_dict({"hand_backend": "none"})
+    assert disabled.hand_backend == "none"
+    assert disabled.finger_repair is False
+
+
 def test_dedupe_identical_changed_and_blank():
     a = pattern()
     b = pattern(2)
