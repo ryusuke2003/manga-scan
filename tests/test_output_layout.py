@@ -131,12 +131,25 @@ def test_whole_spread_background_fill_hides_desk_only_with_trusted_pages(
     assert page["background_fill"]["confidence"] == pytest.approx(.9)
     assert page["background_fill"]["mask"]
     assert (tmp_path / page["background_fill"]["mask"]).is_file()
-    # The desk corner inside the rectangular warp is concealed.
-    assert np.all(output[2, 2] >= 245)
+    page_mask = cv2.imread(
+        str(tmp_path / page["background_fill"]["mask"]),
+        cv2.IMREAD_GRAYSCALE,
+    )
+    background = (page_mask < 127).astype(np.uint8)
+    distance = cv2.distanceTransform(background, cv2.DIST_L2, 3)
+    y, x = np.unravel_index(np.argmax(distance), distance.shape)
+    assert distance[y, x] >= 4
+    # A desk pixel well outside the protected page margin is concealed.
+    assert np.all(output[y, x] >= 245)
+
     # The photographed gutter remains protected rather than being whitened.
     center = output.shape[1] // 2
     expected = pipeline.warp_roi(image, page["crop"]["roi"])
-    np.testing.assert_allclose(output[output.shape[0] // 2, center], expected[expected.shape[0] // 2, center], atol=1)
+    np.testing.assert_allclose(
+        output[output.shape[0] // 2, center],
+        expected[expected.shape[0] // 2, center],
+        atol=1,
+    )
 
 
 def test_whole_spread_background_fill_skips_uncertain_fallback(
