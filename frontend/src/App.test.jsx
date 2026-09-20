@@ -42,6 +42,7 @@ it('moves past an automatically detected cover and keeps a crop correction actio
     message: '表紙の外周を自動検出しました',
     warnings: [],
     pages: [],
+    spreads: [],
     roi: null,
     metadata: { duration: 10 },
     config: { rotation: 0 },
@@ -77,6 +78,7 @@ it('previews an automatically detected reference spread with four ready points',
     message: '見開き外周を自動検出しました',
     warnings: [],
     pages: [],
+    spreads: [],
     roi: [[0.08, 0.10], [0.92, 0.09], [0.94, 0.91], [0.07, 0.90]],
     metadata: { duration: 10, display_width: 1000, display_height: 600, fps: 30, codec: 'h264' },
     config: { rotation: 0 },
@@ -125,6 +127,6 @@ it('falls back to the existing four-point editor when reference detection fails'
   render(<App />);
 
   expect(screen.getByText('見開きの外周を4点で指定')).toBeTruthy();
-  expect(screen.getByText(/外周を自動検出できませんでした/)).toBeTruthy();
+  expect(screen.getByText('外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。')).toBeTruthy();
   expect(screen.getByText('0 / 4 点')).toBeTruthy();
 });
