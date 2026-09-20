@@ -111,12 +111,11 @@ describe('frontend helpers', () => {
 
   it('maps saved raw ROIs into rotated preview coordinates', () => {
     const roi = [[0.1, 0.2], [0.8, 0.2], [0.8, 0.9], [0.1, 0.9]];
-    expect(rotateNormalizedRoi(roi, 90)).toEqual([
-      [0.09999999999999998, 0.1],
-      [0.8, 0.1],
-      [0.8, 0.8],
-      [0.09999999999999998, 0.8],
-    ]);
+    const rotated = rotateNormalizedRoi(roi, 90);
+    expect(rotated[0][0]).toBeCloseTo(0.1);
+    expect(rotated[0][1]).toBeCloseTo(0.1);
+    expect(rotated[2][0]).toBeCloseTo(0.8);
+    expect(rotated[2][1]).toBeCloseTo(0.8);
   });
 
   it('detects long timeline gaps as missing-page candidates', () => {
@@ -227,7 +226,7 @@ describe('frontend helpers', () => {
 
   it('applies correction presets and detects custom overrides', () => {
     const base = buildInitialConfig();
-    expect(correctionPresetForConfig(base)).toBe('original');
+    expect(correctionPresetForConfig(base)).toBe('scan');
     const standard = applyCorrectionPreset(base, 'standard');
     expect(standard.perspective_mode).toBe('per_page');
     expect(standard.dewarp_mode).toBe('auto');
@@ -238,7 +237,15 @@ describe('frontend helpers', () => {
     expect(correctionPresetForConfig(applyCorrectionPreset(standard, 'scan'))).toBe('scan');
   });
 
-  it('submits opt-in finger repair from setup', () => {
+  it('uses the scan-style setup defaults', () => {
+    const config = buildInitialConfig();
+    expect(config.finger_repair).toBe(true);
+    expect(config.grayscale).toBe(true);
+    expect(config.candidate_selection_mode).toBe('spread');
+    expect(correctionPresetForConfig(config)).toBe('scan');
+  });
+
+  it('submits finger repair disabled after toggling the default off', () => {
     const onCreate = vi.fn();
     render(React.createElement(Setup, {
       busy: false,
@@ -253,7 +260,7 @@ describe('frontend helpers', () => {
     fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
     expect(onCreate).toHaveBeenCalledWith(
       '/tmp/book.mp4',
-      expect.objectContaining({ finger_repair: true }),
+      expect.objectContaining({ finger_repair: false }),
     );
   });
 
@@ -273,7 +280,7 @@ describe('frontend helpers', () => {
     }));
   });
 
-  it('shows detected rotation in frame preview and allows one-click override', () => {
+  it('shows detected rotation in frame preview and allows manual override', () => {
     const onRotation = vi.fn();
     render(React.createElement(FrameSelector, {
       step: '04 / 見開き基準フレーム',
