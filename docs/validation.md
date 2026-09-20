@@ -14,7 +14,9 @@ OpenCV 4.14.0、MediaPipe 0.10.35。依存の全バージョンは
 - 品質スコア各項目の減点、無効化した手検出の明示。
 - 手maskのROI交差、複数maskの重複を二重計上しないこと。
 - ROIの透視補正、机の除外、自己交差/範囲外/NaN/誤順序の拒否。
-- 奇数幅の左右分割で画素を欠落させないこと、auto spine、円筒リマップ。
+- 奇数幅の左右分割で画素を欠落させないこと、auto spine、固定/自動湾曲remap。
+- 合成した背側圧縮を左右ページ別に検出し、補正後のエッジ間隔が1.0へ近づくこと。
+- 低情報ページでは自動湾曲補正を安全にfallbackし、一定輝度画像で黒い穴を作らないこと。
 - PNGからPDFへ画素一致、JPEGの圧縮データ一致、PDFページ比率、OCRテキストなし。
 - 失敗したPDF出力が以前のPDFを壊さないこと。
 - 合成動画の4静止区間 → 1重複除外 → 6ページPDF。
@@ -35,7 +37,7 @@ ruff check src tests scripts
 
 PythonのUI統合テストは、Viteの`index.html`が参照するハッシュ付き`/static/assets/...`を実際にFlaskから取得できることを確認する。そのためpytest前にfrontend buildが必要。
 
-GitHub Actionsはpush / pull requestで、Ubuntu・macOS × Python 3.12・3.14を実行する。各jobでNode 22をセットアップし、フロントのtest/build後にPythonのlint/testを行う。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
+GitHub Actionsは、Ubuntu/Python 3.14のfast jobでNode 22のfrontend test/build、Ruff、軽量pytestを実行する。pipeline jobではUbuntu/Python 3.12の互換テストとmacOS/Python 3.14のFFmpeg統合テストを実行する。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
 
 ## M5上のローカル実行
 

@@ -266,7 +266,7 @@ projects/book01/
 ├── candidates/                # 候補フレーム・手マスク・評価値
 ├── selected/                  # 採用した見開き
 ├── pages/                     # 左右に分割したページ画像
-├── debug/                     # motion / score / ログ / contact sheet
+├── debug/                     # motion / score / ログ / contact sheet / dewarp比較
 └── output/
     └── manga.pdf
 ```
@@ -276,6 +276,31 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 - PNGページ: PDF内でも画素を維持
 - JPEGページ: 保存済みJPEGをPDFへ再圧縮せず埋め込み
 - `pdf_dpi`: 物理サイズを決める値で、画像を縮小しません
+
+## 自動湾曲補正
+
+Issue #10 Phase 3として、見開きを左右に分割した後の各ページについて、背表紙側の横方向圧縮を画像内容から推定する自動dewarpを利用できます。
+
+```toml
+dewarp_mode = "auto"
+dewarp_max_strength = 0.25
+dewarp_min_confidence = 0.6
+```
+
+自動推定は、ページ内を複数の高さ帯に分けて縦エッジ間隔を測り、背側だけが一貫して詰まっている場合に限って補正します。推定のばらつきが大きい場合は補正せず、ページを「要確認」にします。完全な3D復元や文字認識は行いません。
+
+レビュー画面では、ページごとに推定強度・信頼度を確認できます。自動補正を適用したくないページは「自動補正OFF」で片側だけ無効化できます。自動モードでは `debug/dewarp/` に補正前PNGと、推定した横方向remapを確認するグリッド画像を保存します。
+
+従来の固定補正も残しています。
+
+```toml
+dewarp_mode = "manual"
+dewarp_strength = 0.15
+```
+
+`dewarp_mode = "off"` なら湾曲補正を完全に無効化します。表紙は背表紙側を一意に決められないため、自動モードの対象外です。表紙に固定補正をかけたい場合はmanualモードを使用してください。
+
+補正順は **湾曲補正 → 照明ムラ補正 → 白背景正規化 → grayscale / contrast / rotation** です。
 
 ## チューニング
 
@@ -291,7 +316,7 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
 | ページの端/中央が緩く暗い | `illumination_correction=true`。強すぎる場合は `illumination_strength` を0.4〜0.7へ下げる |
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
-| 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_strength=0.0`, PNG |
+| 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
 

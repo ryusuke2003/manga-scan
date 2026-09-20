@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価' };
+const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い' };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
 const pageSideLabel = side => side === 'cover' ? '表紙' : (side === 'right' ? '右ページ' : '左ページ');
 
@@ -53,6 +53,12 @@ export default function Review({ manifest, file, busy, onEdit }) {
       <ImageLink file={file} path={page.path} preview={page.preview} />
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
+      {page.dewarp?.mode === 'auto' && <div className="dewarp-meta">
+        <span>湾曲補正: {page.dewarp.status === 'applied' ? `適用 ${(page.dewarp.strength * 100).toFixed(1)}%` : page.dewarp.status === 'disabled' ? 'ページ単位でOFF' : page.dewarp.status === 'not_needed' ? '補正不要' : '見送り'}{page.dewarp.confidence !== undefined ? ` · 信頼度 ${Math.round(page.dewarp.confidence * 100)}%` : ''}</span>
+        <div className="row">{page.dewarp.before && <a href={file(page.dewarp.before)} target="_blank" rel="noopener">補正前 ↗</a>}
+          {page.dewarp.debug_grid && <a href={file(page.dewarp.debug_grid)} target="_blank" rel="noopener">remap ↗</a>}
+          <button disabled={busy} onClick={() => onEdit('toggle_dewarp', { spread_id: page.spread_id, side: page.side })}>{page.dewarp.status === 'disabled' ? '自動補正ON' : '自動補正OFF'}</button></div>
+      </div>}
       <div className="row"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
         <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
         <button disabled={busy} aria-label={`${page.id}を後ろへ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: 1 })}>→</button></div>

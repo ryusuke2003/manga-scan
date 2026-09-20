@@ -11,7 +11,15 @@ from manga_scan.motion import Sample, StableDetector, choose_candidates, motion_
 from manga_scan.page_detect import refine_quad
 from manga_scan.perspective import validate_roi, warp_roi
 from manga_scan.score import composite_score, sharpness, suspect_reasons
-from manga_scan.split import enhance_page, normalize_white_background, split_spread
+from manga_scan.split import (
+    auto_dewarp_page,
+    dewarp_debug_grid,
+    dewarp_page,
+    enhance_page,
+    estimate_curvature,
+    normalize_white_background,
+    split_spread,
+)
 
 ROI = [[0, 0], [1, 0], [1, 1], [0, 1]]
 
@@ -19,6 +27,28 @@ ROI = [[0, 0], [1, 0], [1, 1], [0, 1]]
 def pattern(seed=1):
     rng = np.random.default_rng(seed)
     return rng.integers(0, 255, (120, 160, 3), dtype=np.uint8)
+
+
+def synthetic_line_page():
+    image = np.full((240, 480, 3), 240, dtype=np.uint8)
+    for x in range(15, 470, 30):
+        cv2.line(image, (x, 8), (x, 231), (25, 25, 25), 2)
+    for y in range(30, 220, 45):
+        cv2.line(image, (8, y), (471, y), (110, 110, 110), 1)
+    return image
+
+
+def compress_spine(image, side, strength):
+    h, w = image.shape[:2]
+    gamma = 1.0 + 3.0 * strength
+    u = np.linspace(0, 1, w, dtype=np.float32)
+    if side == "right":
+        source_u = np.power(u, 1.0 / gamma)
+    else:
+        source_u = 1.0 - np.power(1.0 - u, 1.0 / gamma)
+    map_x = np.tile(source_u * (w - 1), (h, 1)).astype(np.float32)
+    map_y = np.tile(np.arange(h, dtype=np.float32)[:, None], (1, w))
+    return cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
 
 def test_motion_identical_and_moving():
@@ -120,6 +150,44 @@ def test_auto_spine_and_correction():
     assert 104 <= spine <= 107
     corrected = enhance_page(image, grayscale=True, rotation=90, dewarp_strength=0.2)
     assert corrected.shape == (200, 120)
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_auto_curvature_dewarp_improves_synthetic_spine_compression(side):
+    flat = synthetic_line_page()
+    distorted = compress_spine(flat, side, 0.2)
+    before = estimate_curvature(distorted, side)
+    corrected, info = auto_dewarp_page(distorted, side, max_strength=0.25, min_confidence=0.6)
+    after = estimate_curvature(corrected, side)
+
+    assert before["confidence"] >= 0.6
+    assert before["strength"] > 0
+    assert info["applied"]
+    assert corrected.shape == distorted.shape
+    assert corrected.dtype == distorted.dtype
+    assert after["compression_ratio"] is not None
+    assert abs(after["compression_ratio"] - 1) < abs(before["compression_ratio"] - 1)
+
+
+def test_auto_curvature_dewarp_falls_back_on_low_information_page():
+    blank = np.full((160, 240, 3), 230, dtype=np.uint8)
+    corrected, info = auto_dewarp_page(blank, "right")
+    np.testing.assert_array_equal(corrected, blank)
+    assert not info["applied"]
+    assert info["status"] == "low_confidence"
+    assert info["confidence"] == 0
+
+
+def test_curvature_dewarp_keeps_bounds_without_holes():
+    image = np.full((120, 150, 3), 180, dtype=np.uint8)
+    corrected = dewarp_page(image, "left", 0.25)
+    grid = dewarp_debug_grid(image.shape, "left", 0.25)
+    assert corrected.shape == image.shape
+    assert corrected.dtype == image.dtype
+    assert grid.shape == image.shape
+    assert corrected.min() == 180
+    assert corrected.max() == 180
+    assert np.isfinite(grid).all()
 
 
 def test_white_normalization_brightens_paper_without_lifting_dark_art():
@@ -235,6 +303,9 @@ def test_hand_union_intersection_only_on_page():
         {"white_normalization": "true"},
         {"white_target": 199},
         {"white_strength": 1.1},
+        {"dewarp_mode": "guess"},
+        {"dewarp_max_strength": 0.5},
+        {"dewarp_min_confidence": 1.1},
     ],
 )
 def test_config_rejects_invalid_values(data):
