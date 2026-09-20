@@ -131,7 +131,11 @@ def create_app(projects, config=None):
     def file(name, filename):
         project = project_path(name)
         path = (project / filename).resolve()
-        if not path.is_relative_to(project) or path.suffix.lower() not in (".png", ".jpg", ".pdf"):
+        if (
+            not path.is_relative_to(project)
+            or path.suffix.lower() not in (".png", ".jpg", ".pdf")
+            or not path.is_file()
+        ):
             abort(404)
         return send_file(path, conditional=True)
 
