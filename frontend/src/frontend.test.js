@@ -11,7 +11,11 @@ import Setup, {
   correctionPresetForConfig,
 } from './components/Setup.jsx';
 import { rotateNormalizedRoi } from './rotation.js';
-import { detectMissingPageCandidates, timelinePercent } from './timeline.js';
+import {
+  detectMissingPageCandidates,
+  pageTurnMissingCandidates,
+  timelinePercent,
+} from './timeline.js';
 import {
   didJobFinish,
   isStalePoll,
@@ -145,6 +149,34 @@ describe('frontend helpers', () => {
     expect(rotated[0][1]).toBeCloseTo(0.1);
     expect(rotated[2][0]).toBeCloseTo(0.8);
     expect(rotated[2][1]).toBeCloseTo(0.8);
+  });
+
+  it('prefers persisted page-turn v2 candidates including an explicit empty result', () => {
+    const analysis = {
+      version: 2,
+      missing_candidates: [
+        {
+          id: 'turn_0001-turn_0002',
+          time: 8.4,
+          motion: 0.014,
+          left_turn: 'turn_0001',
+          right_turn: 'turn_0002',
+          before: 'spread_0002',
+          after: 'spread_0003',
+        },
+      ],
+    };
+    expect(pageTurnMissingCandidates(analysis)).toEqual([
+      expect.objectContaining({
+        id: 'turn_0001-turn_0002',
+        time: 8.4,
+        source: 'page_turn_v2',
+        leftTurn: 'turn_0001',
+        rightTurn: 'turn_0002',
+      }),
+    ]);
+    expect(pageTurnMissingCandidates({ version: 2, missing_candidates: [] })).toEqual([]);
+    expect(pageTurnMissingCandidates(null)).toBeNull();
   });
 
   it('detects long timeline gaps as missing-page candidates', () => {
