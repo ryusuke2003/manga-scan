@@ -445,12 +445,31 @@ function PageCountCheck({ manifest, busy, onSave }) {
 
   const normalized = draft === '' ? null : Number(draft);
   const changed = normalized !== (manifest.expected_page_count ?? null);
-  const status = manifest.page_count_check?.status ?? 'unset';
+  const enabled = manifest.pages.filter(page => page.enabled);
+  const actual = enabled.reduce(
+    (total, page) => total + (page.side === 'spread' ? 2 : 1),
+    0,
+  );
+  const fallbackDifference = manifest.expected_page_count == null
+    ? null
+    : actual - manifest.expected_page_count;
+  const check = manifest.page_count_check ?? {
+    status: manifest.expected_page_count == null
+      ? 'unset'
+      : manifest.status === 'complete'
+        ? (fallbackDifference === 0 ? 'match' : fallbackDifference < 0 ? 'short' : 'over')
+        : 'pending',
+    expected: manifest.expected_page_count ?? null,
+    actual,
+    output_items: enabled.length,
+    difference: fallbackDifference,
+  };
+  const status = check.status;
 
   return <div className={`panel page-count-check ${status}`} aria-label="期待ページ数チェック">
     <div>
       <strong>期待ページ数チェック</strong>
-      <p className="muted">{pageCountSummary(manifest.page_count_check)}</p>
+      <p className="muted">{pageCountSummary(check)}</p>
     </div>
     <div className="row">
       <label>期待ページ数
