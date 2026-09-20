@@ -37,8 +37,10 @@ jobs:
         include:
           - os: ubuntu-latest
             python: '3.12'
+            pytest_args: --ignore=tests/test_ui.py
           - os: macos-latest
             python: '3.14'
+            pytest_args: tests/test_pipeline.py
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -54,4 +56,6 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ffmpeg
       - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest -q tests/test_pipeline.py
+      - name: Verify Python source compatibility
+        run: python -m compileall -q src
+      - run: python -m pytest -q ${{ matrix.pytest_args }}
