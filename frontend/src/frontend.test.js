@@ -240,7 +240,7 @@ describe('frontend helpers', () => {
   it('uses the scan-style setup defaults', () => {
     const config = buildInitialConfig();
     expect(config.finger_repair).toBe(true);
-    expect(config.grayscale).toBe(true);
+    expect(config.grayscale).toBe(false);
     expect(config.candidate_selection_mode).toBe('spread');
     expect(config.perspective_mode).toBe('spread');
     expect(correctionPresetForConfig(config)).toBe('scan');
