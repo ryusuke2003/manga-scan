@@ -9,6 +9,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install frontend dependencies
+        run: npm --prefix frontend install
+      - name: Test frontend
+        run: npm --prefix frontend test
+      - name: Build frontend
+        run: npm --prefix frontend run build
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -21,4 +30,3 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: ruff check src tests scripts
       - run: python -m pytest -q
-
