@@ -18,13 +18,14 @@ pytestmark = pytest.mark.skipif(
 ROI = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]
 
 
-@pytest.fixture
-def video(tmp_path):
+@pytest.fixture(scope="module")
+def video(tmp_path_factory):
     spec = importlib.util.spec_from_file_location(
         "demo", Path(__file__).parents[1] / "scripts/make_demo.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    tmp_path = tmp_path_factory.mktemp("demo-video")
     return module.make_demo(tmp_path / "video with spaces.mp4")
 
 
