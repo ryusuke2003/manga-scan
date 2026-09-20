@@ -7,6 +7,8 @@ from pathlib import Path
 
 import cv2
 
+from .manifest_migrations import migrate_manifest
+
 
 def write_json(path, data):
     path = Path(path)
@@ -26,11 +28,7 @@ def write_json(path, data):
 
 def read_manifest(project):
     manifest = json.loads((Path(project) / "manifest.json").read_text())
-    # Old projects were always split. New configuration defaults must not
-    # silently change their page IDs, exclusions, or order during an edit.
-    if "config" in manifest:
-        manifest["config"].setdefault("output_layout", "split")
-    return manifest
+    return migrate_manifest(manifest)
 
 
 def save_manifest(project, manifest):
