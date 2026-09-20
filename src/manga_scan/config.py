@@ -23,32 +23,32 @@ class Config:
     hand_backend: str = "mediapipe"
     hand_model: str = "models/hand_landmarker.task"
     hand_padding: float = 0.015
-    finger_repair: bool = False
+    finger_repair: bool = True
     finger_repair_min_coverage: float = 0.9
     duplicate_hash_distance: int = 4
     duplicate_ssim: float = 0.985
     duplicate_suspect_ssim: float = 0.94
     dedupe_window: int = 3
-    refine_quad: bool = False
+    refine_quad: bool = True
     quad_max_shift: float = 0.025
-    perspective_mode: str = "spread"
-    page_contour_min_confidence: float = 0.5
-    split_mode: str = "center"
+    perspective_mode: str = "per_page"
+    page_contour_min_confidence: float = 0.55
+    split_mode: str = "auto"
     spine_ratio: float = 0.5
     gutter_fraction: float = 0.0
     reading_order: str = "rtl"
     image_format: str = "png"
     jpeg_quality: int = 92
-    grayscale: bool = False
+    grayscale: bool = True
     contrast: float = 1.0
-    illumination_correction: bool = False
+    illumination_correction: bool = True
     illumination_strength: float = 0.7
-    white_normalization: bool = False
+    white_normalization: bool = True
     white_target: int = 245
     white_strength: float = 0.6
     rotation: int = 0
     auto_rotation: bool = True
-    dewarp_mode: str = "manual"
+    dewarp_mode: str = "auto"
     dewarp_strength: float = 0.0
     dewarp_max_strength: float = 0.25
     dewarp_min_confidence: float = 0.6
@@ -141,8 +141,10 @@ class Config:
     @classmethod
     def from_dict(cls, data):
         data = dict(data)
-        # Existing configs/manifests that explicitly stored a numeric rotation
-        # predate auto detection and should keep their manual behavior.
+        if data.get("hand_backend") == "none" and "finger_repair" not in data:
+            data["finger_repair"] = False
+        # Numeric rotation existed before auto detection. Keep old configs and
+        # manifests manual unless they explicitly opt into the new behavior.
         if "rotation" in data and "auto_rotation" not in data:
             data["auto_rotation"] = False
         unknown = set(data) - {f.name for f in fields(cls)}
