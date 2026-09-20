@@ -20,7 +20,7 @@ from .ingest import (
     set_setup_frame,
     skip_cover,
 )
-from .pipeline import edit, run
+from .pipeline import edit, import_external_page, run
 from .storage import project_lock, read_manifest
 
 
@@ -29,7 +29,10 @@ def create_app(projects, config=None):
     root.mkdir(parents=True, exist_ok=True)
     config = config or Config()
     app = Flask(__name__)
-    app.config.update(MAX_CONTENT_LENGTH=64 * 1024, TRUSTED_HOSTS=["localhost", "127.0.0.1"])
+    app.config.update(
+        MAX_CONTENT_LENGTH=64 * 1024 * 1024,
+        TRUSTED_HOSTS=["localhost", "127.0.0.1"],
+    )
     token = secrets.token_urlsafe(32)
     app.config["API_TOKEN"] = token
     guard = threading.Lock()
@@ -93,7 +96,10 @@ def create_app(projects, config=None):
             projects.append(
                 {
                     "id": p.name,
-                    "source_name": Path(m["source"]).name,
+                    "source_name": (
+                        Path((m.get("sources") or [m["source"]])[0]).name
+                        + (f" +{len(m.get('sources', [])) - 1}" if len(m.get("sources", [])) > 1 else "")
+                    ),
                     "status": m["status"],
                     "pages": len(m["pages"]),
                 }
@@ -126,9 +132,34 @@ def create_app(projects, config=None):
             data = request.get_json()
             cfg = Config.from_dict({**config.to_dict(), **data.get("config", {})})
             name = "scan-" + uuid.uuid4().hex[:10]
-            manifest = create_project(data["video"], root / name, cfg)
+            videos = data.get("videos") or data.get("video")
+            manifest = create_project(videos, root / name, cfg)
             return jsonify(id=name, manifest=manifest)
         finally:
+            guard.release()
+
+    @app.post("/api/projects/<name>/external-page")
+    def external_page(name):
+        project = project_path(name)
+        if not guard.acquire(blocking=False):
+            return jsonify(error="処理中です。完了後に操作してください"), 409
+        temporary = None
+        try:
+            upload = request.files.get("image")
+            if upload is None or not upload.filename:
+                raise ValueError("画像ファイルを選択してください")
+            suffix = Path(upload.filename).suffix.lower()
+            if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"):
+                raise ValueError("PNG / JPEG / WebP / HEIC画像を選択してください")
+            directory = project / "source" / "external_uploads"
+            directory.mkdir(parents=True, exist_ok=True)
+            temporary = directory / f"upload-{uuid.uuid4().hex}{suffix}"
+            upload.save(temporary)
+            manifest = import_external_page(project, temporary, request.form.get("page_id") or None)
+            return jsonify(manifest)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
             guard.release()
 
     @app.post("/api/projects/<name>/setup")
