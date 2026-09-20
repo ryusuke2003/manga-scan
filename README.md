@@ -1,213 +1,353 @@
 # Manga Scan Local
 
-Macで撮影済みの漫画動画から、机を除いた左右ページ画像と画像PDFを作るローカルMVPです。
-Python / OpenCV / FFmpeg / MediaPipe。OCR、クラウドAPI、有料API、生成AIによる指消しはありません。
-自動抽出後に候補の切替・除外・復元・ページ順・分割位置を確認できます。
+Macで撮影した漫画の動画から、**机などの背景を除いた左右ページ画像とPDF**を作るローカルアプリです。
 
-**このMVPは、各見開きが約0.5秒以上安定して映る撮影を対象にします。**
-一瞬だけ見える高速なパラパラめくり、隠れた絵、強く湾曲したページの完全復元はできません。
-実写漫画での精度とMacBook Air M5での処理時間は未評価です。まず数ページで撮影条件を調整してください。
+- Python / OpenCV / FFmpeg / MediaPipeで画像処理
+- React + ViteのローカルWeb UI
+- ページめくり中を避け、静止した候補からベストフレームを選択
+- 手の重なり、ブレ、重複候補などを「要確認」として表示
+- 候補切替、除外/復元、ページ順、左右交換、分割位置を後から修正可能
+- OCR、クラウドAPI、有料API、生成AIによる画像補完なし
+- セットアップ後のスキャン処理はオフラインで実行可能
 
-## セットアップ（Mac Apple Silicon）
+> [!IMPORTANT]
+> このMVPは、各見開きを **0.5〜1秒程度静止して撮影する**使い方を想定しています。
+> 高速なパラパラめくり、隠れた絵、強く湾曲したページの完全復元はできません。
 
-macOSのarm64 Python 3.11以降。推奨はPython 3.12〜3.14です。Rosetta環境を混ぜないでください。
+## 最短セットアップ
+
+主な対象環境は **Mac Apple Silicon** です。
+
+| 必要なもの | 目安 | 用途 |
+|---|---|---|
+| macOS arm64 | Apple Silicon | 主な検証環境 |
+| Python | 3.11以上。推奨3.12〜3.14 | 画像処理・ローカルAPI |
+| FFmpeg / ffprobe | Homebrew版で可 | 動画解析 |
+| Node.js | 22.12以上 | React/Viteの初回ビルド |
+| Homebrew | 任意だが推奨 | Python / FFmpeg / Nodeの導入 |
+
+Homebrewがない場合は [brew.sh](https://brew.sh/) から導入してください。
+
+### 1. リポジトリを取得
+
+```bash
+git clone https://github.com/ryusuke2003/manga-scan.git
+cd manga-scan
+```
+
+### 2. 必要なツールを入れる
 
 ```bash
 brew install python@3.14 ffmpeg node
+```
+
+確認:
+
+```bash
+python3.14 --version
+ffmpeg -version
+ffprobe -version
+node --version
+```
+
+Node.jsは **22.12以上** が必要です。
+
+### 3. Python環境を作る
+
+```bash
 python3.14 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[hands,dev]'
-npm --prefix frontend install
+python -m pip install -e '.[hands]'
+```
+
+通常利用では `dev` 依存は不要です。テストや開発をする場合だけ後述の開発手順を使ってください。
+
+### 4. React/Viteフロントをビルド
+
+```bash
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
 npm --prefix frontend run build
-python scripts/download_hand_model.py \
-  --sha256 fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1
+```
+
+ビルド結果は `src/manga_scan/static/` に生成されます。このディレクトリは生成物なのでGit管理しません。
+
+### 5. 手検出モデルと設定ファイルを用意
+
+```bash
+python scripts/download_hand_model.py
 cp config.example.toml config.toml
 ```
 
-Homebrewが未導入の場合は[公式手順](https://brew.sh/)で導入してください。
-`ffmpeg -version` と `ffprobe -version`、`node --version`（22.12以上）で確認できます。
+`download_hand_model.py` はMediaPipe公式モデルを取得し、スクリプト内に固定したSHA-256と照合します。
 
-依存とモデルの**インストール時だけ**ネット接続が必要です。その後はネットを切って処理できます。
-別のオンラインPCで必要なwheelとモデルを用意して持ち込むこともできます。
-検証環境の固定依存は `requirements-macos-arm64.lock.txt`。他のOS/Pythonでは
-`pyproject.toml` から解決してください。FFmpegは別インストールです。
-
-### MediaPipe依存
-
-Hand Landmarker **Tasks API**を使用し、CPUで実行します。従来の `mp.solutions.hands` は使いません。
-MediaPipeは **0.10.35** に固定しています。検証したMac arm64環境では1.0.1がCPU指定でも
-Metal helper内部でネイティブ異常終了したため、動作確認なしでバージョンを上げないでください。
-macOS版はCPU推論指定でも内部でgraphics contextを初期化します。強いサンドボックスや
-GUIセッションのない環境では異常終了する場合があるため、通常のMacターミナルから起動してください。
-`hand_model` はローカルの `.task` ファイルを指します。設定ファイルに記述した相対パスは
-その設定ファイルのあるディレクトリから解決します。処理中の自動ダウンロードはありません。
-`opencv-python` と `opencv-contrib-python` を同時に入れないでください。このプロジェクトは
-MediaPipeと共通の `opencv-contrib-python` に統一しています。
-
-モデルや依存がなければ明確なエラーで停止します。手検出なしで試すには設定の
-`hand_backend = "none"` を明示してください。その場合は全ページが要確認になります。
-ライセンスとモデルの出所は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。
-
-## Web UIで実行
-
-Web UIはReact + Viteです。初回セットアップ後やフロントエンド変更後は
-`npm --prefix frontend run build` で `src/manga_scan/static/` を生成します。
+### 6. 起動
 
 ```bash
+manga-scan ui --config config.toml --projects projects
+```
+
+ブラウザで **http://127.0.0.1:8765** を開けば準備完了です。
+
+サーバーは `127.0.0.1` のみで待ち受けます。外部CDN、解析タグ、クラウド通信はありません。
+
+### 2回目以降
+
+フロントを変更していなければ、通常はこれだけです。
+
+```bash
+cd manga-scan
 source .venv/bin/activate
 manga-scan ui --config config.toml --projects projects
 ```
 
-[http://127.0.0.1:8765](http://127.0.0.1:8765) をブラウザで開きます。
-サーバーは127.0.0.1だけで待ち受けます。外部CDN、解析タグ、遠隔通信はありません。
+## Web UIの使い方
 
-1. 「ファイルを選択」でMacの動画を選択（または絶対パスを入力）。巨大動画をブラウザへアップロードしません。
-2. 右→左 / 左→右、PNG / JPEG、手検出等を選び「動画を読み込む」。
-3. 最初のフレームで **左上 → 右上 → 右下 → 左下** の順に紙の外周をクリック。
-4. 「抽出を開始」。背景スレッドで処理し、進捗と中間データを保存します。
-5. ページ一覧の要確認表示をチェック。画像クリックで元サイズ、候補一覧で手のマスクも確認できます。
-6. 候補フレーム切替、ページ除外/復元、前後移動、左右交換、分割位置修正を行います。
-7. 見落とした見開きは秒数を指定して追加できます。左右2ページが時系列位置に挿入されます。
-8. 「PDFを出力」で編集を反映。「PDFを開く」で確認。
+1. **動画を選ぶ**
+   - `.mov` / `.mp4` のローカルファイルを選択します。
+   - ブラウザへ巨大動画をアップロードするのではなく、ローカルパスだけを渡します。
+2. **読み方と出力を選ぶ**
+   - 日本漫画なら通常は「右 → 左」。
+   - PNGは画質優先、JPEGは容量優先です。
+3. **漫画の外周を4点指定**
+   - `左上 → 右上 → 右下 → 左下` の順にクリックします。
+   - 机が入らないよう、紙の外周に合わせます。
+4. **抽出を開始**
+   - 動きが小さい区間を探し、候補フレームを評価します。
+5. **要確認ページをチェック**
+   - 手の重なり、ブレ、重複候補、時間間隔などを確認します。
+6. **必要なら修正**
+   - 候補フレーム切替
+   - ページ除外 / 復元
+   - 前後移動
+   - 左右交換
+   - 分割位置修正
+7. **見落とした見開きを追加**
+   - 動画の秒数を指定して追加できます。
+8. **PDFを出力**
+   - 編集後は「PDFを出力」で変更を反映します。
 
-除外は非破壊です。「除外ページも表示」で自動重複除外も復元できます。
-時刻指定追加では動きを測定しないため、必ず要確認扱いです。
-候補切替はその見開き両ページを再生成しますが、除外状態と現在のページ順は保持します。
-原動画は候補再取得に必要です。移動・削除しないでください。
+除外は非破壊です。自動で重複除外されたページも「除外ページも表示」から復元できます。
 
-ブラウザを閉じても処理は続きます。ターミナルを終了すると処理も止まります。
-スリープを避けたい場合は `caffeinate -i manga-scan ui --config config.toml` を利用できます。
-
-## CLIで実行
+ブラウザを閉じてもサーバープロセスが動いている間は処理を続けます。ターミナルを終了すると停止します。
+Macのスリープを避ける場合は次のように起動できます。
 
 ```bash
+caffeinate -i manga-scan ui --config config.toml --projects projects
+```
+
+## 撮影のコツ
+
+- スマホを真上の固定スタンドに置く
+- 見開きを画面いっぱいに入れる
+- 本とスマホを途中で動かさない
+- 反射や強い影を避け、可能ならAF/AEを固定する
+- まずは **4K・30/60fps・SDR** を推奨
+- 1枚めくるごとに **0.5〜1秒程度静止**する
+- 静止中は指をページから離す
+- 最後の見開きも少し静止してから録画を止める
+
+120/240fps入力も扱えますが、解析フレーム数は設定したsample fpsまで落とします。iPhoneスローモーションの実撮影fpsを推測して時間を変換することはしません。
+
+## よくあるエラー
+
+### `manga-scan: command not found`
+
+仮想環境を有効にしてください。
+
+```bash
+source .venv/bin/activate
+```
+
+### `Frontend build missing`
+
+React/Viteの生成物がありません。
+
+```bash
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
+npm --prefix frontend run build
+```
+
+### `Hand model missing`
+
+手検出モデルを取得してください。
+
+```bash
+python scripts/download_hand_model.py
+```
+
+すでに `models/hand_landmarker.task` が存在する場合、ダウンロードスクリプトは上書きしません。
+
+手検出なしで動作確認だけする場合は `config.toml` の次の値を変更できます。
+
+```toml
+hand_backend = "none"
+```
+
+この場合、手の重なりを判定できないため全ページが要確認扱いになります。
+
+### `ffmpeg` / `ffprobe` が見つからない
+
+```bash
+brew install ffmpeg
+```
+
+### ポート8765が使用中
+
+別ポートで起動できます。
+
+```bash
+manga-scan ui --config config.toml --projects projects --port 8766
+```
+
+### `No stable intervals found`
+
+各見開きで静止する時間を長くしてください。それでも検出できない場合は `config.toml` の `stable_frames` や `motion_threshold` を調整します。
+
+### MediaPipeがmacOSで異常終了する
+
+- Rosettaとarm64 Pythonを混在させない
+- 通常のMacターミナル/GUIセッションから実行する
+- `mediapipe==0.10.35` の固定をむやみに外さない
+
+検証環境では新しいMediaPipe版でCPU指定時にもMetal helper内部の異常終了を確認したため、現在は0.10.35に固定しています。
+
+## CLIで使う
+
+Web UIを使わず処理することもできます。
+
+```bash
+# 動画情報だけ確認
 manga-scan probe '/path/to/video.mov'
 
+# プロジェクト作成 + 解析
 manga-scan scan '/path/to/video.mov' projects/book01 \
   --config config.toml \
   --roi '[[0.10,0.10],[0.90,0.10],[0.90,0.90],[0.10,0.90]]'
 
-# 初期化だけ行い、UIで四隅指定する場合
+# 初期化だけして、あとでUIから四隅を指定
 manga-scan init '/path/to/video.mov' projects/book02 --config config.toml
-manga-scan ui --projects projects --config config.toml
 
-# 中断・失敗したプロジェクトを最初から再解析
+# 失敗・中断したプロジェクトを最初から再解析
 manga-scan run projects/book02
 
-# 元動画の表示時刻12.4秒から見開きを追加 / PDF再出力
+# 12.4秒の見開きを追加
 manga-scan add projects/book01 12.4
+
+# 現在のページ順でPDFを再出力
 manga-scan export projects/book01
 ```
 
-ROIは自動回転適用後の画像に対する0〜1の座標。`init --copy-source` / `scan --copy-source`
-で動画を `source/video.mov` 等へコピーできます。既定は元ファイルへの参照のみです。
-新規作成には空のディレクトリが必要です。完了済みプロジェクトを再解析で上書きしません。
+`--copy-source` を付けない限り、元動画はプロジェクトへコピーせず参照だけを保存します。候補の再取得に必要なので、レビュー中は元動画を移動・削除しないでください。
 
 ## 出力
 
+主な出力は次の通りです。
+
 ```text
 projects/book01/
-├── manifest.json                 # 順番、選択候補、除外、警告、処理状態
-├── config.resolved.json          # 初期設定スナップショット
+├── manifest.json              # ページ順、除外状態、候補、警告、進捗
+├── config.resolved.json       # 作成時の設定スナップショット
 ├── source/
-│   ├── video.json                # 元ファイルとffprobe情報
-│   ├── first_frame.png           # ROI指定用、表示方向適用済み
-│   └── video.mov                 # --copy-source時だけ
-├── frames_lowres/                # save_lowres=true時のみ画像を書き出す
-├── candidates/spread_0001/
-│   ├── candidate_00.png          # 縮小候補。フル画像は必要時に元動画から取得
-│   ├── candidate_00_spread.png   # ROI補正プレビュー
-│   ├── candidate_00_hand_mask.png
-│   └── candidate_00.json        # 時刻、ROI、スコア内訳
-├── selected/spread_0001.png      # 元解像度から補正した見開き
-├── pages/
-│   ├── spread_0001_right.png    # または.jpg
-│   ├── spread_0001_left.png
-│   └── ..._thumb.jpg            # UI用のみ。PDFには使わない
-├── debug/
-│   ├── process.log
-│   ├── motion.csv
-│   ├── intervals.json
-│   ├── scores.csv
-│   └── contact_sheet.jpg        # 80ページごとに分割
-└── output/manga.pdf
+│   ├── video.json
+│   └── first_frame.png
+├── candidates/                # 候補フレーム・手マスク・評価値
+├── selected/                  # 採用した見開き
+├── pages/                     # 左右に分割したページ画像
+├── debug/                     # motion / score / ログ / contact sheet
+└── output/
+    └── manga.pdf
 ```
 
-PDF順は `manifest.json` の `pages` 配列で管理し、ファイル名順とは独立しています。
-`selected/` は必ずPNGで保持し、`pages/` を設定形式で保存します。
-PNGページはPDF内でも画素を維持（Flate圧縮。PNGファイルのバイト列そのものではありません）。
-JPEGページは指定品質で一度だけ保存し、PDFには再圧縮せず埋め込みます。
-`pdf_dpi` はPDFの物理寸法を決めるだけで、画像を縮小しません。ページごとに画像比率を保ちます。
+PDFのページ順は `manifest.json` の `pages` 配列で管理します。画像ファイル名の並び順には依存しません。
 
-## 推奨撮影
-
-- スマホを真上の固定スタンドへ置き、見開きを画面いっぱいに。最初から本を開いた状態で撮影開始。
-- 拡散照明を左右から当て、反射と影を避ける。AF/AEを固定できる場合は固定する。
-- まず **4K・30/60fps・SDR** を推奨。120/240fpsは明るさと撮影端末の解像度制限に注意。
-- 普通に一枚ずつめくった後、**0.5〜1秒程度静止**させ、指を紙から離す。
-- 本・スマホを動かさず、最初のROI内で撮影。背をできるだけ平らにする。
-- ページを飛ばさず一定方向に進む。日本漫画は右→左。表紙等は必要箇所を別途レビュー。
-- 最後の見開きも静止してから録画終了。
-
-30/60/120/240fpsをフレーム番号に依存せず扱います。iPhoneスローモーションの
-編集済み動画は再生時間に従います。実際の撮影時刻/fpsを自動復元する機能はありません。
+- PNGページ: PDF内でも画素を維持
+- JPEGページ: 保存済みJPEGをPDFへ再圧縮せず埋め込み
+- `pdf_dpi`: 物理サイズを決める値で、画像を縮小しません
 
 ## チューニング
 
-変更後の自動解析は新規プロジェクトで試してください。プロジェクトは初期設定を保存します。
+変更後の自動解析は新しいプロジェクトで試すのがおすすめです。プロジェクト作成時の設定はスナップショット保存されます。
 
-| 症状 | 調整 |
+| 症状 | 主な調整 |
 |---|---|
-| 候補がない / 少ない | `debug/motion.csv` を確認。`stable_frames` を5→3、sample fpsを10→15。撮影時の静止も延ばす |
-| 微振動で静止にならない | `motion_threshold` を少し上げる。ただしブレた候補が増える |
-| 別ページが一つの区間になる | `turn_threshold` を下げる。必ずmotion_threshold以上にする |
-| 同じページが何度も候補になる | `turn_threshold` を上げる / 重複SSIMを少し下げる。ただし似たコマの誤除外に注意 |
-| 指の少ない候補を拾わない | `candidates_per_spread` を7→12、`hand_overlap_weight` を上げる。候補とhand maskを確認 |
-| 背の位置がずれる | UIの分割位置を修正。`split_mode="auto"` は黒いコマで誤るため任意 |
-| 本の輪郭が少し変わる | `refine_quad=true`。確実に検出できない候補は初期ROIへ戻り警告 |
-| 黒ベタや網点が変わる | `contrast=1.0`, `dewarp_strength=0.0`, PNGを維持 |
-| PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 程度で新規処理。PNGは無劣化だが大きい |
-| decodeが遅い | `hwaccel="videotoolbox"` を試す。非対応時CPUへfallback。長GOPの候補seekが律速の場合もある |
+| 候補がない / 少ない | 静止時間を伸ばす。`stable_frames` を5→3、sample fpsを10→15 |
+| 微振動で静止判定されない | `motion_threshold` を少し上げる |
+| 別ページが1区間になる | `turn_threshold` を下げる |
+| 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
+| 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
+| 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
+| 黒ベタや網点が変わる | `contrast=1.0`, `dewarp_strength=0.0`, PNG |
+| PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
+| decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
 
-`motion_threshold` は0〜1の平均画素差、`duplicate_hash_distance` は0〜64bitの距離です。
-suspect: 低鮮鋭度、手の重なり、重複疑い、外周不確か、時間間隔異常、高motion等。
-flatnessは3D湾曲ではなく四辺形の辺比を使う代理指標です。
-詳細な式・状態機械・限界は [docs/architecture.md](docs/architecture.md) を参照してください。
+詳しい判定式やアルゴリズムは [docs/architecture.md](docs/architecture.md) を参照してください。
 
-## 制約・性能
+## 開発する場合
 
-- 縮小して5〜15fps程度を解析します。FFmpeg内部ではコーデック上必要な中間フレームもdecodeします。
-- 高解像度は選択フレームのみ。候補を元動画へseekするため、長GOP動画では時間がかかります。
-- 一見開きずつ処理し、フル動画をメモリ保持しません。PDF作成時は圧縮画像量に応じたメモリが必要です。
-- 逐次パイプラインがMVPの既定です。M5専用最適化・multiprocessingは未導入。
-- 数分以内という速度目標は動画長・codec・候補数に左右され、M5実写ベンチマークは未実施です。
-- 本が動けば固定ROIの外にはみ出せます。追跡は未実装。台形補正だけでは湾曲や綴じ部の欠落は直りません。
-- 手が検出されない場合、重なり0でも指がない保証にはなりません。特に指先だけ・手袋・漫画中の手に注意。
-- 重複は直近の見開き単位。白紙や似たページを誤って消さないよう保守的です。
-- HDR/Dolby Visionの色忠実度、実写での欠落率、端末別性能は未検証です。MVPでは8bit出力です。
-- ROIの途中変更、自動的な欠落ページ番号推定、外部画像の追加、複数動画統合、自動再開は未実装です。
+### 開発依存を入れる
 
-## テスト・サンプル
+```bash
+source .venv/bin/activate
+python -m pip install -e '.[hands,dev]'
+npm --prefix frontend install --no-audit --no-fund --no-package-lock
+```
+
+### テスト
 
 ```bash
 npm --prefix frontend test
 npm --prefix frontend run build
 python -m pytest -q
 ruff check src tests scripts
-python scripts/make_demo.py projects/demo-input.mp4 --fps 30
-manga-scan scan projects/demo-input.mp4 projects/demo --config config.toml \
-  --roi '[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]'
 ```
 
-デモはオリジナルの図形で作った6秒動画。4静止区間（1つ重複）から6ページを期待します。
-動き検出・重複・スコア・ROI・分割・手マスク交差・PDF画素保持・レビュー操作をテストします。
-通常テストは手モデルを要求しません。実モデルの空画像推論は別途手動で検証します。
-合成テストの成功は、実際の漫画の撮影精度を保証しません。
-実行した項目・環境・測定値は [docs/validation.md](docs/validation.md) に記録しています。
+PythonのUI統合テストは、Viteで生成された `src/manga_scan/static/` をFlaskから実際に配信できることも確認します。そのため **Pythonテストの前にフロントをbuild** してください。
 
-## 公開・開発
+GitHub ActionsではUbuntu/macOS × Python 3.12/3.14で、Node 22のフロントテスト・ビルドとPythonテストを実行します。
 
-MITライセンス。設計は [docs/architecture.md](docs/architecture.md)、OSS調査は
-[THIRD_PARTY.md](THIRD_PARTY.md)。GitHub Actionsでテストを実行します。
-動画・モデル・プロジェクト出力・仮想環境はGit管理対象外です。
-公開前に私有動画や漫画ページが含まれていないことを確認してください。
+### React/Viteを開発モードで動かす
+
+ターミナル1:
+
+```bash
+source .venv/bin/activate
+manga-scan ui --config config.toml --projects projects
+```
+
+ターミナル2:
+
+```bash
+npm --prefix frontend run dev
+```
+
+開発中は **http://127.0.0.1:5173** を開きます。Viteが `/api` と `/files` を `127.0.0.1:8765` のFlaskへproxyします。
+
+フロント変更を通常の `8765` 側へ反映したいときは、再度 `npm --prefix frontend run build` を実行してください。
+
+## 制約
+
+- 10fps解析では、約0.5秒未満しか安定して見えないページを取りこぼす可能性があります
+- 手で常に隠れている領域は復元できません
+- MediaPipeは指先だけの手や漫画に描かれた手を誤判定する可能性があります
+- 射影変換は平面を仮定するため、背の強い湾曲は完全には補正できません
+- HDR / Dolby Visionの色忠実度は未検証で、MVPは8bit出力です
+- 固定ROIなので、本自体が大きく移動すると背景が混ざる可能性があります
+- OCRを使わないため、実際のページ番号から欠落を自動推定しません
+- 処理途中からの自動再開、複数動画統合、外部画像追加は未実装です
+
+実写漫画での精度や長時間4K動画の性能はまだ十分に評価できていません。最初は数ページの短い動画で撮影条件を調整してください。
+
+## ドキュメント
+
+- [設計・アルゴリズム・MVPの境界](docs/architecture.md)
+- [検証記録](docs/validation.md)
+- [OSS・モデル・ライセンス調査](THIRD_PARTY.md)
+- [設定例](config.example.toml)
+
+## ライセンス
+
+このリポジトリの独自コードはMIT Licenseです。
+
+依存ライブラリ、MediaPipeモデル、ユーザーが別途インストールするFFmpegにはそれぞれのライセンスが適用されます。詳細は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。
+
+動画、モデル、プロジェクト出力、仮想環境、Viteのbuild生成物はGit管理対象外です。公開前に私有動画や漫画ページが含まれていないことを確認してください。
