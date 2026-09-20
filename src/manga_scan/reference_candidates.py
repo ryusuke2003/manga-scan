@@ -13,7 +13,7 @@ from .spread_detect import detect_reference_spread
 from .video import sample_frames
 
 REFERENCE_CANDIDATE_SAMPLE_FPS = 2.0
-REFERENCE_CANDIDATE_SEARCH_SECONDS = 45.0
+REFERENCE_CANDIDATE_SEARCH_SECONDS = 30.0
 REFERENCE_CANDIDATE_MIN_SEPARATION = 1.0
 
 
@@ -81,6 +81,8 @@ def scan_reference_candidates(source, metadata, cfg, *, start_time=0.0, limit=5)
             displayed = rotate_image(frame, cfg.rotation)
             motion = motion_score(previous, displayed) if previous is not None else 1.0
             previous = displayed
+            if motion > max(float(cfg.turn_threshold) * 1.5, 0.04):
+                continue
             detection = detect_reference_spread(displayed, min_confidence=threshold)
             confidence = float(detection["confidence"])
             if not detection["detected"] and confidence < fallback_confidence:
