@@ -14,7 +14,7 @@ from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
-from .hand import HandDetector, boundary_finger_mask
+from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import (
     consensus_page_quads,
@@ -24,7 +24,7 @@ from .page_contour import (
 )
 from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
-from .perspective import rotate_roi, validate_roi, warp_roi
+from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
@@ -107,6 +107,113 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     }
     write_json(project / f"{base}.json", record)
     return record
+
+
+def _augment_temporal_hand_masks(project, records, cfg):
+    """Supplement MediaPipe masks from transient same-spread candidate content."""
+    if cfg.hand_backend != "mediapipe" or len(records) < 4:
+        return records
+
+    loaded = {}
+    for record in records:
+        image = cv2.imread(str(project / record["path"]), cv2.IMREAD_COLOR)
+        mask = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
+        if image is None or mask is None:
+            continue
+        loaded[record["id"]] = (image, mask)
+
+    if len(loaded) < 4:
+        return records
+
+    for record in records:
+        target = loaded.get(record["id"])
+        if target is None:
+            continue
+        image, base_mask = target
+        peers = [
+            {"image": peer_image, "mask": peer_mask}
+            for candidate_id, (peer_image, peer_mask) in loaded.items()
+            if candidate_id != record["id"]
+        ]
+        temporal = temporal_transient_mask(
+            image,
+            record["roi"],
+            peers,
+            target_mask=base_mask,
+            padding=cfg.hand_padding,
+        )
+        if not np.any(temporal):
+            continue
+
+        combined = cv2.bitwise_or(base_mask, temporal)
+        mask_path = Path(record["hand_mask"])
+        temporal_name = (
+            mask_path.stem.replace("_hand_mask", "_temporal_hand_mask") + ".png"
+        )
+        temporal_path = str(mask_path.with_name(temporal_name))
+        save_image(project / temporal_path, temporal)
+        save_image(project / record["hand_mask"], combined)
+
+        page = np.zeros(image.shape[:2], np.uint8)
+        cv2.fillConvexPoly(
+            page,
+            np.rint(pixel_quad(record["roi"], image.shape)).astype(np.int32),
+            255,
+        )
+        page_pixels = page > 0
+        overlap = float(
+            np.count_nonzero((combined > 0) & page_pixels)
+            / max(1, np.count_nonzero(page_pixels))
+        )
+        temporal_overlap = float(
+            np.count_nonzero((temporal > 0) & page_pixels)
+            / max(1, np.count_nonzero(page_pixels))
+        )
+        record["temporal_hand_mask"] = temporal_path
+        record["temporal_hand_overlap"] = temporal_overlap
+
+        metrics = score_frame(
+            image,
+            record["roi"],
+            record["metrics"]["motion"],
+            overlap,
+            cfg,
+        )
+        quad_ok = "page_quad_uncertain" not in record.get("suspect", [])
+        record["metrics"] = metrics
+
+        if cfg.candidate_selection_mode == "per_page":
+            rectified = warp_roi(image, record["roi"])
+            rectified_mask = warp_roi(
+                combined,
+                record["roi"],
+                interpolation=cv2.INTER_NEAREST,
+            )
+            page_metrics, _ = score_candidate_pages(
+                rectified,
+                rectified_mask,
+                metrics["motion"],
+                cfg,
+                metrics,
+                hand_enabled=True,
+            )
+            record["page_metrics"] = page_metrics
+            record["page_suspect"] = {
+                side: suspect_reasons(page_metrics[side], cfg, quad_ok)
+                for side in ("left", "right")
+            }
+        else:
+            record["page_metrics"] = {
+                side: metrics.copy() for side in ("left", "right")
+            }
+            record["page_suspect"] = {
+                side: suspect_reasons(metrics, cfg, quad_ok)
+                for side in ("left", "right")
+            }
+
+        record["suspect"] = suspect_reasons(metrics, cfg, quad_ok)
+        write_json(project / Path(record["path"]).with_suffix(".json"), record)
+    return records
 
 
 def _candidate_by_id(spread, candidate_id):
@@ -1163,6 +1270,7 @@ def run(project, roi=None):
                             "right_hand_overlap": records[-1]["page_metrics"]["right"]["hand_overlap"],
                         }
                     )
+                _augment_temporal_hand_masks(project, records, cfg)
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
 
@@ -1174,6 +1282,16 @@ def run(project, roi=None):
                     relative = record["metrics"].get("relative_quality", {})
                     row.update(
                         {
+                            "score": record["metrics"].get("score"),
+                            "hand_overlap": record["metrics"].get("hand_overlap"),
+                            "left_score": record["page_metrics"]["left"].get("score"),
+                            "right_score": record["page_metrics"]["right"].get("score"),
+                            "left_hand_overlap": record["page_metrics"]["left"].get(
+                                "hand_overlap"
+                            ),
+                            "right_hand_overlap": record["page_metrics"]["right"].get(
+                                "hand_overlap"
+                            ),
                             "selection_score": record["metrics"].get("selection_score"),
                             "relative_sharpness": relative.get("sharpness"),
                             "relative_motion": relative.get("motion"),
