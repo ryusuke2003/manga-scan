@@ -57,11 +57,22 @@ def normalize_white_background(image, target=245, strength=0.6):
             np.uint8
         )
 
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
-    lightness = lab[:, :, 0]
-    a = lab[:, :, 1] - 128.0
-    b = lab[:, :, 2] - 128.0
-    chroma = np.sqrt(a * a + b * b)
+    # Keep the 3-channel Lab image as uint8. Converting it wholesale to float32
+    # multiplies its memory footprint by four on full-resolution pages.
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0].astype(np.float32)
+
+    # Build chroma with one reusable float32 scratch buffer instead of keeping
+    # separate float a, b and chroma arrays alive at the same time.
+    chroma = lab[:, :, 1].astype(np.float32)
+    chroma -= 128.0
+    np.square(chroma, out=chroma)
+    scratch = lab[:, :, 2].astype(np.float32)
+    scratch -= 128.0
+    np.square(scratch, out=scratch)
+    chroma += scratch
+    del scratch
+    np.sqrt(chroma, out=chroma)
 
     candidate_floor = max(160.0, float(np.percentile(lightness, 70)))
     candidates = (lightness >= candidate_floor) & (chroma <= 30.0)
@@ -78,16 +89,33 @@ def normalize_white_background(image, target=245, strength=0.6):
     ) * float(strength)
 
     gain = min(1.18, max(1.0, float(target) / max(1.0, white_level)))
-    brightened = np.clip(lightness * gain, 0, 255)
-    lab[:, :, 0] = lightness * (1.0 - weight) + brightened * weight
+    brightened = lightness.copy()
+    brightened *= gain
+    np.clip(brightened, 0, 255, out=brightened)
+    brightened -= lightness
+    brightened *= weight
+    brightened += lightness
+    lab[:, :, 0] = brightened
 
-    # Only neutralize low-chroma bright pixels. Saturated artwork keeps its original color.
-    neutral_gate = _smoothstep((30.0 - chroma) / 20.0)
-    chroma_weight = weight * neutral_gate
-    lab[:, :, 1] = 128.0 + a * (1.0 - chroma_weight)
-    lab[:, :, 2] = 128.0 + b * (1.0 - chroma_weight)
+    # Reuse the chroma buffer as the final chroma correction weight.
+    chroma *= -1.0
+    chroma += 30.0
+    chroma /= 20.0
+    chroma_weight = _smoothstep(chroma)
+    chroma_weight *= weight
 
-    return cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+    # Only neutralize low-chroma bright pixels. Process one channel at a time
+    # so full-resolution float copies of both a and b are never resident together.
+    for channel_index in (1, 2):
+        channel = lab[:, :, channel_index].astype(np.float32)
+        channel -= 128.0
+        channel *= chroma_weight
+        channel *= -1.0
+        channel += lab[:, :, channel_index]
+        np.clip(channel, 0, 255, out=channel)
+        lab[:, :, channel_index] = channel
+
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 
 def enhance_page(

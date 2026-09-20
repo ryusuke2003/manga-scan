@@ -137,6 +137,45 @@ def test_white_normalization_brightens_paper_without_lifting_dark_art():
     assert np.abs(corrected[75, 25].astype(int) - image[75, 25].astype(int)).max() <= 4
 
 
+def test_white_normalization_matches_previous_color_math():
+    image = np.full((96, 128, 3), (205, 218, 230), np.uint8)
+    image[12:40, 12:48] = (25, 25, 25)
+    image[48:78, 12:48] = (155, 155, 155)
+    image[20:70, 70:110] = (80, 120, 210)
+
+    def legacy(image, target=245, strength=0.6):
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+        lightness = lab[:, :, 0]
+        a = lab[:, :, 1] - 128.0
+        b = lab[:, :, 2] - 128.0
+        chroma = np.sqrt(a * a + b * b)
+
+        candidate_floor = max(160.0, float(np.percentile(lightness, 70)))
+        candidates = (lightness >= candidate_floor) & (chroma <= 30.0)
+        white_level = float(np.percentile(lightness[candidates], 75))
+        transition_start = max(150.0, white_level - 45.0)
+        x = np.clip(
+            (lightness - transition_start) / max(1.0, white_level - transition_start),
+            0.0,
+            1.0,
+        )
+        weight = x * x * (3.0 - 2.0 * x) * float(strength)
+
+        gain = min(1.18, max(1.0, float(target) / max(1.0, white_level)))
+        brightened = np.clip(lightness * gain, 0, 255)
+        lab[:, :, 0] = lightness * (1.0 - weight) + brightened * weight
+
+        x = np.clip((30.0 - chroma) / 20.0, 0.0, 1.0)
+        chroma_weight = weight * (x * x * (3.0 - 2.0 * x))
+        lab[:, :, 1] = 128.0 + a * (1.0 - chroma_weight)
+        lab[:, :, 2] = 128.0 + b * (1.0 - chroma_weight)
+        return cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+
+    expected = legacy(image, strength=0.8)
+    actual = normalize_white_background(image, strength=0.8)
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1)
+
+
 def test_white_normalization_grayscale_and_disabled_compatibility():
     image = np.full((80, 100), 220, np.uint8)
     image[20:60, 20:50] = 140
