@@ -195,6 +195,41 @@ def _refresh_setup_previews(project, manifest, rotation):
         item["preview"] = preview_path
 
 
+def _refresh_auto_cover_detection(project, manifest, cfg):
+    cover = manifest.get("cover") or {}
+    detection = cover.get("detection") or {}
+    if detection.get("source") != "auto":
+        return
+    status = cover.get("status")
+    # A frame_selected cover with an ROI means the user explicitly opened the
+    # crop editor. Preserve that edit state instead of replacing it underneath them.
+    if status not in ("ready", "frame_selected") or (
+        status == "frame_selected" and cover.get("roi")
+    ):
+        return
+    frame_path = cover.get("frame")
+    if not frame_path:
+        return
+    frame = cv2.imread(str(project / frame_path))
+    if frame is None:
+        return
+
+    detected = detect_cover_quad(rotate_image(frame, cfg.rotation))
+    detected["source"] = "auto"
+    cover["detection"] = detected
+    if detected["detected"]:
+        cover["roi"] = rotate_roi(
+            detected["roi"],
+            (-cfg.rotation) % 360,
+        ).tolist()
+        cover["status"] = "ready"
+        manifest["message"] = "基準にする見開きフレームを選んでください"
+    else:
+        cover["roi"] = None
+        cover["status"] = "frame_selected"
+        manifest["message"] = "表紙の外周を自動検出できませんでした。4点で指定してください"
+
+
 def set_rotation(project, rotation):
     rotation = int(rotation)
     if rotation not in (0, 90, 180, 270):
@@ -222,6 +257,7 @@ def set_rotation(project, rotation):
             if not warning.startswith("画像向きの自動判定に自信がありません")
         ]
         _refresh_setup_previews(project, manifest, rotation)
+        _refresh_auto_cover_detection(project, manifest, cfg)
         write_json(project / "config.resolved.json", cfg.to_dict())
         save_manifest(project, manifest)
         return manifest
