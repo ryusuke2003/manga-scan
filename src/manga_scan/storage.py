@@ -32,7 +32,7 @@ def read_manifest(project):
 
 
 def save_manifest(project, manifest):
-    write_json(Path(project) / "manifest.json", manifest)
+    write_json(Path(project) / "manifest.json", migrate_manifest(manifest))
 
 
 @contextmanager
