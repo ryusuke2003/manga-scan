@@ -20,7 +20,14 @@ from .page_warp import warp_detected_pages
 from .perspective import rotate_roi, validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
-from .split import auto_dewarp_page, dewarp_debug_grid, enhance_page, rotate_image, spine_position, split_spread
+from .split import (
+    auto_dewarp_page,
+    dewarp_debug_grid,
+    enhance_page,
+    rotate_image,
+    spine_position,
+    split_spread,
+)
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
