@@ -5,6 +5,8 @@ from contextlib import contextmanager
 
 import manga_scan.ui as ui_module
 from manga_scan.config import Config
+from manga_scan.processing_control import cancel_requested
+from manga_scan.storage import write_json
 from manga_scan.ui import create_app
 
 
@@ -168,6 +170,64 @@ def test_delete_project_rejects_symlink_alias(tmp_path):
     assert response.status_code == 400
     assert target.exists()
     assert alias.is_symlink()
+
+
+def test_process_job_accepts_cooperative_cancel_request(tmp_path, monkeypatch):
+    project = tmp_path / "scan-cancel"
+    project.mkdir()
+    write_json(
+        project / "manifest.json",
+        {
+            "source": "/tmp/book.mp4",
+            "status": "ready",
+            "pages": [],
+            "spreads": [],
+            "roi": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]],
+            "config": Config(hand_backend="none", finger_repair=False).to_dict(),
+        },
+    )
+    started = threading.Event()
+    saw_cancel = threading.Event()
+
+    def fake_run(current_project, _roi):
+        started.set()
+        for _ in range(200):
+            if cancel_requested(current_project):
+                saw_cancel.set()
+                return
+            time.sleep(0.005)
+
+    monkeypatch.setattr(ui_module, "run", fake_run)
+    client = create_app(tmp_path).test_client()
+    token = client.get("/api/state").json["token"]
+    headers = {"X-Manga-Token": token}
+
+    response = client.post(
+        "/api/projects/scan-cancel/run",
+        json={"roi": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    assert started.wait(timeout=1)
+
+    response = client.post(
+        "/api/projects/scan-cancel/cancel",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    assert response.json == {"cancel_requested": True}
+    job = client.get("/api/state").json["job"]
+    assert job["cancel_requested"] is True
+    assert saw_cancel.wait(timeout=1)
+
+    for _ in range(100):
+        job = client.get("/api/state").json["job"]
+        if not job["busy"]:
+            break
+        time.sleep(0.01)
+    assert job["busy"] is False
+    assert not cancel_requested(project)
 
 
 def test_export_job_exposes_action_in_state(tmp_path, monkeypatch):
