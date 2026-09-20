@@ -20,6 +20,12 @@ export function removeProjectFromServer(server, projectId) {
   };
 }
 
+export function projectDeleteErrorMessage(error) {
+  return error.status === 404
+    ? '削除APIが見つかりません。MangaScanを再起動してからもう一度削除してください。'
+    : error.message;
+}
+
 export default function useScanner() {
   const [project, setProject] = useState(null);
   const [manifest, setManifest] = useState(null);
@@ -135,9 +141,7 @@ export default function useScanner() {
         setServer(value => removeProjectFromServer(value, id));
         if (id === selectedProject.current) selectProject(null);
       },
-      error => error.status === 404
-        ? '削除APIが見つかりません。MangaScanを再起動してからもう一度削除してください。'
-        : error.message,
+      projectDeleteErrorMessage,
     ),
     coverFrame: (time, confirm = false) => setup('cover_frame', { time, confirm }),
     skipCover: () => setup('skip_cover'),
