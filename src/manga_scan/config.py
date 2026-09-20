@@ -17,6 +17,7 @@ class Config:
     sharpness_weight: float = 1.0
     motion_weight: float = 2.0
     hand_overlap_weight: float = 8.0
+    glare_overlap_weight: float = 6.0
     distortion_weight: float = 0.3
     flatness_weight: float = 0.2
     clipping_weight: float = 0.2
@@ -25,6 +26,7 @@ class Config:
     hand_model: str = "models/hand_landmarker.task"
     hand_padding: float = 0.015
     finger_repair: bool = True
+    glare_repair: bool = True
     finger_repair_min_coverage: float = 0.9
     finger_repair_fallback: str = "paper"
     page_background_fill: str = "paper"
@@ -60,6 +62,7 @@ class Config:
     save_lowres: bool = False
     suspect_sharpness: float = 60.0
     suspect_hand_overlap: float = 0.015
+    suspect_glare_overlap: float = 0.01
     interval_gap_factor: float = 3.0
 
     def validate(self):
@@ -103,6 +106,7 @@ class Config:
             "page_contour_min_confidence": (0, 1),
             "hand_padding": (0, 0.1),
             "finger_repair_min_coverage": (0, 1),
+            "suspect_glare_overlap": (0, 1),
             "dewarp_strength": (0, 0.6),
             "dewarp_max_strength": (0, 0.35),
             "dewarp_min_confidence": (0, 1),

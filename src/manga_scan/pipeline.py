@@ -14,6 +14,7 @@ from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
+from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import (
@@ -56,10 +57,20 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     if cfg.refine_quad:
         roi, quad_ok = refine_quad(image, roi, cfg.quad_max_shift)
     overlap, mask = detector.detect(image, roi)
-    metrics = score_frame(image, roi, sample.motion, overlap, cfg)
+    glare_mask = detect_glare_mask(image, roi)
+    glare_overlap = glare_overlap_fraction(glare_mask, roi)
+    metrics = score_frame(
+        image,
+        roi,
+        sample.motion,
+        overlap,
+        cfg,
+        glare_overlap=glare_overlap,
+    )
     base = f"candidates/{spread_id}/candidate_{number:02d}"
     save_image(project / f"{base}.png", image)
     save_image(project / f"{base}_hand_mask.png", mask)
+    save_image(project / f"{base}_glare_mask.png", glare_mask)
     rectified = warp_roi(image, roi)
     preview = f"{base}_spread.png"
     save_image(project / preview, rectified)
@@ -74,6 +85,11 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
             if overlap is not None
             else np.zeros(rectified.shape[:2], np.uint8)
         )
+        rectified_glare_mask = warp_roi(
+            glare_mask,
+            roi,
+            interpolation=cv2.INTER_NEAREST,
+        )
         page_metrics, _ = score_candidate_pages(
             rectified,
             rectified_mask,
@@ -81,6 +97,7 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
             cfg,
             metrics,
             hand_enabled=overlap is not None,
+            glare_mask=rectified_glare_mask,
         )
         page_suspect = {
             side: suspect_reasons(page_metrics[side], cfg, quad_ok)
@@ -99,6 +116,7 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
         "preview": preview,
         "review_preview": review_preview,
         "hand_mask": f"{base}_hand_mask.png",
+        "glare_mask": f"{base}_glare_mask.png",
         "roi": roi,
         "metrics": metrics,
         "page_metrics": page_metrics,
@@ -178,6 +196,7 @@ def _augment_temporal_hand_masks(project, records, cfg):
             record["metrics"]["motion"],
             overlap,
             cfg,
+            glare_overlap=record["metrics"].get("glare_overlap", 0.0),
         )
         quad_ok = "page_quad_uncertain" not in record.get("suspect", [])
         record["metrics"] = metrics
@@ -189,6 +208,22 @@ def _augment_temporal_hand_masks(project, records, cfg):
                 record["roi"],
                 interpolation=cv2.INTER_NEAREST,
             )
+            glare_mask = None
+            glare_path = record.get("glare_mask")
+            if glare_path:
+                glare_mask = cv2.imread(
+                    str(project / glare_path),
+                    cv2.IMREAD_GRAYSCALE,
+                )
+            rectified_glare_mask = (
+                warp_roi(
+                    glare_mask,
+                    record["roi"],
+                    interpolation=cv2.INTER_NEAREST,
+                )
+                if glare_mask is not None
+                else None
+            )
             page_metrics, _ = score_candidate_pages(
                 rectified,
                 rectified_mask,
@@ -196,6 +231,7 @@ def _augment_temporal_hand_masks(project, records, cfg):
                 cfg,
                 metrics,
                 hand_enabled=True,
+                glare_mask=rectified_glare_mask,
             )
             record["page_metrics"] = page_metrics
             record["page_suspect"] = {
@@ -482,12 +518,39 @@ def candidate_page_hand_mask(project, data, side, cfg):
     )
 
 
+def _union_occlusion_masks(*masks):
+    """Return a 0/255 union mask while preserving the existing mask contract."""
+    available = [mask for mask in masks if mask is not None]
+    if not available:
+        return None
+    shape = available[0].shape[:2]
+    combined = np.zeros(shape, np.uint8)
+    for mask in available:
+        if mask.shape[:2] != shape:
+            mask = cv2.resize(
+                mask,
+                (shape[1], shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        combined[mask > 127] = 255
+    return combined
+
+
+def candidate_page_glare_mask(data, side, cfg):
+    """Detect glare in final page coordinates used by repair alignment."""
+    if not cfg.glare_repair:
+        return None
+    return detect_glare_mask(data["sides"][side])
+
+
 def _finger_donor_candidates(spread, side, selected_id):
     def rank(candidate):
         metrics = candidate.get("page_metrics", {}).get(side, candidate.get("metrics", {}))
         overlap = metrics.get("hand_overlap")
+        glare_overlap = float(metrics.get("glare_overlap", metrics.get("glare", 0.0)) or 0.0)
         return (
             1.0 if overlap is None else float(overlap),
+            glare_overlap,
             -float(metrics.get("selection_score", metrics.get("score", 0.0))),
         )
 
@@ -645,7 +708,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
                 roi,
                 interpolation=cv2.INTER_NEAREST,
             )
-        mask = None
+        hand_mask = None
         if cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
             saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
             if saved is not None:
@@ -653,15 +716,20 @@ def _render_whole_spread(project, manifest, spread, cfg):
                     saved, (source.shape[1], source.shape[0]), interpolation=cv2.INTER_NEAREST
                 )
                 upright_mask = rotate_image(saved, cfg.rotation)
-                mask = warp_roi(
+                hand_mask = warp_roi(
                     upright_mask, roi, interpolation=cv2.INTER_NEAREST
                 )
-                mask |= boundary_finger_mask(
+                hand_mask |= boundary_finger_mask(
                     page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding
                 )
+        glare_mask = detect_glare_mask(page) if cfg.glare_repair else None
+        repair_hand_mask = hand_mask if cfg.finger_repair else None
+        occlusion_mask = _union_occlusion_masks(repair_hand_mask, glare_mask)
         cache[candidate_id] = {
             "page": page,
-            "mask": mask,
+            "mask": occlusion_mask,
+            "hand_mask": hand_mask,
+            "glare_mask": glare_mask,
             "crop": crop,
             "upright": upright,
             "background_mask": background_mask,
@@ -671,6 +739,8 @@ def _render_whole_spread(project, manifest, spread, cfg):
     chosen = _candidate_by_id(spread, spread["selected"])
     selected = load(chosen["id"])
     page, mask = selected["page"], selected["mask"]
+    hand_mask = selected.get("hand_mask")
+    glare_mask = selected.get("glare_mask")
     crop = selected["crop"]
     spread["whole_spread_crop"] = {key: value for key, value in crop.items() if key != "detection"}
     detection = crop.get("detection")
@@ -687,19 +757,30 @@ def _render_whole_spread(project, manifest, spread, cfg):
     spread["path"] = source_path
     spread["perspective_mode_used"] = f"spread_{crop['status']}"
     repair = {"status": "disabled", "coverage": 0.0, "donors": []}
-    if cfg.finger_repair:
+    if cfg.finger_repair or cfg.glare_repair:
         if mask is None:
             repair = {"status": "unavailable", "coverage": 0.0, "donors": []}
+        elif not np.any(mask > 127):
+            repair = {
+                "status": "clean" if cfg.finger_repair else "disabled",
+                "coverage": 1.0 if cfg.finger_repair else 0.0,
+                "donors": [],
+                "occlusion_kinds": [],
+            }
         else:
 
-            def donors():
-                records = sorted(
-                    spread["candidates"],
-                    key=lambda c: -c.get("metrics", {}).get(
-                        "selection_score",
-                        c.get("metrics", {}).get("score", 0),
-                    ),
+            def donor_rank(record):
+                metrics = record.get("metrics", {})
+                overlap = metrics.get("hand_overlap")
+                glare = float(metrics.get("glare_overlap", metrics.get("glare", 0.0)) or 0.0)
+                return (
+                    1.0 if overlap is None else float(overlap),
+                    glare,
+                    -float(metrics.get("selection_score", metrics.get("score", 0.0))),
                 )
+
+            def donors():
+                records = sorted(spread["candidates"], key=donor_rank)
                 for record in records:
                     if record["id"] == chosen["id"]:
                         continue
@@ -711,6 +792,8 @@ def _render_whole_spread(project, manifest, spread, cfg):
                             "mask": donor["mask"],
                         }
 
+            # repair_finger_regions remains the compatibility name; internally
+            # it delegates to the generalized occlusion repair engine.
             page, repair, unresolved = repair_finger_regions(
                 page,
                 mask,
@@ -718,9 +801,20 @@ def _render_whole_spread(project, manifest, spread, cfg):
                 min_coverage=cfg.finger_repair_min_coverage,
                 fallback=cfg.finger_repair_fallback,
             )
+            repair["occlusion_kinds"] = [
+                kind
+                for kind, kind_mask in (
+                    ("finger", hand_mask if cfg.finger_repair else None),
+                    ("glare", glare_mask),
+                )
+                if kind_mask is not None and np.any(kind_mask > 127)
+            ]
             if np.any(mask):
                 repair["target_mask"] = f"debug/finger_repair/{spread['id']}_whole_target.png"
                 save_image(project / repair["target_mask"], mask)
+            if glare_mask is not None and np.any(glare_mask > 127):
+                repair["glare_mask"] = f"debug/finger_repair/{spread['id']}_whole_glare.png"
+                save_image(project / repair["glare_mask"], glare_mask)
             if np.any(unresolved):
                 repair["unresolved_mask"] = (
                     f"debug/finger_repair/{spread['id']}_whole_unresolved.png"
@@ -786,15 +880,25 @@ def _render_whole_spread(project, manifest, spread, cfg):
         suspect.append("page_contour_low_confidence")
     if detection and any(detection[side]["touches_frame"] for side in ("left", "right")):
         suspect.append("source_frame_clipped")
-    if mask is not None:
+    if hand_mask is not None:
         suspect = [reason for reason in suspect if reason != "hand_overlap"]
-        final_hand_overlap = float(np.mean(mask > 127))
+        final_hand_overlap = float(np.mean(hand_mask > 127))
         if final_hand_overlap >= cfg.suspect_hand_overlap:
             suspect.append("hand_overlap")
+    if glare_mask is not None:
+        suspect = [reason for reason in suspect if reason != "glare_overlap"]
+        final_glare_overlap = float(np.mean(glare_mask > 127))
+        if final_glare_overlap >= cfg.suspect_glare_overlap:
+            suspect.append("glare_overlap")
     if repair["status"] in ("clean", "complete"):
-        suspect = [reason for reason in suspect if reason != "hand_overlap"]
+        if cfg.finger_repair:
+            suspect = [reason for reason in suspect if reason != "hand_overlap"]
+        if cfg.glare_repair:
+            suspect = [reason for reason in suspect if reason != "glare_overlap"]
     elif repair["status"] in ("incomplete", "unavailable"):
-        suspect.append("finger_repair_incomplete")
+        suspect.append("occlusion_repair_incomplete")
+        if cfg.finger_repair:
+            suspect.append("finger_repair_incomplete")
     suspect = list(dict.fromkeys(suspect))
     spread["suspect"] = suspect
     manifest["pdf_stale"] = True
@@ -978,8 +1082,14 @@ def render_spread(project, manifest, spread):
         save_image(project / selected_source, source_page)
 
         finger_repair = {"status": "disabled", "coverage": 0.0, "donors": []}
-        if cfg.finger_repair:
-            target_mask = candidate_page_hand_mask(project, data, side, cfg)
+        if cfg.finger_repair or cfg.glare_repair:
+            target_hand_mask = (
+                candidate_page_hand_mask(project, data, side, cfg)
+                if cfg.finger_repair
+                else None
+            )
+            target_glare_mask = candidate_page_glare_mask(data, side, cfg)
+            target_mask = _union_occlusion_masks(target_hand_mask, target_glare_mask)
             if target_mask is None:
                 finger_repair = {
                     "status": "unavailable",
@@ -997,8 +1107,17 @@ def render_spread(project, manifest, spread):
                         selected_pages[side],
                     )[:5]:
                         donor_data = load_candidate(donor_record["id"])
-                        donor_mask = candidate_page_hand_mask(
-                            project, donor_data, side, cfg
+                        donor_hand_mask = (
+                            candidate_page_hand_mask(project, donor_data, side, cfg)
+                            if cfg.finger_repair
+                            else None
+                        )
+                        donor_glare_mask = candidate_page_glare_mask(
+                            donor_data, side, cfg
+                        )
+                        donor_mask = _union_occlusion_masks(
+                            donor_hand_mask,
+                            donor_glare_mask,
                         )
                         if donor_mask is None:
                             continue
@@ -1015,7 +1134,19 @@ def render_spread(project, manifest, spread):
                     min_coverage=cfg.finger_repair_min_coverage,
                     fallback=cfg.finger_repair_fallback,
                 )
+                finger_repair["occlusion_kinds"] = [
+                    kind
+                    for kind, kind_mask in (
+                        ("finger", target_hand_mask),
+                        ("glare", target_glare_mask),
+                    )
+                    if kind_mask is not None and np.any(kind_mask > 127)
+                ]
                 finger_repair["target_mask"] = target_mask_path
+                if target_glare_mask is not None and np.any(target_glare_mask > 127):
+                    glare_path = f"debug/finger_repair/{spread['id']}_{side}_glare.png"
+                    save_image(project / glare_path, target_glare_mask)
+                    finger_repair["glare_mask"] = glare_path
                 if np.any(unresolved):
                     unresolved_path = (
                         f"debug/finger_repair/{spread['id']}_{side}_unresolved.png"
@@ -1029,9 +1160,10 @@ def render_spread(project, manifest, spread):
                 )
             else:
                 finger_repair = {
-                    "status": "clean",
-                    "coverage": 1.0,
+                    "status": "clean" if cfg.finger_repair else "disabled",
+                    "coverage": 1.0 if cfg.finger_repair else 0.0,
                     "donors": [],
+                    "occlusion_kinds": [],
                 }
 
         dewarp = {"mode": cfg.dewarp_mode, "applied": False, "status": "off"}
@@ -1115,9 +1247,14 @@ def render_spread(project, manifest, spread):
         if contours.get(side, {}).get("touches_frame"):
             page_suspect.append("source_frame_clipped")
         if finger_repair["status"] in ("complete", "clean"):
-            page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
+            if cfg.finger_repair:
+                page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
+            if cfg.glare_repair:
+                page_suspect = [reason for reason in page_suspect if reason != "glare_overlap"]
         elif finger_repair["status"] in ("incomplete", "unavailable"):
-            page_suspect.append("finger_repair_incomplete")
+            page_suspect.append("occlusion_repair_incomplete")
+            if cfg.finger_repair:
+                page_suspect.append("finger_repair_incomplete")
         pages.append(
             {
                 "id": f"{spread['id']}_{side}",
@@ -1268,6 +1405,12 @@ def run(project, roi=None):
                             "right_sharpness": records[-1]["page_metrics"]["right"]["sharpness"],
                             "left_hand_overlap": records[-1]["page_metrics"]["left"]["hand_overlap"],
                             "right_hand_overlap": records[-1]["page_metrics"]["right"]["hand_overlap"],
+                            "left_glare_overlap": records[-1]["page_metrics"]["left"].get(
+                                "glare_overlap", 0.0
+                            ),
+                            "right_glare_overlap": records[-1]["page_metrics"]["right"].get(
+                                "glare_overlap", 0.0
+                            ),
                         }
                     )
                 _augment_temporal_hand_masks(project, records, cfg)
@@ -1299,6 +1442,7 @@ def run(project, roi=None):
                             "relative_glare": relative.get("glare"),
                             "relative_base_score": relative.get("base_score"),
                             "glare": record["metrics"].get("glare"),
+                            "glare_overlap": record["metrics"].get("glare_overlap", 0.0),
                             "sharpness_median": record["metrics"].get("sharpness_median"),
                             "sharpness_p10": record["metrics"].get("sharpness_p10"),
                             "sharpness_worst": record["metrics"].get("sharpness_worst"),
@@ -1310,6 +1454,12 @@ def run(project, roi=None):
                             ),
                             "left_glare": record["page_metrics"]["left"].get("glare"),
                             "right_glare": record["page_metrics"]["right"].get("glare"),
+                            "left_glare_overlap": record["page_metrics"]["left"].get(
+                                "glare_overlap", 0.0
+                            ),
+                            "right_glare_overlap": record["page_metrics"]["right"].get(
+                                "glare_overlap", 0.0
+                            ),
                             "left_sharpness_p10": record["page_metrics"]["left"].get(
                                 "sharpness_p10"
                             ),

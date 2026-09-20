@@ -296,3 +296,46 @@ def test_relative_scoring_prefers_less_glare_when_other_quality_ties():
     assert selected == 1
     assert records[1]["metrics"]["relative_quality"]["glare"] == 1.0
     assert records[0]["metrics"]["relative_quality"]["glare"] == 0.0
+
+
+
+def test_page_scoring_penalizes_glare_mask_only_on_covered_side():
+    image = np.full((100, 200, 3), 220, np.uint8)
+    image[::4, :] = 30
+    hand_mask = np.zeros((100, 200), np.uint8)
+    glare_mask = np.zeros((100, 200), np.uint8)
+    glare_mask[:, :100] = 255
+    cfg = Config(glare_overlap_weight=6.0)
+
+    metrics, spine = score_candidate_pages(
+        image,
+        hand_mask,
+        motion=0.0,
+        config=cfg,
+        geometry_metrics={"distortion": 0.0, "flatness_proxy": 0.0},
+        hand_enabled=False,
+        glare_mask=glare_mask,
+    )
+
+    assert spine == 100
+    assert metrics["left"]["glare_overlap"] == pytest.approx(1.0)
+    assert metrics["right"]["glare_overlap"] == pytest.approx(0.0)
+    assert metrics["right"]["score"] > metrics["left"]["score"]
+
+
+def test_relative_scoring_uses_glare_overlap_when_available():
+    records = [
+        _v2_record(0, base_score=0.8, sharpness_uniformity=0.7, glare=0.0),
+        _v2_record(1, base_score=0.8, sharpness_uniformity=0.7, glare=0.0),
+    ]
+    records[0]["metrics"]["glare_overlap"] = 0.04
+    records[1]["metrics"]["glare_overlap"] = 0.0
+    for side in ("left", "right"):
+        records[0]["page_metrics"][side]["glare_overlap"] = 0.04
+        records[1]["page_metrics"][side]["glare_overlap"] = 0.0
+
+    selected, _ = choose_candidate_selection(records, "spread")
+
+    assert selected == 1
+    assert records[1]["metrics"]["relative_quality"]["glare"] == 1.0
+    assert records[0]["metrics"]["relative_quality"]["glare"] == 0.0

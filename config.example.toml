@@ -11,6 +11,7 @@ candidate_selection_mode = "spread" # "spread" / "per_page"; per_page selects le
 sharpness_weight = 1.0
 motion_weight = 2.0
 hand_overlap_weight = 8.0
+glare_overlap_weight = 6.0 # Penalize likely specular reflection in candidate selection
 distortion_weight = 0.3
 flatness_weight = 0.2
 clipping_weight = 0.2
@@ -20,6 +21,7 @@ hand_backend = "mediapipe" # "none" is explicit opt-out; all pages become suspec
 hand_model = "models/hand_landmarker.task"
 hand_padding = 0.015
 finger_repair = true # Requires hand_backend="mediapipe"; set false when hand detection is disabled
+glare_repair = true # Reuse the multi-frame repair engine for conservative glare masks
 finger_repair_min_coverage = 0.9 # Final donor + fallback coverage required to clear the review warning
 finger_repair_fallback = "paper" # "paper": fill only safe plain-paper regions; "preserve": keep fingers; "white": force white fill
 page_background_fill = "paper" # Whole-spread output only: "paper" hides desk outside trusted page outlines; "preserve" keeps it; "white" forces white
@@ -58,4 +60,5 @@ save_lowres = false # true writes all sampled small frames; otherwise streamed
 
 suspect_sharpness = 60.0
 suspect_hand_overlap = 0.015
+suspect_glare_overlap = 0.01
 interval_gap_factor = 3.0

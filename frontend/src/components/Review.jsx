@@ -4,9 +4,11 @@ import { rotateNormalizedRoi } from '../rotation.js';
 import RoiSelector from './RoiSelector.jsx';
 import VideoTimeline from './VideoTimeline.jsx';
 
-const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い', finger_repair_incomplete: '指の補修が不完全', source_frame_clipped: '元動画の画面端に接触・見切れを確認', page_contour_low_confidence: 'ページ外周の検出が不確か' };
+const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', glare_overlap: '反射・白飛び', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い', finger_repair_incomplete: '指の補修が不完全', occlusion_repair_incomplete: '遮蔽補修が不完全', source_frame_clipped: '元動画の画面端に接触・見切れを確認', page_contour_low_confidence: 'ページ外周の検出が不確か' };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
 const pageSideLabel = side => ({ cover: '表紙', spread: '見開き', right: '右ページ', left: '左ページ' }[side] || side);
+const repairTitle = repair => repair?.occlusion_kinds?.includes('glare') ? '遮蔽補修' : '指補修';
+const repairCleanLabel = repair => repair?.occlusion_kinds?.includes('glare') ? '遮蔽なし' : '指を未検出';
 const cropStatusLabel = crop => ({
   auto_pages: `左右ページから外周を自動検出${crop.confidence !== undefined ? ` · 信頼度 ${Math.round(crop.confidence * 100)}%` : ''}`,
   fallback: '外周を自動検出できず、基準範囲を使用',
@@ -143,12 +145,13 @@ function Spread({ spread, config, file, busy, onEdit }) {
       return <div key={candidate.id} className={`candidate ${selected ? 'selected' : ''}`}>
         <ImageLink file={file} path={candidate.path} preview={candidate.review_preview || candidate.preview} />
         <p>{candidate.time.toFixed(2)}s · 全体 score {candidate.metrics.score.toFixed(3)}<br />
-          鮮鋭度 {candidate.metrics.sharpness.toFixed(0)} / 手 {candidate.metrics.hand_overlap === null ? '未評価' : `${(candidate.metrics.hand_overlap * 100).toFixed(1)}%`}</p>
+          鮮鋭度 {candidate.metrics.sharpness.toFixed(0)} / 手 {candidate.metrics.hand_overlap === null ? '未評価' : `${(candidate.metrics.hand_overlap * 100).toFixed(1)}%`} / 反射 {((candidate.metrics.glare_overlap ?? 0) * 100).toFixed(1)}%</p>
         {selectionMode === 'per_page' && <p>
-          左 score {leftMetrics.score.toFixed(3)} / 鮮鋭度 {leftMetrics.sharpness.toFixed(0)} / 手 {leftMetrics.hand_overlap === null ? '未評価' : `${(leftMetrics.hand_overlap * 100).toFixed(1)}%`}<br />
-          右 score {rightMetrics.score.toFixed(3)} / 鮮鋭度 {rightMetrics.sharpness.toFixed(0)} / 手 {rightMetrics.hand_overlap === null ? '未評価' : `${(rightMetrics.hand_overlap * 100).toFixed(1)}%`}
+          左 score {leftMetrics.score.toFixed(3)} / 鮮鋭度 {leftMetrics.sharpness.toFixed(0)} / 手 {leftMetrics.hand_overlap === null ? '未評価' : `${(leftMetrics.hand_overlap * 100).toFixed(1)}%`} / 反射 {((leftMetrics.glare_overlap ?? 0) * 100).toFixed(1)}%<br />
+          右 score {rightMetrics.score.toFixed(3)} / 鮮鋭度 {rightMetrics.sharpness.toFixed(0)} / 手 {rightMetrics.hand_overlap === null ? '未評価' : `${(rightMetrics.hand_overlap * 100).toFixed(1)}%`} / 反射 {((rightMetrics.glare_overlap ?? 0) * 100).toFixed(1)}%
         </p>}
         <a href={file(candidate.hand_mask)} target="_blank" rel="noopener">手のマスク ↗</a>
+        {candidate.glare_mask && <> · <a href={file(candidate.glare_mask)} target="_blank" rel="noopener">反射マスク ↗</a></>}
         {selected && <button disabled={busy} onClick={() => setCropCandidate(candidate.id)}>外周を確認・調整</button>}
         {selected && (manuallyCropped || (layout === 'spread' && config.refine_quad !== false)) && <button disabled={busy} onClick={() => onEdit('reset_crop', { spread_id: spread.id, candidate_id: candidate.id })}>{manuallyCropped ? '自動検出に戻す' : '外周を自動検出し直す'}</button>}
         {selectionMode === 'per_page'
@@ -199,10 +202,11 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
-        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'}{fingerRepairCoverageSummary(page.finger_repair) ? ` · ${fingerRepairCoverageSummary(page.finger_repair)}` : ''}{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
+        <span>{repairTitle(page.finger_repair)}: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? repairCleanLabel(page.finger_repair) : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'}{fingerRepairCoverageSummary(page.finger_repair) ? ` · ${fingerRepairCoverageSummary(page.finger_repair)}` : ''}{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
         {page.finger_repair.unresolved_mask && <p className="muted">要確認: 未補修領域が残っています。文字・コマ線・網点・指の輪郭に不自然さがないか確認してください。</p>}
         {!page.finger_repair.unresolved_mask && page.finger_repair.status === 'incomplete' && <p className="muted">隠れた部分を別候補から十分に補修できず、指が残っています。別の候補も確認してください。</p>}
-        <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">指マスク ↗</a>}
+        <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">遮蔽マスク ↗</a>}
+          {page.finger_repair.glare_mask && <a href={file(page.finger_repair.glare_mask)} target="_blank" rel="noopener">反射マスク ↗</a>}
           {page.finger_repair.unresolved_mask && <a href={file(page.finger_repair.unresolved_mask)} target="_blank" rel="noopener">未補修領域 ↗</a>}</div>
       </div>}
       {backgroundFillLabel(page.background_fill) && <div className="dewarp-meta">

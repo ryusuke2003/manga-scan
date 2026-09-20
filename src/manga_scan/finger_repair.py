@@ -657,14 +657,19 @@ def _local_alignment_metadata(components):
     }
 
 
-def repair_finger_regions(
+def repair_occluded_regions(
     target,
     target_mask,
     donors,
     min_coverage=0.9,
     fallback="preserve",
 ):
-    """Fill detected finger pixels only from clean pixels in alternate frames."""
+    """Fill masked occlusions only from clean pixels in alternate frames.
+
+    The mask may represent fingers, specular glare, or a union of both. Donor
+    masks use the same contract, so a pixel is copied only when it is clean in
+    the aligned donor as well.
+    """
     if not 0 <= min_coverage <= 1:
         raise ValueError("min_coverage must be between 0 and 1")
     if fallback not in ("preserve", "paper", "white"):
@@ -826,4 +831,22 @@ def repair_finger_regions(
     if local_alignment is not None:
         metadata["local_alignment"] = local_alignment
     return result, metadata, unresolved
+
+
+def repair_finger_regions(
+    target,
+    target_mask,
+    donors,
+    min_coverage=0.9,
+    fallback="preserve",
+):
+    """Backward-compatible wrapper for the generalized occlusion repair engine."""
+
+    return repair_occluded_regions(
+        target,
+        target_mask,
+        donors,
+        min_coverage=min_coverage,
+        fallback=fallback,
+    )
 

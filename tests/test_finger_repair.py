@@ -3,7 +3,11 @@ import numpy as np
 import pytest
 
 from manga_scan.config import Config
-from manga_scan.finger_repair import align_donor_page, repair_finger_regions
+from manga_scan.finger_repair import (
+    align_donor_page,
+    repair_finger_regions,
+    repair_occluded_regions,
+)
 from manga_scan.pipeline import candidate_page_hand_mask
 from manga_scan.split import rotate_image, split_spread
 from manga_scan.storage import save_image
@@ -283,3 +287,44 @@ def test_finger_repair_requires_mediapipe():
 def test_finger_repair_fallback_rejects_unknown_mode():
     with pytest.raises(ValueError, match="finger_repair_fallback"):
         Config.from_dict({"finger_repair_fallback": "paint"})
+
+
+def test_generalized_occlusion_repair_accepts_glare_style_masks():
+    target = _page()
+    donor = target.copy()
+    target_mask = _mask(target.shape, [(92, 64, 150, 118)])
+    donor_mask = np.zeros(target.shape[:2], np.uint8)
+
+    # Simulate a blown-out reflection erasing page detail only in the target.
+    target[target_mask > 0] = (255, 255, 255)
+
+    repaired, metadata, unresolved = repair_occluded_regions(
+        target,
+        target_mask,
+        [{"candidate_id": 4, "image": donor, "mask": donor_mask}],
+        min_coverage=0.8,
+        fallback="preserve",
+    )
+
+    assert metadata["status"] == "complete"
+    assert metadata["donors"] == [4]
+    assert not np.any(unresolved)
+    assert np.mean(
+        np.abs(
+            repaired[target_mask > 0].astype(np.int16)
+            - donor[target_mask > 0].astype(np.int16)
+        )
+    ) < 8
+
+
+def test_glare_repair_does_not_require_mediapipe():
+    cfg = Config.from_dict(
+        {
+            "finger_repair": False,
+            "glare_repair": True,
+            "hand_backend": "none",
+        }
+    )
+
+    assert cfg.glare_repair
+    assert not cfg.finger_repair

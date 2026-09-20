@@ -101,6 +101,7 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
  + sharpness_weight * log1p(Laplacian variance) / 8
  - motion_weight * min(1, motion / turn_threshold)
  - hand_overlap_weight * union(hand_masks ∩ ROI) / area(ROI)
+ - glare_overlap_weight * likely_specular_glare / area(ROI)
  - distortion_weight * mean(abs(cos(adjacent edges)))
  - flatness_weight * opposing-edge-length-imbalance
  - clipping_weight * fraction(gray <= 2 or gray >= 253)
@@ -112,24 +113,31 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
 手のマスクはsegmentationではない。指の間の空白も含む保守的な凸包。
 手検出無効は `null` として保存し、検出して重なりゼロだった結果と区別する。
 
-### 指の写り込み補修
+### 指・反射の遮蔽補修
 
-`finger_repair=true` のときだけ実行する。新規設定では既定で有効。候補評価時に保存したMediaPipe手マスクを元フレーム解像度へ
-nearest-neighborで戻し、設定回転を同じように適用してから、採用ページと同じROI / page contour / split座標へ射影する。
-採用ページで手と判定された領域がなければ追加decodeは行わない。
+候補フレームではMediaPipe手マスクに加え、極端な高輝度・低彩度・局所輝度差を満たす領域から
+保守的な `glare_mask` を作る。候補scoreには `glare_overlap_weight` で反射重なりを減点し、
+白紙そのものを反射と誤認しにくいよう、局所コントラストをseedにして連結成分単位で判定する。
 
-手領域がある場合は、同じstable interval内の別候補をhand overlapの少ない順・page scoreの高い順で
-最大5件までdonor候補として元解像度再取得する。各donorも同じ回転・ページ幾何へ射影した後、
-OpenCV ECCのEUCLIDEAN alignment（小さな回転＋平行移動のみ）で採用ページへ追加位置合わせする。
-採用側・donor側それぞれの手マスク領域は各画像の自座標で中立値へ置換してECCから実質除外し、
+補修時は既存のfinger repair engineを `occlusion repair` として一般化し、
+`target_mask = finger_mask OR glare_mask` を入力する。donor側も同様に
+`finger_mask OR glare_mask` をcleanではない領域として扱うため、別フレームでも指や反射に
+隠れている画素はコピーしない。finger repairは `finger_repair=true`、反射補修は
+`glare_repair=true` で独立に有効化できる。
+
+採用ページに遮蔽がある場合は、同じstable interval内の別候補をhand overlap・glare overlap・
+page scoreで順位付けし、最大5件までdonor候補として使う。各donorも同じ回転・ページ幾何へ射影した後、
+OpenCV ECCのEUCLIDEAN alignment（小さな回転＋平行移動のみ）で採用ページへglobal alignmentし、
+遮蔽connected componentごとにbounded translationのlocal alignmentを追加する。
+採用側・donor側それぞれの遮蔽maskはECCの評価対象から除外し、
 score 0.72未満・5度超の回転・ページ寸法の8%超のtranslationは拒否する。scale/shearは許可しない。
 
-置換対象は採用ページの手マスク内だけで、donor側でも手に隠れていない画素だけを利用する。
+置換対象は採用ページの遮蔽mask内だけで、donor側でもcleanな実画素だけを利用する。
 複数donorを順番に使い、1枚で埋まらない領域を補う。境界はdistance transformに基づくfeatherで
 ページ外へ変更を広げない。生成AI、inpaintingモデル、OCRによる補完は行わず、全候補で隠れている画素は
 元画像をそのまま残す。復元率が `finger_repair_min_coverage`（既定0.9）未満なら
-`finger_repair_incomplete` を要確認理由に追加する。coverage / donor ID / alignment score /
-target mask / unresolved maskはmanifestと `debug/finger_repair/` に残す。
+遮蔽補修を要確認として残す。coverage / donor ID / alignment score / target mask /
+glare mask / unresolved maskはmanifestと `debug/finger_repair/` に残す。
 
 ### 幾何
 
@@ -221,7 +229,7 @@ README参照。`manifest.json` の `pages` 配列がページ順の唯一の根�
 - donor候補の位置合わせが誤ると別の線・文字を貼る危険があるため、ECC scoreを高めに取り、
   residual transformを小さな回転＋平行移動だけに限定する。条件を外れたdonorは補修せずfallbackする。
 - MediaPipeは一部だけ見える指、漫画に描かれた手で誤判定し得る。
-- 白飛び、黒つぶれ、照明反射、コマ内黒ベタを正確に区別できない。
+- 白飛び、黒つぶれ、照明反射、コマ内黒ベタを完全には区別できない。反射maskは保守的にし、全候補で同じ領域がmaskされる場合は実画素置換せず要確認として残す。
 - 射影変換は平面を仮定。背の湾曲・厚み・机から浮く紙は完全には直らない。
 - HDR→8bitは校正済みトーンマップではない。SDR推奨、HDR入力は警告。
 - タイムラインの欠落候補・時間間隔警告はページ欠落の証明にならない。OCRなしで実ページ番号は分からない。

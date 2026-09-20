@@ -417,15 +417,17 @@ def test_sharpness_and_score_penalties():
         sharpness=300,
         motion=0.001,
         hand_overlap=0,
+        glare_overlap=0,
         distortion=0,
         flatness_proxy=0,
         clipping=0,
         exposure=0,
     )
-    for field in ("motion", "hand_overlap", "distortion", "flatness_proxy", "clipping", "exposure"):
+    for field in ("motion", "hand_overlap", "glare_overlap", "distortion", "flatness_proxy", "clipping", "exposure"):
         assert composite_score(clean, cfg) > composite_score({**clean, field: 0.4}, cfg)
     assert composite_score(clean, cfg) > composite_score({**clean, "sharpness": 10}, cfg)
     assert "hand_detection_disabled" in suspect_reasons({**clean, "hand_overlap": None}, cfg)
+    assert "glare_overlap" in suspect_reasons({**clean, "glare_overlap": 0.2}, cfg)
 
 
 def test_hand_union_intersection_only_on_page():
