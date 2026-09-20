@@ -216,6 +216,52 @@ def test_metadata_edit_marks_exports_stale_and_uses_title_for_next_export(tmp_pa
     assert (tmp_path / exported["cbz"]).is_file()
 
 
+def test_export_cleanup_never_deletes_paths_outside_output(tmp_path):
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    Image.new("RGB", (40, 60), "white").save(pages / "page.png")
+    outside_pdf = tmp_path.parent / f"{tmp_path.name}-outside.pdf"
+    outside_cbz = tmp_path.parent / f"{tmp_path.name}-outside.cbz"
+    outside_pdf.write_bytes(b"keep-pdf")
+    outside_cbz.write_bytes(b"keep-cbz")
+    config = Config(hand_backend="none", finger_repair=False).to_dict()
+    save_manifest(
+        tmp_path,
+        {
+            "source": "/tmp/book.mp4",
+            "status": "complete",
+            "config": config,
+            "book_metadata": {"title": "安全な出力"},
+            "pages": [
+                {
+                    "id": "page-1",
+                    "spread_id": "spread-1",
+                    "side": "spread",
+                    "path": "pages/page.png",
+                    "enabled": True,
+                    "suspect": [],
+                }
+            ],
+            "spreads": [],
+            "pdf_stale": True,
+            "pdf": f"../{outside_pdf.name}",
+            "cbz": str(outside_cbz),
+            "progress": 1,
+            "message": "完了",
+        },
+    )
+
+    try:
+        exported = edit(tmp_path, "export")
+        assert exported["pdf"] == "output/安全な出力.pdf"
+        assert exported["cbz"] == "output/安全な出力.cbz"
+        assert outside_pdf.read_bytes() == b"keep-pdf"
+        assert outside_cbz.read_bytes() == b"keep-cbz"
+    finally:
+        outside_pdf.unlink(missing_ok=True)
+        outside_cbz.unlink(missing_ok=True)
+
+
 def test_review_export_persists_completion_message(tmp_path):
     pages = tmp_path / "pages"
     pages.mkdir()
