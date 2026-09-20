@@ -234,6 +234,28 @@ it('retains split review controls for legacy projects without the new setting', 
 });
 
 
+it('edits and saves book metadata from Review', () => {
+  const onEdit = vi.fn();
+  render(
+    <Review
+      manifest={{ ...manifest, book_metadata: { title: '既存タイトル', author: '作者' } }}
+      file={path => path}
+      busy={false}
+      onEdit={onEdit}
+    />,
+  );
+
+  expect(screen.getByDisplayValue('既存タイトル')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('書籍タイトル'), { target: { value: '新しいタイトル' } });
+  fireEvent.change(screen.getByLabelText('巻数'), { target: { value: '2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'メタデータを保存' }));
+
+  expect(onEdit).toHaveBeenCalledWith('book_metadata', {
+    metadata: { title: '新しいタイトル', author: '作者', volume: '2' },
+  });
+});
+
+
 it('distinguishes current PDF/CBZ, legacy PDF-only, stale exports, and active export', () => {
   const current = {
     ...manifest,
