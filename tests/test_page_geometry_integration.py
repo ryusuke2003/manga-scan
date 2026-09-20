@@ -4,7 +4,11 @@ import pytest
 
 from manga_scan.config import Config
 from manga_scan.perspective import warp_roi
-from manga_scan.pipeline import rectify_spread_pages, render_spread
+from manga_scan.pipeline import (
+    detect_spread_page_consensus,
+    rectify_spread_pages,
+    render_spread,
+)
 from manga_scan.split import split_spread
 
 REFERENCE = [[0.05, 0.07], [0.96, 0.07], [0.96, 0.94], [0.05, 0.94]]
@@ -218,3 +222,118 @@ def test_explicit_spread_mode_is_pixel_compatible_and_skips_detection(tmp_path):
 def test_per_page_integration_config_validation(settings):
     with pytest.raises(ValueError):
         Config.from_dict(settings)
+
+
+def _fake_detection(candidate_id, shift=0.0, confidence=0.9):
+    left = np.asarray(
+        [[.08, .10], [.48, .11], [.47, .90], [.07, .89]],
+        dtype=np.float32,
+    )
+    right = np.asarray(
+        [[.52, .11], [.92, .10], [.93, .89], [.53, .90]],
+        dtype=np.float32,
+    )
+    delta = np.asarray([shift, 0], dtype=np.float32)
+    return {
+        "candidate_id": candidate_id,
+        "left": {
+            "quad": (left + delta).tolist(),
+            "confidence": confidence,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": (right + delta).tolist(),
+            "confidence": confidence,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "confidence": confidence,
+        "detected": True,
+    }
+
+
+def test_detect_spread_page_consensus_uses_saved_candidate_frames(tmp_path, monkeypatch):
+    candidates = []
+    responses = {}
+    for candidate_id, (pixel, shift, confidence) in enumerate(
+        ((30, -0.002, 0.85), (60, 0.0, 0.9), (90, 0.002, 0.88), (120, 0.12, 0.99))
+    ):
+        path = f"candidate_{candidate_id}.png"
+        assert cv2.imwrite(str(tmp_path / path), np.full((80, 120, 3), pixel, np.uint8))
+        candidates.append({"id": candidate_id, "path": path, "roi": REFERENCE})
+        responses[pixel] = _fake_detection(candidate_id, shift, confidence)
+
+    def fake_detect(image, _roi, **_kwargs):
+        return responses[int(image[0, 0, 0])]
+
+    monkeypatch.setattr("manga_scan.pipeline.detect_page_quads", fake_detect)
+    cfg = Config(hand_backend="none", finger_repair=False)
+    spread = {"candidates": candidates, "spine_ratio": 0.5}
+
+    result = detect_spread_page_consensus(
+        tmp_path,
+        spread,
+        cfg,
+        {"left": 1, "right": 1},
+    )
+
+    assert result["detected"]
+    assert result["consensus"]["candidate_count"] == 4
+    assert result["left"]["consensus_count"] == 3
+    assert result["right"]["consensus_count"] == 3
+    assert result["left"]["consensus_outlier_ids"] == [3]
+    assert result["right"]["consensus_outlier_ids"] == [3]
+
+
+def test_rectify_spread_pages_applies_consensus_only_to_selected_side(tmp_path):
+    image = synthetic_spread()
+    rectified = warp_roi(image, REFERENCE)
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        perspective_mode="per_page",
+        page_contour_min_confidence=0.5,
+    )
+    baseline_state = {"id": "baseline", "extra_suspect": []}
+    rectify_spread_pages(tmp_path, image, rectified, REFERENCE, baseline_state, cfg)
+    baseline = baseline_state["page_contours"]
+
+    consensus = {
+        **baseline,
+        "left": {
+            **baseline["left"],
+            "quad": (
+                np.asarray(baseline["left"]["quad"], dtype=np.float32)
+                + np.asarray([0.01, 0], dtype=np.float32)
+            ).tolist(),
+            "consensus_count": 3,
+            "consensus_candidate_ids": [0, 1, 2],
+            "consensus_outlier_ids": [],
+        },
+        "consensus": {"candidate_count": 3, "candidate_ids": [0, 1, 2]},
+    }
+    state = {"id": "consensus", "extra_suspect": []}
+
+    rectify_spread_pages(
+        tmp_path,
+        image,
+        rectified,
+        REFERENCE,
+        state,
+        cfg,
+        page_detection=consensus,
+        consensus_sides=["left"],
+    )
+
+    np.testing.assert_allclose(
+        state["page_contours"]["left"]["quad"],
+        consensus["left"]["quad"],
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        state["page_contours"]["right"]["quad"],
+        baseline["right"]["quad"],
+        atol=1e-6,
+    )
+    assert state["page_contours"]["left"]["consensus_count"] == 3
