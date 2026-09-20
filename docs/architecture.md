@@ -112,19 +112,25 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
 デフォルトは手動ROI固定なので、漫画が動いた場合の背景混入を自動保証できない。
 
 湾曲補正は `off / manual / auto` を選べる。manualは従来の対称cylindrical remapを維持する。
-autoは左右ページを分割した後、それぞれ5つの高さ帯でSobel-x由来の縦エッジピークを取り、
-背表紙側のエッジ間隔中央値とページ中央側の中央値を比較する。複数帯で圧縮比が一貫している
-場合だけconfidenceを上げ、`dewarp_min_confidence` 未満なら画素を変更せずfallbackする。
+autoは左右ページを分割した後、ページ高の9地点を中心にした複数scanline帯でSobel-x由来の
+縦エッジピークを測る。各高さで背表紙側のエッジ間隔とページ中央側の間隔を比較し、
+「背側へ近づくほど横方向に圧縮されている量」を独立に推定する。
 
-補正自体はページ外へ画素を生成せず、出力幅を維持した1次元の単調なx remap。
-右ページは左端、左ページは右端を背側として、その側へ近づくほど元画像の狭い範囲を
-多くの出力画素へ割り当てる。強度は `dewarp_max_strength` で上限を設ける。
-これは完全な3D復元ではなく、背側の横方向圧縮を軽減する保守的MVPである。
+各高さの推定値は欠損を補間して平滑化し、ページ上端〜下端の `strength_profile` にする。
+auto補正では1つの固定gammaを全行へ使わず、行ごとに異なるgammaを持つ2D x-remapを生成する。
+そのため、上側だけ強く反る、中央が最も持ち上がる、といった実物の本に近い非一様な湾曲にも
+追従できる。各行のx写像は単調かつ画像内に制限し、出力幅・高さは変えない。
 
-auto時は補正前画像とremapグリッドを `debug/dewarp/` に残し、manifestの各pageへ
-strength / confidence / statusを保存する。レビューUIから左右ページ単位でautoを無効化できる。
-低confidence時は `dewarp_low_confidence` を要確認理由へ追加する。表紙は背側を決められないため
-auto対象外で、manualのみ適用可能。文字認識・生成AI・描き足しは行わない。
+右ページは左端、左ページは右端を背側として補正し、各行の補正量は
+`dewarp_max_strength` で上限を設ける。測定できる帯が少ない、またはノイズが大きい場合は
+confidenceを下げ、`dewarp_min_confidence` 未満なら画素を一切変更せずfallbackする。
+完全な3D形状復元ではなく、背側の横方向圧縮と高さ方向の変動を軽減する保守的2D dewarpである。
+
+auto時は補正前画像と、実際の高さ別remapを描いたグリッドを `debug/dewarp/` に残す。
+manifestの各pageには peak strength / mean strength / profile variation / strength_profile /
+confidence / statusを保存する。レビューUIでは最大補正量と上下差を表示し、左右ページ単位で
+autoを無効化できる。低confidence時は `dewarp_low_confidence` を要確認理由へ追加する。
+表紙は背側を決められないためauto対象外で、manualのみ適用可能。文字認識・生成AI・描き足しは行わない。
 
 照明ムラ補正は既定無効。ON時は回転済み見開きの左右分割/湾曲補正後、白背景正規化・grayscale・contrast前に
 ページ単位で補正する。カラー画像はLabのL成分だけ、グレースケール画像はその輝度を直接扱う。
