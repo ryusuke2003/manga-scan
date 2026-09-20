@@ -180,7 +180,7 @@ def render_spread(project, manifest, spread):
             cache[candidate_id] = (chosen, rectified, sides, spine)
         return cache[candidate_id]
 
-    legacy_chosen, legacy_rectified, _, legacy_spine = load_candidate(spread["selected"])
+    _, legacy_rectified, _, legacy_spine = load_candidate(spread["selected"])
     selected = f"selected/{spread['id']}.png"
     save_image(project / selected, legacy_rectified)
     spread["path"] = selected
@@ -430,7 +430,6 @@ def run(project, roi=None):
                     "candidate_selection_mode": cfg.candidate_selection_mode,
                     "extra_suspect": [],
                 }
-                chosen = _candidate_by_id(spread, selected)
                 if i and typical_gap and gaps[i - 1] > typical_gap * cfg.interval_gap_factor:
                     spread["extra_suspect"].append("interval_gap")
                 thumbnail = selected_spread_preview(project, spread, cfg)
