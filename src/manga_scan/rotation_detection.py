@@ -7,7 +7,6 @@ from .page_contour import detect_page_quads
 from .split import rotate_image
 from .video import extract_frame
 
-
 _FULL_ROI = [[0.02, 0.02], [0.98, 0.02], [0.98, 0.98], [0.02, 0.98]]
 _ROTATIONS = (0, 90, 180, 270)
 _PREVIEW_WIDTH = 512
