@@ -1,6 +1,7 @@
 """Loopback-only web UI. No CDN, analytics, external fetches, or upload service."""
 
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -126,6 +127,17 @@ def create_app(projects, config=None):
     @app.get("/api/projects/<name>")
     def get_project(name):
         return jsonify(read_manifest(project_path(name)))
+
+    @app.post("/api/projects/<name>/delete")
+    def delete_project(name):
+        if not guard.acquire(blocking=False):
+            return jsonify(error="処理中です。完了後に削除してください"), 409
+        try:
+            project = project_path(name)
+            shutil.rmtree(project)
+            return jsonify(deleted=name)
+        finally:
+            guard.release()
 
     @app.get("/files/<name>/<path:filename>")
     def file(name, filename):
