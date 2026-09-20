@@ -19,7 +19,14 @@ def _coarse_spread_priors():
     ]
 
 
-def _detect_pages_from_priors(working, priors, min_confidence, *, confidence_scale=1.0):
+def _detect_pages_from_priors(
+    working,
+    priors,
+    min_confidence,
+    *,
+    confidence_scale=1.0,
+    confidence_cap=None,
+):
     best_failure = None
     successes = []
     for prior in priors:
@@ -34,6 +41,8 @@ def _detect_pages_from_priors(working, priors, min_confidence, *, confidence_sca
             except ValueError:
                 continue
             confidence = float(pages["confidence"]) * float(confidence_scale)
+            if confidence_cap is not None:
+                confidence = min(confidence, float(confidence_cap))
             if best_failure is None or confidence > best_failure[0]:
                 best_failure = (confidence, pages)
             if not pages["detected"]:
@@ -91,7 +100,7 @@ def detect_reference_spread(image, min_confidence=0.55):
             working,
             outline_priors,
             min_confidence,
-            confidence_scale=float(outline["confidence"]),
+            confidence_cap=float(outline["confidence"]),
         )
         if success is not None:
             confidence, roi, pages = success
