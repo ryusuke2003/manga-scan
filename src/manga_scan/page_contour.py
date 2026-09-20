@@ -140,7 +140,16 @@ def _normalize_quad(quad, shape):
     h, w = shape[:2]
     scale = np.asarray([max(w - 1, 1), max(h - 1, 1)], dtype=np.float32)
     normalized = np.asarray(quad, dtype=np.float32) / scale
-    return validate_roi(normalized).tolist()
+    # A valid spread ROI can be close to validate_roi()'s minimum area. Splitting
+    # it in half must not make an otherwise valid page fallback fail validation.
+    if (
+        normalized.shape != (4, 2)
+        or not np.isfinite(normalized).all()
+        or (normalized < 0).any()
+        or (normalized > 1).any()
+    ):
+        raise ValueError("page quad must contain four finite [x,y] pairs in 0..1")
+    return normalized.tolist()
 
 
 def detect_page_quads(
