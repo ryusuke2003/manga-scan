@@ -6,6 +6,7 @@ Macで撮影した漫画の動画から、**机などの背景を除いた左右
 - React + ViteのローカルWeb UI
 - ページめくり中を避け、静止した候補からベストフレームを選択
 - 任意で左右ページを別々に採点し、それぞれ別時刻のベストフレームを採用
+- 任意でMediaPipeの指マスクを使い、別候補に実在する画素だけで指領域を補修
 - 任意で左右ページの外周を自動検出し、各ページを別々に台形補正
 - 任意で低周波の照明ムラ・緩い影をページ単位に補正
 - 手の重なり、ブレ、重複候補などを「要確認」として表示
@@ -134,6 +135,7 @@ npm --prefix frontend install --no-audit --no-fund --no-package-lock
    - PNGは画質優先、JPEGは容量優先です。
    - 補正は「原画優先 / 標準補正 / スキャン風」のプリセットから選べます。
    - 「候補フレーム選択」を「左右ページ別」にすると、同じ見開き内でも左・右を別候補から選べます。
+   - 「別フレームから指を補修」をONにすると、同じ見開きの別候補で指に隠れていない画素だけを使って補修します。
    - 「補正の詳細設定」を開くと、左右別台形、見開き外周、分割位置、湾曲、照明ムラ、白背景を個別に設定できます。
 3. **表紙を追加する（任意）**
    - 表紙が映っている時刻を `±0.1秒 / ±1秒` で選びます。
@@ -183,7 +185,7 @@ caffeinate -i manga-scan ui --config config.toml --projects projects
 - 反射や強い影を避け、可能ならAF/AEを固定する
 - まずは **4K・30/60fps・SDR** を推奨
 - 1枚めくるごとに **0.5〜1秒程度静止**する
-- 静止中は指をページから離す
+- 静止中は可能なら指をページから離す。指補修を使う場合も、同じ場所が少なくとも1候補では見えるようにする
 - 最後の見開きも少し静止してから録画を止める
 
 120/240fps入力も扱えますが、解析フレーム数は設定したsample fpsまで落とします。iPhoneスローモーションの実撮影fpsを推測して時間を変換することはしません。
@@ -354,6 +356,7 @@ dewarp_strength = 0.15
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
 | 左右でベストな瞬間が違う | `candidate_selection_mode="per_page"`。レビュー画面で左/右だけ候補変更も可能 |
+| 指が写り込む | `finger_repair=true`。同じ場所が別候補でも指で隠れている場合は生成せず要確認にする |
 | 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
 | 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
@@ -362,6 +365,8 @@ dewarp_strength = 0.15
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
+
+指補修はデフォルトOFFです。`finger_repair=true` の場合だけ、MediaPipeで保存済みの手マスクをページ座標へ写し、同じ見開き区間の別候補をOpenCVで位置合わせします。採用ページで指と判定された画素のうち、donor側で手に隠れていない場所だけを実画素で置き換え、境界をfeatherします。生成AIやinpaintingモデルは使いません。復元率が `finger_repair_min_coverage`（既定90%）未満なら、残りは元画素を保ったまま `finger_repair_incomplete` として要確認にします。レビュー画面には復元率・使用donor・未補修マスクを表示します。
 
 候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
 
