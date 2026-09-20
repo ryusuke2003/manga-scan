@@ -1,12 +1,18 @@
-export async function request(path, { body, token, signal } = {}) {
-  const response = await fetch(path, {
-    signal,
-    ...(body === undefined ? {} : {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Manga-Token': token },
-      body: JSON.stringify(body),
-    }),
-  });
+export async function request(path, { body, formData, token, signal } = {}) {
+  const payload = formData !== undefined
+    ? {
+        method: 'POST',
+        headers: { 'X-Manga-Token': token },
+        body: formData,
+      }
+    : body === undefined
+      ? {}
+      : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Manga-Token': token },
+          body: JSON.stringify(body),
+        };
+  const response = await fetch(path, { signal, ...payload });
   if (!response.ok) {
     let message = response.statusText;
     try { message = (await response.json()).error || message; } catch { /* Non-JSON HTTP error. */ }
