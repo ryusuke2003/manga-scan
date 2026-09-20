@@ -118,6 +118,36 @@ def test_whole_spread_auto_crop_falls_back_when_either_page_is_uncertain(
     assert "page_contour_low_confidence" in page["suspect"]
 
 
+def test_whole_spread_invalid_combined_quad_falls_back_instead_of_failing(
+    tmp_path, monkeypatch,
+):
+    image, manifest, spread = fixture(tmp_path, monkeypatch)
+    detection = {
+        "detected": True,
+        "confidence": .9,
+        "left": {
+            "quad": [[.65, .10], [.45, .10], [.45, .90], [.10, .90]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": [[.55, .10], [.35, .10], [.90, .90], [.55, .90]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+    }
+    monkeypatch.setattr(pipeline, "detect_page_quads", lambda *_a, **_k: detection)
+
+    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+
+    output = cv2.imread(str(tmp_path / page["path"]))
+    np.testing.assert_array_equal(output, image)
+    assert page["crop"]["status"] == "fallback"
+    assert "page_contour_low_confidence" in page["suspect"]
+
+
 def test_layout_roundtrip_preserves_exclusions_order_and_cover(tmp_path, monkeypatch):
     _, manifest, spread = fixture(tmp_path, monkeypatch)
     manifest["config"]["output_layout"] = "split"
