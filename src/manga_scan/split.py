@@ -168,7 +168,8 @@ def estimate_curvature(image, side, max_strength=0.25):
     # jagged profile where adjacent scanline bands disagree sharply; that pattern
     # is more likely to come from panels/text than from a physical book surface.
     if len(ratios) >= 3:
-        adjacent_change = float(np.median(np.abs(np.diff(ratios))))
+        adjacent_changes = np.abs(np.diff(ratios))
+        adjacent_change = float(np.percentile(adjacent_changes, 75))
         smoothness = max(0.0, min(1.0, 1 - adjacent_change / 0.18))
     else:
         smoothness = 0.5
