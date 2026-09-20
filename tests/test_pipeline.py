@@ -3,6 +3,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import cv2
 import pytest
 from pypdf import PdfReader
 
@@ -153,6 +154,30 @@ def test_high_fps_does_not_increase_analysis_frame_count(video, tmp_path, fps):
     samples = list(sample_frames(output, 10, (120, 80)))
     assert len(samples) == 10
     assert samples[-1][1] == 0.9
+
+
+def test_candidate_review_preview_uses_configured_rotation(video, tmp_path):
+    project = tmp_path / "rotated-review"
+    cfg = Config(
+        hand_backend="none",
+        analysis_width=480,
+        candidates_per_spread=3,
+        candidate_selection_mode="per_page",
+        rotation=90,
+    )
+    create_project(video, project, cfg)
+    manifest = run(project, ROI)
+
+    candidate = manifest["spreads"][0]["candidates"][0]
+    assert candidate["review_preview"] != candidate["preview"]
+
+    raw = cv2.imread(str(project / candidate["preview"]))
+    review = cv2.imread(str(project / candidate["review_preview"]))
+    assert raw is not None
+    assert review is not None
+    expected = cv2.rotate(raw, cv2.ROTATE_90_CLOCKWISE)
+    assert review.shape == expected.shape
+    assert cv2.norm(review, expected, cv2.NORM_INF) == 0
 
 
 def test_rotation_metadata_shared_by_preview_and_analysis(video, tmp_path):
