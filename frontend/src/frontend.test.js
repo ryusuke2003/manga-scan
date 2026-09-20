@@ -2,7 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { fileUrl } from './api.js';
+import { fileUrl, request } from './api.js';
 import { clampTime } from './components/FrameSelector.jsx';
 import { normalizedPoint } from './components/RoiSelector.jsx';
 import Setup, {
@@ -11,7 +11,13 @@ import Setup, {
   correctionPresetForConfig,
 } from './components/Setup.jsx';
 import { detectMissingPageCandidates, timelinePercent } from './timeline.js';
-import { didJobFinish, shouldReportPollError } from './useScanner.js';
+import {
+  didJobFinish,
+  isStalePoll,
+  projectDeleteErrorMessage,
+  removeProjectFromServer,
+  shouldReportPollError,
+} from './useScanner.js';
 
 describe('frontend helpers', () => {
   it('builds encoded local file URLs', () => {
@@ -85,12 +91,48 @@ describe('frontend helpers', () => {
     expect(didJobFinish(true, { busy: false })).toBe(true);
   });
 
-  it('ignores stale polling errors while a mutation is changing project state', () => {
+  it('ignores stale polling errors while project selection changes', () => {
     const error = new Error('404');
     expect(shouldReportPollError(error, false, false)).toBe(true);
     expect(shouldReportPollError(error, false, true)).toBe(false);
     expect(shouldReportPollError(error, true, false)).toBe(false);
+    expect(shouldReportPollError(error, false, false, true)).toBe(false);
+    expect(Object.assign(new Error('aborted'), { name: 'AbortError' })).toMatchObject({ name: 'AbortError' });
     expect(shouldReportPollError(Object.assign(new Error('aborted'), { name: 'AbortError' }), false, false)).toBe(false);
+    expect(isStalePoll('scan-old', null, 3, 3)).toBe(true);
+    expect(isStalePoll('scan-current', 'scan-current', 3, 4)).toBe(true);
+    expect(isStalePoll('scan-current', 'scan-current', 4, 4)).toBe(false);
+  });
+
+  it('removes a deleted project from sidebar state immediately', () => {
+    const state = {
+      projects: [{ id: 'scan-a' }, { id: 'scan-b' }],
+      job: { busy: false },
+      token: 'token',
+    };
+    expect(removeProjectFromServer(state, 'scan-a').projects).toEqual([{ id: 'scan-b' }]);
+    expect(state.projects).toHaveLength(2);
+  });
+
+  it('shows restart guidance when an old backend has no delete route', () => {
+    expect(projectDeleteErrorMessage(Object.assign(new Error('NOT FOUND'), { status: 404 })))
+      .toContain('再起動');
+    expect(projectDeleteErrorMessage(Object.assign(new Error('BUSY'), { status: 409 })))
+      .toBe('BUSY');
+  });
+
+  it('preserves HTTP status codes on API errors', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'NOT FOUND',
+      json: vi.fn().mockRejectedValue(new Error('not json')),
+    });
+    await expect(request('/missing')).rejects.toMatchObject({
+      message: 'NOT FOUND',
+      status: 404,
+    });
+    fetchMock.mockRestore();
   });
 
   it('initializes correction controls from server defaults', () => {

@@ -10,7 +10,9 @@ export async function request(path, { body, token, signal } = {}) {
   if (!response.ok) {
     let message = response.statusText;
     try { message = (await response.json()).error || message; } catch { /* Non-JSON HTTP error. */ }
-    throw new Error(message || '処理に失敗しました');
+    const error = new Error(message || '処理に失敗しました');
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
