@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import Review, { fingerRepairCoverageSummary, localAlignmentSummary, qualityReviewSummary } from './Review.jsx';
+import Review, { fingerRepairCoverageSummary, localAlignmentSummary, qualityReviewSummary, reorderPageIds } from './Review.jsx';
 import Setup from './Setup.jsx';
 
 const manifest = {
@@ -14,6 +14,57 @@ const manifest = {
     path: 'original.png', preview: 'preview.png', hand_mask: 'mask.png',
     roi: [[0, 0], [1, 0], [1, 1], [0, 1]], metrics: { score: 1, sharpness: 100, hand_overlap: 0 } }] }],
 };
+
+it('reorders full page IDs deterministically', () => {
+  expect(reorderPageIds(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+  expect(reorderPageIds(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+  expect(reorderPageIds(['a', 'b'], 'missing', 'b')).toEqual(['a', 'b']);
+});
+
+it('supports drag reorder and page edit undo redo controls', () => {
+  const onEdit = vi.fn();
+  const pages = ['a', 'b', 'c'].map(id => ({
+    id,
+    spread_id: id,
+    side: 'cover',
+    enabled: true,
+    suspect: [],
+    path: `${id}.png`,
+  }));
+  const reviewManifest = {
+    ...manifest,
+    pages,
+    spreads: [],
+    page_history: {
+      undo: [{ label: 'ページ並び替え', state: { order: ['a', 'b', 'c'], disabled: [] } }],
+      redo: [{ label: '除外 / 復元', state: { order: ['a', 'c', 'b'], disabled: ['c'] } }],
+    },
+  };
+
+  render(<Review manifest={reviewManifest} file={path => path} busy={false} onEdit={onEdit} />);
+
+  fireEvent.click(screen.getByRole('button', { name: /元に戻す/ }));
+  expect(onEdit).toHaveBeenCalledWith('undo_page_edit');
+
+  fireEvent.click(screen.getByRole('button', { name: /やり直す/ }));
+  expect(onEdit).toHaveBeenCalledWith('redo_page_edit');
+
+  const source = screen.getByLabelText('aをドラッグして並べ替え');
+  const target = screen.getByLabelText('cをドラッグして並べ替え').closest('article');
+  const dataTransfer = {
+    effectAllowed: '',
+    dropEffect: '',
+    setData: vi.fn(),
+  };
+
+  fireEvent.dragStart(source, { dataTransfer });
+  fireEvent.dragOver(target, { dataTransfer });
+  fireEvent.drop(target, { dataTransfer });
+
+  expect(onEdit).toHaveBeenCalledWith('reorder_pages', {
+    page_ids: ['b', 'c', 'a'],
+  });
+});
 
 it('defaults new projects to whole spreads and retains split controls', () => {
   const onCreate = vi.fn();
