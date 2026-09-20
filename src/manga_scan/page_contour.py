@@ -346,7 +346,15 @@ def consensus_page_quads(
     ]
 
     for side in ("left", "right"):
-        fallback = detections[0].get(side, {})
+        fallback_detection = next(
+            (
+                detection
+                for index, detection in enumerate(detections)
+                if detection.get("candidate_id", index) == anchor_ids.get(side)
+            ),
+            detections[0],
+        )
+        fallback = fallback_detection.get(side, {})
         fallback_quad = np.asarray(fallback.get("quad"), dtype=np.float32)
         if fallback_quad.shape != (4, 2) or not np.isfinite(fallback_quad).all():
             raise ValueError("each detection must contain valid left/right quads")
