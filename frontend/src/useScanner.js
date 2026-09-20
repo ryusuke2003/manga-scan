@@ -134,6 +134,31 @@ export default function useScanner() {
     }
   }
 
+  async function uploadExternalPage(file, pageId = null) {
+    if (mutation.current || server.job.busy || !server.token || !file) return;
+    mutation.current = true;
+    mutationVersion.current += 1;
+    setPending(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      if (pageId) formData.append('page_id', pageId);
+      const result = await request(
+        `/api/projects/${encodeURIComponent(project)}/external-page`,
+        { formData, token: server.token },
+      );
+      syncManifest(result);
+      return result;
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      mutation.current = false;
+      setPending(false);
+      setRefresh(value => value + 1);
+    }
+  }
+
   const setup = (action, params = {}) => perform(
     `/api/projects/${encodeURIComponent(project)}/setup`,
     { action, ...params },
@@ -168,7 +193,11 @@ export default function useScanner() {
     project, manifest, server, error, revision,
     busy: pending || server.job.busy || !server.token,
     selectProject,
-    create: (video, config) => perform('/api/projects', { video, config }, result => selectProject(result.id)),
+    create: (video, config) => perform(
+      '/api/projects',
+      { videos: Array.isArray(video) ? video : [video], config },
+      result => selectProject(result.id),
+    ),
     choose: onSuccess => perform('/api/choose', {}, result => onSuccess(result.path)),
     deleteProject: id => perform(
       `/api/projects/${encodeURIComponent(id)}/delete`,
@@ -188,5 +217,6 @@ export default function useScanner() {
     start: roi => perform(`/api/projects/${encodeURIComponent(project)}/run`, { roi }),
     cancelProcessing,
     edit: (action, params = {}) => perform(`/api/projects/${encodeURIComponent(project)}/edit`, { action, ...params }),
+    importExternalPage: uploadExternalPage,
   };
 }

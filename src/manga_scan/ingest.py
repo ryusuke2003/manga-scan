@@ -13,18 +13,50 @@ from .rotation_detection import detect_video_rotation
 from .split import rotate_image
 from .spread_detect import detect_reference_spread, draw_reference_spread
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
-from .video import extract_frame, probe
+from .video import extract_frame, local_video, probe
+
+
+def _concat_escape(path):
+    return str(path).replace("'", "'\\''")
+
+
+def _prepare_video_source(videos, project, copy_source):
+    if isinstance(videos, (str, Path)):
+        videos = [videos]
+    if not isinstance(videos, (list, tuple)) or not videos:
+        raise ValueError("Select at least one video")
+    paths = [local_video(video) for video in videos]
+    project.mkdir(parents=True, exist_ok=True)
+    (project / "source").mkdir(exist_ok=True)
+
+    source_files = []
+    if copy_source:
+        for index, path in enumerate(paths, 1):
+            destination = project / "source" / f"video_{index:03d}{path.suffix.lower()}"
+            shutil.copy2(path, destination)
+            source_files.append(str(destination))
+    else:
+        source_files = [str(path) for path in paths]
+
+    if len(source_files) == 1:
+        return source_files[0], source_files
+
+    list_path = project / "source/input.ffconcat"
+    lines = ["ffconcat version 1.0"]
+    for path in source_files:
+        lines.append(f"file '{_concat_escape(Path(path).resolve())}'")
+    list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(list_path), source_files
 
 
 def create_project(video, project, config=None, copy_source=False):
     config = (config or Config()).validate()
-    metadata = probe(video)
     project = Path(project).expanduser().resolve()
     if project.exists() and any(project.iterdir()):
         raise ValueError("Project directory must be empty; choose a new directory")
+    source, source_files = _prepare_video_source(video, project, copy_source)
+    metadata = probe(source)
     first = extract_frame(metadata["path"])
-    # A non-zero rotation was already a meaningful manual override before
-    # auto-detection existed. Preserve that behavior for direct Config users.
     if config.auto_rotation and config.rotation:
         config.auto_rotation = False
     if config.auto_rotation:
@@ -45,27 +77,21 @@ def create_project(video, project, config=None, copy_source=False):
         }
     config.validate()
     rotation_detection["confirmed"] = not config.auto_rotation
-    project.mkdir(parents=True, exist_ok=True)
     for folder in ("source", "frames_lowres", "candidates", "selected", "pages", "debug", "output"):
         (project / folder).mkdir(exist_ok=True)
-    if copy_source:
-        destination = project / "source" / ("video" + Path(metadata["path"]).suffix.lower())
-        shutil.copy2(metadata["path"], destination)
-        source = str(destination)
-    else:
-        source = metadata["path"]
     config.hand_model = str(Path(config.hand_model).expanduser().resolve())
     metadata["display_width"], metadata["display_height"] = first.shape[1], first.shape[0]
+    metadata["source_count"] = len(source_files)
+    metadata["source_files"] = source_files
     save_image(project / "source/first_frame.png", first)
-    save_image(
-        project / "source/first_frame_preview.png",
-        rotate_image(first, config.rotation),
-    )
+    save_image(project / "source/first_frame_preview.png", rotate_image(first, config.rotation))
     warnings = (
         ["HDR input: MVP outputs 8-bit SDR without calibrated tone mapping; prefer SDR recording"]
         if metadata["hdr"]
         else []
     )
+    if len(source_files) > 1:
+        warnings.append(f"{len(source_files)}本の動画を撮影順に連結して解析します")
     if config.auto_rotation and rotation_detection["confidence"] < 0.65:
         warnings.append(
             "画像向きの自動判定に自信がありません。プレビューを確認し、必要なら向きを変更してください"
@@ -73,22 +99,18 @@ def create_project(video, project, config=None, copy_source=False):
     manifest = {
         "version": CURRENT_MANIFEST_VERSION,
         "source": source,
+        "sources": source_files,
         "metadata": metadata,
         "config": config.to_dict(),
         "rotation_detection": rotation_detection,
         "roi": None,
         "cover": {
-            "status": "pending",
-            "time": 0.0,
-            "frame": "source/first_frame.png",
-            "preview": "source/first_frame_preview.png",
-            "roi": None,
+            "status": "pending", "time": 0.0, "frame": "source/first_frame.png",
+            "preview": "source/first_frame_preview.png", "roi": None,
         },
         "reference": {
-            "time": 0.0,
-            "frame": "source/first_frame.png",
-            "preview": "source/first_frame_preview.png",
-            "confirmed": False,
+            "time": 0.0, "frame": "source/first_frame.png",
+            "preview": "source/first_frame_preview.png", "confirmed": False,
         },
         "status": "ready",
         "progress": 0,

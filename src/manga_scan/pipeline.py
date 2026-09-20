@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import time
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -954,15 +955,15 @@ def build_pdf(project, manifest):
 _PAGE_HISTORY_LIMIT = 30
 
 
-def _page_review_state(manifest):
-    return {
-        "order": [page["id"] for page in manifest.get("pages", [])],
-        "disabled": [
-            page["id"]
-            for page in manifest.get("pages", [])
-            if not page.get("enabled", True)
-        ],
+def _page_review_state(manifest, include_pages=False):
+    pages = manifest.get("pages", [])
+    state = {
+        "order": [page["id"] for page in pages],
+        "disabled": [page["id"] for page in pages if not page.get("enabled", True)],
     }
+    if include_pages:
+        state["pages"] = deepcopy(pages)
+    return state
 
 
 def _page_history(manifest):
@@ -986,6 +987,11 @@ def _clear_page_history(manifest):
 
 
 def _restore_page_review_state(manifest, state):
+    snapshot = state.get("pages")
+    if isinstance(snapshot, list):
+        manifest["pages"] = deepcopy(snapshot)
+        return
+
     order = list(state.get("order") or [])
     current = {page["id"]: page for page in manifest.get("pages", [])}
     if len(order) != len(current) or set(order) != set(current):
@@ -1020,8 +1026,12 @@ def _apply_page_history(manifest, direction):
     history.setdefault(target_name, [])
 
     entry = source.pop()
-    current = _page_review_state(manifest)
-    _restore_page_review_state(manifest, entry["state"])
+    entry_state = entry["state"]
+    current = _page_review_state(
+        manifest,
+        include_pages=isinstance(entry_state.get("pages"), list),
+    )
+    _restore_page_review_state(manifest, entry_state)
     history[target_name].append({"label": entry.get("label", "ページ編集"), "state": current})
     history[target_name] = history[target_name][-_PAGE_HISTORY_LIMIT:]
     return True
@@ -1434,6 +1444,69 @@ def run(project, roi=None):
             detector.close()
             LOG.removeHandler(handler)
             handler.close()
+
+
+def import_external_page(project, image_path, page_id=None, display_name=None):
+    """Add or replace one final page using a local external image."""
+    from PIL import Image, ImageOps
+
+    project = Path(project).resolve()
+    image_path = Path(image_path).expanduser().resolve(strict=True)
+    if image_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise ValueError("Unsupported image format")
+
+    with Image.open(image_path) as source:
+        normalized = ImageOps.exif_transpose(source).convert("RGB")
+        rgb = np.array(normalized)
+    image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    with project_lock(project):
+        manifest = read_manifest(project)
+        cfg = Config.from_dict(manifest["config"])
+        before = _page_review_state(manifest, include_pages=True)
+        imported = project / "source" / "external_pages"
+        imported.mkdir(parents=True, exist_ok=True)
+        serial = len(list(imported.glob("external_*"))) + 1
+        original_path = imported / f"external_{serial:04d}.png"
+        save_image(original_path, image)
+
+        ext = ".jpg" if cfg.image_format == "jpeg" else ".png"
+        output_path = project / "pages" / f"external_{serial:04d}{ext}"
+        processed = image
+        if cfg.grayscale:
+            processed = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)
+        save_image(output_path, processed, quality=cfg.jpeg_quality)
+        relative = str(output_path.relative_to(project))
+        page = {
+            "id": f"external_{serial:04d}",
+            "spread_id": None,
+            "side": "external",
+            "enabled": True,
+            "suspect": [],
+            "path": relative,
+            "preview": relative,
+            "source": "external_image",
+            "source_image": str(original_path.relative_to(project)),
+            "external_name": display_name or image_path.name,
+        }
+
+        if page_id:
+            index = next((i for i, item in enumerate(manifest["pages"]) if item["id"] == page_id), None)
+            if index is None:
+                raise ValueError("Unknown page")
+            page["id"] = manifest["pages"][index]["id"]
+            page["replaces"] = page_id
+            manifest["pages"][index] = page
+            label = "外部画像でページ差し替え"
+        else:
+            manifest["pages"].append(page)
+            label = "外部画像ページを追加"
+
+        _push_page_history(manifest, before, label)
+        manifest["pdf_stale"] = True
+        _refresh_adjacent_final_quality(project, manifest, cfg)
+        save_manifest(project, manifest)
+        return manifest
 
 
 def edit(project, action, **params):

@@ -531,3 +531,72 @@ it('can return a page contour override to auto mode', () => {
     settings: { page_quad_mode: 'auto' },
   });
 });
+
+
+it('creates a project from multiple videos in the entered order', () => {
+  const onCreate = vi.fn();
+  render(<Setup busy={false} onChoose={vi.fn()} onCreate={onCreate} />);
+  fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/part-1.mov' } });
+  fireEvent.click(screen.getByRole('button', { name: '＋ 動画を追加' }));
+  fireEvent.change(screen.getByLabelText('動画2のローカルパス'), { target: { value: '/tmp/part-2.mov' } });
+  fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
+
+  expect(onCreate).toHaveBeenCalledWith(
+    ['/tmp/part-1.mov', '/tmp/part-2.mov'],
+    expect.objectContaining({ output_layout: 'spread' }),
+  );
+});
+
+it('uploads an external image as a new page or replacement', () => {
+  const onImportExternal = vi.fn();
+  render(
+    <Review
+      manifest={manifest}
+      file={path => path}
+      busy={false}
+      onEdit={vi.fn()}
+      onImportExternal={onImportExternal}
+    />,
+  );
+  const image = new File(['image'], 'rescue.jpg', { type: 'image/jpeg' });
+
+  fireEvent.change(screen.getByLabelText('外部画像をページ追加'), {
+    target: { files: [image] },
+  });
+  expect(onImportExternal).toHaveBeenCalledWith(image);
+
+  fireEvent.change(screen.getByLabelText('s_wholeを外部画像で差し替え'), {
+    target: { files: [image] },
+  });
+  expect(onImportExternal).toHaveBeenCalledWith(image, 's_whole');
+});
+
+it('renders imported external pages without video-only page controls', () => {
+  const external = {
+    ...manifest,
+    pages: [{
+      id: 'external_0001',
+      spread_id: null,
+      side: 'external',
+      enabled: true,
+      suspect: [],
+      path: 'pages/external_0001.png',
+      source: 'external_image',
+      external_name: 'phone.jpg',
+    }],
+    spreads: [],
+  };
+  render(
+    <Review
+      manifest={external}
+      file={path => path}
+      busy={false}
+      onEdit={vi.fn()}
+      onImportExternal={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByText('001 · 外部画像')).toBeTruthy();
+  expect(screen.getByText('外部画像: phone.jpg')).toBeTruthy();
+  expect(screen.queryByText('ページ単位の補正')).toBeNull();
+});

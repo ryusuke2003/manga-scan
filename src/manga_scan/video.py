@@ -23,9 +23,39 @@ def check_tools():
 
 def local_video(path):
     path = Path(path).expanduser().resolve(strict=True)
-    if not path.is_file() or path.suffix.lower() not in (".mov", ".mp4"):
+    if not path.is_file() or path.suffix.lower() not in (".mov", ".mp4", ".ffconcat"):
         raise ValueError("Select a local .mov or .mp4 file")
     return path
+
+
+def _ffmpeg_input(path):
+    path = local_video(path)
+    if path.suffix.lower() == ".ffconcat":
+        return [
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(path),
+        ]
+    return ["-protocol_whitelist", "file,pipe", "-i", str(path)]
+
+
+def _ffprobe_input(path):
+    path = local_video(path)
+    if path.suffix.lower() == ".ffconcat":
+        return [
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-protocol_whitelist",
+            "file,pipe",
+        ]
+    return ["-protocol_whitelist", "file,pipe"]
 
 
 def probe(path):
@@ -36,8 +66,7 @@ def probe(path):
             "ffprobe",
             "-v",
             "error",
-            "-protocol_whitelist",
-            "file,pipe",
+            *_ffprobe_input(path),
             "-select_streams",
             "v:0",
             "-show_streams",
@@ -88,10 +117,7 @@ def input_args(path, hwaccel="none", time=None):
             raise ValueError("Timestamp must be finite and >= 0")
         args += ["-ss", f"{time:.8f}"]
     return args + [
-        "-protocol_whitelist",
-        "file,pipe",
-        "-i",
-        str(path),
+        *_ffmpeg_input(path),
         "-map",
         "0:v:0",
         "-an",

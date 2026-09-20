@@ -116,7 +116,7 @@ export function applyCorrectionPreset(config, name) {
 }
 
 export default function Setup({ busy, defaults, onChoose, onCreate }) {
-  const [video, setVideo] = useState('');
+  const [videos, setVideos] = useState(['']);
   const [config, setConfig] = useState(() => buildInitialConfig(defaults));
   const customized = useRef(false);
   const initializedDefaults = useRef(Boolean(defaults));
@@ -147,10 +147,26 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
   return <section className="panel">
     <p className="step">01 / 動画を選ぶ</p><h2>机の上で撮った動画を読み込みます</h2>
     <p className="muted">.mov / .mp4 に対応。カメラを固定し、各見開きで手を引いて少し静止すると、きれいに抽出できます。</p>
-    <form onSubmit={event => { event.preventDefault(); onCreate(video.trim(), config); }}>
+    <form onSubmit={event => {
+      event.preventDefault();
+      const selected = videos.map(value => value.trim()).filter(Boolean);
+      onCreate(selected.length === 1 ? selected[0] : selected, config);
+    }}>
       <label htmlFor="video">動画のローカルパス</label>
-      <div className="row"><input id="video" placeholder="/Users/you/Movies/manga.mov" required value={video} onChange={event => setVideo(event.target.value)} />
-        <button type="button" disabled={busy} onClick={() => onChoose(setVideo)}>ファイルを選択</button></div>
+      <p className="muted">1冊を分けて撮影した場合は、撮影順に動画を追加してください。連続した1本のタイムラインとして解析します。</p>
+      {videos.map((video, index) => <div className="row" key={index}>
+        <input
+          id={index === 0 ? 'video' : `video-${index + 1}`}
+          aria-label={index === 0 ? '動画のローカルパス' : `動画${index + 1}のローカルパス`}
+          placeholder="/Users/you/Movies/manga.mov"
+          required
+          value={video}
+          onChange={event => setVideos(current => current.map((value, i) => i === index ? event.target.value : value))}
+        />
+        <button type="button" disabled={busy} onClick={() => onChoose(path => setVideos(current => current.map((value, i) => i === index ? path : value)))}>ファイルを選択</button>
+        {index > 0 && <button type="button" disabled={busy} onClick={() => setVideos(current => current.filter((_, i) => i !== index))}>削除</button>}
+      </div>)}
+      <button type="button" disabled={busy} onClick={() => setVideos(current => [...current, ''])}>＋ 動画を追加</button>
 
       <h3 className="form-heading">出力</h3>
       <div className="options">
@@ -209,7 +225,7 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
         </div>
       </details>
 
-      <button id="create" className="primary" disabled={busy || !video.trim()}>動画を読み込む →</button>
+      <button id="create" className="primary" disabled={busy || videos.some(video => !video.trim())}>動画を読み込む →</button>
     </form>
   </section>;
 }
