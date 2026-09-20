@@ -41,6 +41,84 @@ def fixture(tmp_path, monkeypatch, rotation=0):
     return image, manifest, spread
 
 
+def test_page_review_history_undo_redo_and_drag_reorder(tmp_path):
+    cfg = Config(hand_backend="none", finger_repair=False)
+    pages = []
+    for page_id in ("a", "b", "c", "d"):
+        path = f"pages/{page_id}.png"
+        save_image(tmp_path / path, np.full((20, 20, 3), 220, np.uint8))
+        pages.append(
+            {
+                "id": page_id,
+                "spread_id": page_id,
+                "side": "cover",
+                "path": path,
+                "enabled": True,
+                "suspect": [],
+            }
+        )
+    manifest = {
+        "config": cfg.to_dict(),
+        "source": "unused",
+        "spreads": [],
+        "pages": pages,
+        "metadata": {"duration": 1},
+        "pdf_stale": False,
+    }
+    save_manifest(tmp_path, manifest)
+
+    result = pipeline.edit(
+        tmp_path,
+        "reorder_pages",
+        page_ids=["b", "c", "a", "d"],
+    )
+    assert [page["id"] for page in result["pages"]] == ["b", "c", "a", "d"]
+    assert result["page_history"]["undo"][-1]["label"] == "ドラッグ並び替え"
+    assert result["page_history"]["redo"] == []
+    assert result["pdf_stale"] is True
+
+    result = pipeline.edit(tmp_path, "toggle_page", page_id="c")
+    assert next(page for page in result["pages"] if page["id"] == "c")["enabled"] is False
+    assert len(result["page_history"]["undo"]) == 2
+
+    result = pipeline.edit(tmp_path, "undo_page_edit")
+    assert next(page for page in result["pages"] if page["id"] == "c")["enabled"] is True
+    assert [page["id"] for page in result["pages"]] == ["b", "c", "a", "d"]
+    assert result["page_history"]["redo"][-1]["label"] == "除外 / 復元"
+
+    result = pipeline.edit(tmp_path, "undo_page_edit")
+    assert [page["id"] for page in result["pages"]] == ["a", "b", "c", "d"]
+
+    result = pipeline.edit(tmp_path, "redo_page_edit")
+    assert [page["id"] for page in result["pages"]] == ["b", "c", "a", "d"]
+
+    result = pipeline.edit(tmp_path, "toggle_page", page_id="a")
+    assert result["page_history"]["redo"] == []
+    assert next(page for page in result["pages"] if page["id"] == "a")["enabled"] is False
+
+
+def test_reorder_pages_requires_exact_current_page_set(tmp_path):
+    cfg = Config(hand_backend="none", finger_repair=False)
+    manifest = {
+        "config": cfg.to_dict(),
+        "source": "unused",
+        "spreads": [],
+        "pages": [
+            {"id": "a", "spread_id": "a", "side": "cover", "path": "a.png", "enabled": True},
+            {"id": "b", "spread_id": "b", "side": "cover", "path": "b.png", "enabled": True},
+        ],
+        "metadata": {"duration": 1},
+    }
+    save_manifest(tmp_path, manifest)
+
+    with pytest.raises(ValueError, match="every page exactly once"):
+        pipeline.edit(tmp_path, "reorder_pages", page_ids=["a"])
+    with pytest.raises(ValueError, match="every page exactly once"):
+        pipeline.edit(tmp_path, "reorder_pages", page_ids=["a", "a"])
+    with pytest.raises(ValueError, match="do not match"):
+        pipeline.edit(tmp_path, "reorder_pages", page_ids=["a", "other"])
+
+
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_default_output_preserves_entire_spread_and_ignores_split_settings(
     tmp_path,
