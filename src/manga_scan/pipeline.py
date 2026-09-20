@@ -448,6 +448,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
                 mask,
                 donors(),
                 min_coverage=cfg.finger_repair_min_coverage,
+                fallback=cfg.finger_repair_fallback,
             )
             if np.any(mask):
                 repair["target_mask"] = f"debug/finger_repair/{spread['id']}_whole_target.png"
@@ -696,6 +697,7 @@ def render_spread(project, manifest, spread):
                     target_mask,
                     donor_pages(),
                     min_coverage=cfg.finger_repair_min_coverage,
+                    fallback=cfg.finger_repair_fallback,
                 )
                 finger_repair["target_mask"] = target_mask_path
                 if np.any(unresolved):
