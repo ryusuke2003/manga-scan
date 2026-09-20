@@ -181,6 +181,18 @@ function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
 }
 
+export function reorderPageIds(pageIds, sourceId, targetId) {
+  if (sourceId === targetId) return pageIds;
+  const source = pageIds.indexOf(sourceId);
+  const target = pageIds.indexOf(targetId);
+  if (source < 0 || target < 0) return pageIds;
+
+  const reordered = [...pageIds];
+  const [moved] = reordered.splice(source, 1);
+  reordered.splice(target, 0, moved);
+  return reordered;
+}
+
 function PageReviewControls({ page, manifest, file, busy, onEdit }) {
   const [editingContour, setEditingContour] = useState(false);
   const spread = manifest.spreads.find(item => item.id === page.spread_id);
@@ -373,6 +385,8 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
   const [suspectsOnly, setSuspectsOnly] = useState(false);
   const [showExcluded, setShowExcluded] = useState(false);
   const [timestamp, setTimestamp] = useState('');
+  const [draggedPageId, setDraggedPageId] = useState(null);
+  const [dragOverPageId, setDragOverPageId] = useState(null);
   const enabled = manifest.pages.filter(page => page.enabled);
   let number = 0;
   const numbered = manifest.pages.map(page => ({ ...page, number: page.enabled ? ++number : null }));
@@ -390,6 +404,26 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         ? '現在のページ順・画質でPDF / CBZを出力済みです。'
         : 'PDFは出力済みです。CBZも作成するには「PDF / CBZを出力」を実行してください。';
   const qualitySummary = qualityReviewSummary(manifest.pages);
+  const pageHistory = manifest.page_history ?? {};
+  const undoEntries = Array.isArray(pageHistory.undo) ? pageHistory.undo : [];
+  const redoEntries = Array.isArray(pageHistory.redo) ? pageHistory.redo : [];
+  const undoLabel = undoEntries.at(-1)?.label;
+  const redoLabel = redoEntries.at(-1)?.label;
+
+  const dropPage = targetId => {
+    const sourceId = draggedPageId;
+    setDraggedPageId(null);
+    setDragOverPageId(null);
+    if (!sourceId || sourceId === targetId || busy) return;
+    const pageIds = reorderPageIds(
+      manifest.pages.map(page => page.id),
+      sourceId,
+      targetId,
+    );
+    if (pageIds.every((pageId, index) => pageId === manifest.pages[index].id)) return;
+    onEdit('reorder_pages', { page_ids: pageIds });
+  };
+
   return <section>
     <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(needsReview).length}</h2></div>
       <div className="row"><button className="primary" aria-busy={exporting ? 'true' : undefined} disabled={busy || !enabled.length} onClick={() => onEdit('export')}>{exportLabel}</button>
@@ -408,13 +442,70 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       onSelectTime={time => setTimestamp(time.toFixed(2))}
     />
     <div className="toolbar panel">
+      <div className="history-controls row" aria-label="ページ編集履歴">
+        <button
+          disabled={busy || !undoEntries.length}
+          title={undoLabel ? `元に戻す: ${undoLabel}` : '元に戻せるページ編集はありません'}
+          onClick={() => onEdit('undo_page_edit')}
+        >↶ 元に戻す</button>
+        <button
+          disabled={busy || !redoEntries.length}
+          title={redoLabel ? `やり直す: ${redoLabel}` : 'やり直せるページ編集はありません'}
+          onClick={() => onEdit('redo_page_edit')}
+        >↷ やり直す</button>
+        {(undoLabel || redoLabel) && <span className="history-status">
+          {undoLabel ? `直前: ${undoLabel}` : `やり直し可: ${redoLabel}`}
+        </span>}
+      </div>
       <label className="checkbox"><input type="checkbox" checked={suspectsOnly} onChange={event => setSuspectsOnly(event.target.checked)} /> 要確認だけ表示</label>
       <label className="checkbox"><input type="checkbox" checked={showExcluded} onChange={event => setShowExcluded(event.target.checked)} /> 除外ページも表示</label>
       <form className="row" onSubmit={event => { event.preventDefault(); onEdit('add_frame', { time: Number(timestamp) }); }}>
         <input aria-label="追加する動画の秒数" type="number" min="0" max={manifest.metadata.duration - .001} step="any" placeholder="動画の秒数" required value={timestamp} onChange={event => setTimestamp(event.target.value)} />
         <button disabled={busy || timestamp === ''}>この時刻から追加</button></form>
     </div>
-    <div className={`page-grid ${manifest.pages.some(page => page.side === 'spread') ? 'with-spreads' : ''}`}>{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || needsReview(page))).map(page => <article key={page.id} className={`page-card ${needsReview(page) ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'}`}>
+    <p className="muted reorder-help">ページは「⠿ ドラッグ」で並べ替えできます。← / →もそのまま使えます。</p>
+    <div className={`page-grid ${manifest.pages.some(page => page.side === 'spread') ? 'with-spreads' : ''}`}>{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || needsReview(page))).map(page => <article
+      key={page.id}
+      className={`page-card ${needsReview(page) ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'} ${draggedPageId === page.id ? 'dragging' : ''} ${dragOverPageId === page.id ? 'drag-over' : ''}`}
+      onDragOver={event => {
+        if (busy || !draggedPageId) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        setDragOverPageId(page.id);
+      }}
+      onDragLeave={event => {
+        const nextTarget = event.relatedTarget;
+        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+          setDragOverPageId(null);
+        }
+      }}
+      onDrop={event => {
+        event.preventDefault();
+        dropPage(page.id);
+      }}
+    >
+      <div
+        className="page-drag-handle"
+        draggable={!busy}
+        role="button"
+        tabIndex={0}
+        aria-label={`${page.id}をドラッグして並べ替え`}
+        title="ドラッグしてページを並べ替え"
+        onDragStart={event => {
+          if (busy) {
+            event.preventDefault();
+            return;
+          }
+          setDraggedPageId(page.id);
+          setDragOverPageId(page.id);
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', page.id);
+        }}
+        onDragEnd={() => {
+          setDraggedPageId(null);
+          setDragOverPageId(null);
+        }}
+      >⠿ ドラッグ</div>
       <ImageLink file={file} path={page.path} preview={page.preview} />
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
