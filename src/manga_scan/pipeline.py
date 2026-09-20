@@ -44,21 +44,29 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     save_image(project / f"{base}_hand_mask.png", mask)
     rectified = warp_roi(image, roi)
     save_image(project / f"{base}_spread.png", rectified)
-    rectified_mask = (
-        warp_roi(mask, roi) if overlap is not None else np.zeros(rectified.shape[:2], np.uint8)
-    )
-    page_metrics, _ = score_candidate_pages(
-        rectified,
-        rectified_mask,
-        sample.motion,
-        cfg,
-        metrics,
-        hand_enabled=overlap is not None,
-    )
-    page_suspect = {
-        side: suspect_reasons(page_metrics[side], cfg, quad_ok)
-        for side in ("left", "right")
-    }
+    if cfg.candidate_selection_mode == "per_page":
+        rectified_mask = (
+            warp_roi(mask, roi)
+            if overlap is not None
+            else np.zeros(rectified.shape[:2], np.uint8)
+        )
+        page_metrics, _ = score_candidate_pages(
+            rectified,
+            rectified_mask,
+            sample.motion,
+            cfg,
+            metrics,
+            hand_enabled=overlap is not None,
+        )
+        page_suspect = {
+            side: suspect_reasons(page_metrics[side], cfg, quad_ok)
+            for side in ("left", "right")
+        }
+    else:
+        page_metrics = {side: metrics.copy() for side in ("left", "right")}
+        page_suspect = {
+            side: suspect_reasons(metrics, cfg, quad_ok) for side in ("left", "right")
+        }
     record = {
         "id": number,
         "time": sample.time,
