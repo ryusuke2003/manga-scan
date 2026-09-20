@@ -1,4 +1,6 @@
 import re
+import threading
+import time
 from contextlib import contextmanager
 
 import manga_scan.ui as ui_module
@@ -148,3 +150,44 @@ def test_delete_project_rejects_symlink_alias(tmp_path):
     assert response.status_code == 400
     assert target.exists()
     assert alias.is_symlink()
+
+
+def test_export_job_exposes_action_in_state(tmp_path, monkeypatch):
+    project = tmp_path / "scan-export"
+    project.mkdir()
+    (project / "manifest.json").write_text(
+        '{"source": "/tmp/book.mp4", "status": "complete", "pages": []}\n'
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_edit(_project, action, **_params):
+        assert action == "export"
+        started.set()
+        release.wait(timeout=2)
+
+    monkeypatch.setattr(ui_module, "edit", fake_edit)
+    client = create_app(tmp_path).test_client()
+    token = client.get("/api/state").json["token"]
+    response = client.post(
+        "/api/projects/scan-export/edit",
+        json={"action": "export"},
+        headers={"X-Manga-Token": token},
+    )
+
+    assert response.status_code == 202
+    assert response.json == {"started": True, "action": "export"}
+    assert started.wait(timeout=1)
+    job = client.get("/api/state").json["job"]
+    assert job["busy"] is True
+    assert job["project"] == "scan-export"
+    assert job["action"] == "export"
+
+    release.set()
+    for _ in range(100):
+        job = client.get("/api/state").json["job"]
+        if not job["busy"]:
+            break
+        time.sleep(0.01)
+    assert job["busy"] is False
+    assert job["action"] is None
