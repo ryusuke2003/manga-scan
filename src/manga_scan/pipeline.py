@@ -13,8 +13,8 @@ from .background_fill import detected_spread_mask, fill_page_background
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
-from .finger_repair import repair_finger_regions
 from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_quality_checks
+from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
@@ -1345,7 +1345,10 @@ def _refresh_adjacent_final_quality(project, manifest, cfg):
         raise RuntimeError("final quality reason registry is incomplete")
 
     for page in manifest.get("pages", []):
-        page["suspect"] = [item for item in page.get("suspect", []) if item != reason]
+        if "suspect" in page:
+            page["suspect"] = [
+                item for item in page.get("suspect", []) if item != reason
+            ]
         quality = page.get("final_quality")
         if quality:
             quality["reasons"] = [
