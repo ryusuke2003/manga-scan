@@ -273,10 +273,13 @@ describe('frontend helpers', () => {
     fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/book.mp4' } });
     expect(screen.getByLabelText('画像の向き').value).toBe('auto');
     fireEvent.change(screen.getByLabelText('画像の向き'), { target: { value: '270' } });
+    expect(screen.getByLabelText('画像の向き').value).toBe('270');
+    fireEvent.change(screen.getByLabelText('画像の向き'), { target: { value: 'auto' } });
+    expect(screen.getByLabelText('画像の向き').value).toBe('auto');
     fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
     expect(onCreate).toHaveBeenCalledWith('/tmp/book.mp4', expect.objectContaining({
-      auto_rotation: false,
-      rotation: 270,
+      auto_rotation: true,
+      rotation: 0,
     }));
   });
 
