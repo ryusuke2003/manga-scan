@@ -32,12 +32,12 @@ describe('frontend helpers', () => {
   });
 
   it('detects long timeline gaps as missing-page candidates', () => {
-    const spreads = [2, 4, 6, 10, 12].map((time, index) => ({
+    const spreads = [2, 4, 6, 10, 12].map((start, index) => ({
       id: `spread_${index + 1}`,
-      start: time - 0.3,
-      end: time + 0.3,
+      start,
+      end: start + 0.6,
       selected: 0,
-      candidates: [{ id: 0, time }],
+      candidates: [{ id: 0, time: start + 0.3 }],
     }));
     const missing = detectMissingPageCandidates(spreads);
     expect(missing).toHaveLength(1);
@@ -117,7 +117,7 @@ describe('frontend helpers', () => {
     const onCreate = vi.fn();
     render(React.createElement(Setup, { busy: false, defaults: buildInitialConfig(), onChoose: vi.fn(), onCreate }));
     fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/book.mp4' } });
-    fireEvent.click(screen.getByRole('button', { name: /標準補正/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^標準補正 \/ おすすめ/ }));
     fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
     expect(onCreate).toHaveBeenCalledWith('/tmp/book.mp4', expect.objectContaining({
       refine_quad: true,
