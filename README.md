@@ -219,10 +219,11 @@ python scripts/download_hand_model.py
 
 すでに `models/hand_landmarker.task` が存在する場合、ダウンロードスクリプトは上書きしません。
 
-手検出なしで動作確認だけする場合は `config.toml` の次の値を変更できます。
+手検出なしで動作確認だけする場合は `config.toml` の次の2値を変更します。
 
 ```toml
 hand_backend = "none"
+finger_repair = false
 ```
 
 この場合、手の重なりを判定できないため全ページが要確認扱いになります。
