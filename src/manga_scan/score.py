@@ -23,17 +23,19 @@ def local_sharpness_metrics(image, grid=_LOCAL_SHARPNESS_GRID):
     if not isinstance(grid, int) or grid < 1:
         raise ValueError("sharpness grid must be a positive integer")
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
-    rows = np.array_split(gray, min(grid, gray.shape[0]), axis=0)
+    # Run Laplacian before splitting so artificial tile boundaries do not add
+    # edge energy. Each tile then measures the variance of the real page edges.
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    rows = np.array_split(laplacian, min(grid, gray.shape[0]), axis=0)
     values = []
     for row in rows:
         for tile in np.array_split(row, min(grid, gray.shape[1]), axis=1):
             if tile.size == 0:
                 continue
-            values.append(sharpness(tile))
+            values.append(float(tile.var()))
 
     if not values:
-        value = sharpness(gray)
-        values = [value]
+        values = [float(laplacian.var())]
 
     values_array = np.asarray(values, dtype=np.float64)
     p10 = float(np.percentile(values_array, 10))
@@ -81,7 +83,6 @@ def glare_fraction(image):
         np.ones((3, 3), np.uint8),
     )
     return float(np.mean(cleaned > 0))
-
 
 
 def composite_score(metrics, config):
