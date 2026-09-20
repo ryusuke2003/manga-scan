@@ -66,6 +66,7 @@ def _repair_metadata(status="complete", coverage=1.0, donor_coverage=1.0):
 
 
 def _fixture(tmp_path, monkeypatch, *, output_layout="spread", finger_repair=True):
+    (tmp_path / "debug").mkdir(exist_ok=True)
     image = _image()
     cfg = Config(
         output_layout=output_layout,
