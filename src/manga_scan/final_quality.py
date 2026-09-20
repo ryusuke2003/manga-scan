@@ -207,7 +207,15 @@ def final_quality_checks(
             reasons.append("final_background_fill_large")
 
     repair = finger_repair or {}
-    unresolved = bool(repair.get("unresolved_mask")) or repair.get("status") == "incomplete"
+    kinds = repair.get("occlusion_kinds")
+    has_finger = not kinds or "finger" in kinds
+    unresolved = (
+        has_finger
+        and (
+            bool(repair.get("unresolved_mask"))
+            or repair.get("status") == "incomplete"
+        )
+    )
     metrics["unresolved_finger"] = bool(unresolved)
     if unresolved:
         reasons.append("final_unresolved_finger")
@@ -216,7 +224,7 @@ def final_quality_checks(
     metrics["finger_repair_max_residual"] = (
         None if residual is None else round(float(residual), 4)
     )
-    if residual is not None and residual >= 0.14:
+    if has_finger and residual is not None and residual >= 0.14:
         reasons.append("final_finger_repair_residual")
 
     if before_dewarp is not None and (dewarp or {}).get("applied"):
