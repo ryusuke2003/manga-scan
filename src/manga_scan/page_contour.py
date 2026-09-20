@@ -263,6 +263,23 @@ def detect_page_quads(
     return result
 
 
+def spread_quad_from_page_quads(result):
+    """Build one spread crop from the outer corners of two detected pages.
+
+    The inner page corners are deliberately not used for warping. This keeps
+    the photographed gutter intact while still letting each page boundary
+    contribute to automatic outer-edge detection.
+    """
+    if not isinstance(result, dict) or not result.get("detected"):
+        raise ValueError("both page quads must be detected")
+    left = np.asarray(result.get("left", {}).get("quad"), dtype=np.float32)
+    right = np.asarray(result.get("right", {}).get("quad"), dtype=np.float32)
+    if left.shape != (4, 2) or right.shape != (4, 2):
+        raise ValueError("page detection must contain left/right quads")
+    spread = np.asarray([left[0], right[1], right[2], left[3]], dtype=np.float32)
+    return validate_roi(spread).tolist()
+
+
 def draw_page_quads(image, result):
     """Return a debug copy with detected/fallback page quads overlaid."""
 

@@ -7,6 +7,12 @@ import VideoTimeline from './VideoTimeline.jsx';
 const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い', finger_repair_incomplete: '指の補修が不完全', source_frame_clipped: '元動画の画面端に接触・見切れを確認', page_contour_low_confidence: 'ページ外周の検出が不確か' };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
 const pageSideLabel = side => ({ cover: '表紙', spread: '見開き', right: '右ページ', left: '左ページ' }[side] || side);
+const cropStatusLabel = crop => ({
+  auto_pages: `左右ページから外周を自動検出${crop.confidence !== undefined ? ` · 信頼度 ${Math.round(crop.confidence * 100)}%` : ''}`,
+  fallback: '外周を自動検出できず、基準範囲を使用',
+  reference: '外周の自動検出はOFF',
+  manual: '外周を手動指定',
+}[crop?.status] || '');
 
 function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
@@ -26,6 +32,7 @@ function Spread({ spread, config, file, busy, onEdit }) {
     <summary>{spread.id} · {spread.start.toFixed(1)}–{spread.end.toFixed(1)}s{spread.duplicate_of ? ' · 重複候補' : ''}</summary>
     <p className="muted">{reasons(spread.suspect)}</p>
     <label>この見開きの出力形式<select disabled={busy} value={layout} onChange={event => onEdit('output_layout', { spread_id: spread.id, layout: event.target.value })}><option value="spread">見開きのまま</option><option value="split">左右のページに分割</option></select></label>
+    {layout === 'spread' && spread.whole_spread_crop && <p className="muted">{cropStatusLabel(spread.whole_spread_crop)}{spread.page_contour_debug && <> · <a href={file(spread.page_contour_debug)} target="_blank" rel="noopener">検出結果 ↗</a></>}</p>}
     {selectionMode === 'per_page' && <p className="muted">左右ページを別々に採点・選択中 · 左 #{selectedPages.left} / 右 #{selectedPages.right}</p>}
     {layout === 'split' && <div className="row">
       <button disabled={busy} onClick={() => onEdit('swap', { spread_id: spread.id })}>左右の順番を入れ替え</button>
@@ -35,11 +42,14 @@ function Spread({ spread, config, file, busy, onEdit }) {
     </div>}
     {cropCandidate !== null && (() => {
       const candidate = spread.candidates.find(item => item.id === cropCandidate);
-      const roi = spread.roi_overrides?.[String(candidate.id)] ?? candidate.roi;
+      const renderedCrop = layout === 'spread' && spread.whole_spread_crop?.candidate_id === candidate.id
+        ? spread.whole_spread_crop : null;
+      const sourceRoi = spread.roi_overrides?.[String(candidate.id)] ?? candidate.roi;
+      const initialPoints = renderedCrop?.roi ?? rotateNormalizedRoi(sourceRoi, config.rotation || 0);
       return <div>
-        <RoiSelector key={`${spread.id}-${candidate.id}`} imageUrl={file(candidate.path)} initialPoints={rotateNormalizedRoi(roi, config.rotation || 0)} rotation={config.rotation || 0} busy={busy}
-          step="切り抜き範囲を調整" title={`候補 #${candidate.id} の外周`}
-          description="やり直すを押して、紙の外周を左上 → 右上 → 右下 → 左下の順で指定してください。この候補だけに適用します。指で隠れた絵や画面外の絵は復元できません。"
+        <RoiSelector key={`${spread.id}-${candidate.id}`} imageUrl={file(candidate.path)} initialPoints={initialPoints} rotation={config.rotation || 0} busy={busy}
+          step="外周を確認・調整" title={`候補 #${candidate.id} の外周`}
+          description="自動検出した外周です。ずれている場合は「やり直す」を押し、左上 → 右上 → 右下 → 左下の順で指定してください。この候補だけに適用します。指で隠れた絵や画面外の絵は復元できません。"
           actionLabel="この範囲で再出力" onStart={points => {
             onEdit('crop', { spread_id: spread.id, candidate_id: candidate.id, roi: points });
             setCropCandidate(null);
@@ -53,6 +63,7 @@ function Spread({ spread, config, file, busy, onEdit }) {
       const leftSelected = candidate.id === selectedPages.left;
       const rightSelected = candidate.id === selectedPages.right;
       const selected = selectionMode === 'per_page' ? leftSelected || rightSelected : candidate.id === spread.selected;
+      const manuallyCropped = Boolean(spread.roi_overrides?.[String(candidate.id)]);
       return <div key={candidate.id} className={`candidate ${selected ? 'selected' : ''}`}>
         <ImageLink file={file} path={candidate.path} preview={candidate.review_preview || candidate.preview} />
         <p>{candidate.time.toFixed(2)}s · 全体 score {candidate.metrics.score.toFixed(3)}<br />
@@ -62,7 +73,8 @@ function Spread({ spread, config, file, busy, onEdit }) {
           右 score {rightMetrics.score.toFixed(3)} / 鮮鋭度 {rightMetrics.sharpness.toFixed(0)} / 手 {rightMetrics.hand_overlap === null ? '未評価' : `${(rightMetrics.hand_overlap * 100).toFixed(1)}%`}
         </p>}
         <a href={file(candidate.hand_mask)} target="_blank" rel="noopener">手のマスク ↗</a>
-        {selected && <button disabled={busy} onClick={() => setCropCandidate(candidate.id)}>切り抜き範囲を調整</button>}
+        {selected && <button disabled={busy} onClick={() => setCropCandidate(candidate.id)}>外周を確認・調整</button>}
+        {selected && manuallyCropped && <button disabled={busy} onClick={() => onEdit('reset_crop', { spread_id: spread.id, candidate_id: candidate.id })}>自動検出に戻す</button>}
         {selectionMode === 'per_page'
           ? <div className="row">
             <button disabled={busy || leftSelected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id, side: 'left' })}>{leftSelected ? '左に採用中' : '左に採用'}</button>

@@ -52,7 +52,7 @@ def test_default_output_preserves_entire_spread_and_ignores_split_settings(
     manifest["config"]["candidate_selection_mode"] = "per_page"
 
     def forbidden(*_args, **_kwargs):
-        pytest.fail("Whole spread must not split or detect separate pages")
+        pytest.fail("Whole spread must not run the split-output rectifier")
 
     monkeypatch.setattr(pipeline, "rectify_spread_pages", forbidden)
     pages = pipeline.render_spread(tmp_path, manifest, spread)
@@ -62,6 +62,60 @@ def test_default_output_preserves_entire_spread_and_ignores_split_settings(
     output = cv2.imread(str(tmp_path / pages[0]["path"]))
     np.testing.assert_array_equal(output, np.rot90(image, -(rotation // 90)))
     assert pages[0]["dewarp"]["mode"] == "off"
+
+
+def test_whole_spread_auto_crop_uses_outer_corners_from_both_pages(tmp_path, monkeypatch):
+    image, manifest, spread = fixture(tmp_path, monkeypatch)
+    detected = {
+        "detected": True,
+        "confidence": .86,
+        "left": {
+            "quad": [[.08, .10], [.49, .12], [.49, .88], [.07, .90]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": [[.51, .12], [.92, .09], [.94, .91], [.51, .88]],
+            "confidence": .86,
+            "detected": True,
+            "touches_frame": False,
+        },
+    }
+    monkeypatch.setattr(pipeline, "detect_page_quads", lambda *_a, **_k: detected)
+
+    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+
+    expected_roi = [[.08, .10], [.92, .09], [.94, .91], [.07, .90]]
+    output = cv2.imread(str(tmp_path / page["path"]))
+    expected = pipeline.warp_roi(image, expected_roi)
+    np.testing.assert_allclose(output, expected, atol=1)
+    assert page["crop"]["status"] == "auto_pages"
+    assert page["crop"]["confidence"] == pytest.approx(.86)
+    assert spread["perspective_mode_used"] == "spread_auto_pages"
+    assert spread["page_contours"] == detected
+    assert (tmp_path / spread["page_contour_debug"]).is_file()
+    assert "page_contour_low_confidence" not in page["suspect"]
+
+
+def test_whole_spread_auto_crop_falls_back_when_either_page_is_uncertain(
+    tmp_path, monkeypatch,
+):
+    image, manifest, spread = fixture(tmp_path, monkeypatch)
+    detection = {
+        "detected": False,
+        "confidence": .2,
+        "left": {"quad": ROI, "confidence": .8, "detected": True, "touches_frame": False},
+        "right": {"quad": ROI, "confidence": .2, "detected": False, "touches_frame": False},
+    }
+    monkeypatch.setattr(pipeline, "detect_page_quads", lambda *_a, **_k: detection)
+
+    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+
+    output = cv2.imread(str(tmp_path / page["path"]))
+    np.testing.assert_array_equal(output, image)
+    assert page["crop"]["status"] == "fallback"
+    assert "page_contour_low_confidence" in page["suspect"]
 
 
 def test_layout_roundtrip_preserves_exclusions_order_and_cover(tmp_path, monkeypatch):
@@ -114,6 +168,12 @@ def test_crop_applies_to_only_selected_candidate_in_display_orientation(
     expected = pipeline.warp_roi(upright, crop)
     np.testing.assert_allclose(output, expected, atol=1)
     assert "1" not in result["spreads"][0]["roi_overrides"]
+    assert result["pages"][0]["crop"]["status"] == "manual"
+    result = pipeline.edit(
+        tmp_path, "reset_crop", spread_id=spread["id"], candidate_id=0
+    )
+    assert "roi_overrides" not in result["spreads"][0]
+    assert result["pages"][0]["crop"]["status"] != "manual"
     with pytest.raises(ValueError, match="ROI"):
         pipeline.edit(tmp_path, "crop", spread_id=spread["id"], candidate_id=0, roi=[[0, 0]])
 

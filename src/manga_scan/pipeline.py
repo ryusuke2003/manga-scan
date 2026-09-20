@@ -15,7 +15,7 @@ from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
 from .hand import HandDetector, boundary_finger_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
-from .page_contour import detect_page_quads, draw_page_quads
+from .page_contour import detect_page_quads, draw_page_quads, spread_quad_from_page_quads
 from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
 from .perspective import rotate_roi, validate_roi, warp_roi
@@ -228,6 +228,8 @@ def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
             extra.append("page_contour_low_confidence")
     else:
         spread["perspective_mode_used"] = "spread"
+        spread.pop("page_contours", None)
+        spread.pop("page_contour_debug", None)
 
     sides, spine = split_spread(rectified, ratio, cfg.split_mode, cfg.gutter_fraction)
     spread["spine_px"] = spine
@@ -314,17 +316,68 @@ def _finger_donor_candidates(spread, side, selected_id):
     )
 
 
+def _whole_spread_geometry(source, record, spread, cfg):
+    """Resolve one upright spread crop from manual or per-page outer corners."""
+    upright = rotate_image(source, cfg.rotation)
+    override = spread.get("roi_overrides", {}).get(str(record["id"]))
+    reference = rotate_roi(override or record["roi"], cfg.rotation).tolist()
+    if override is not None:
+        return upright, reference, {
+            "status": "manual",
+            "candidate_id": record["id"],
+            "roi": reference,
+        }
+
+    crop = {
+        "status": "fallback",
+        "candidate_id": record["id"],
+        "roi": reference,
+        "confidence": 0.0,
+    }
+    if not cfg.refine_quad:
+        crop["status"] = "reference"
+        return upright, reference, crop
+
+    detection_image = upright
+    if upright.shape[1] > cfg.analysis_width:
+        scale = cfg.analysis_width / upright.shape[1]
+        detection_image = cv2.resize(
+            upright,
+            (cfg.analysis_width, max(2, round(upright.shape[0] * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    detection = detect_page_quads(
+        detection_image,
+        reference,
+        spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
+        min_confidence=cfg.page_contour_min_confidence,
+    )
+    crop["detection"] = detection
+    crop["confidence"] = detection["confidence"]
+    if detection["detected"]:
+        crop["roi"] = spread_quad_from_page_quads(detection)
+        crop["status"] = "auto_pages"
+    return upright, crop["roi"], crop
+
+
 def _render_whole_spread(project, manifest, spread, cfg):
-    """Render directly from the source ROI, without splitting or rejoining it."""
+    """Render one spread, using both page outlines without cutting the gutter."""
+    for key in (
+        "page_contours_by_side",
+        "page_contour_debug_by_side",
+        "perspective_mode_used_by_side",
+        "spine_px_by_side",
+    ):
+        spread.pop(key, None)
     cache = {}
 
     def load(candidate_id):
         if candidate_id in cache:
             return cache[candidate_id]
         record = _candidate_by_id(spread, candidate_id)
-        roi = spread.get("roi_overrides", {}).get(str(candidate_id), record["roi"])
         source = extract_frame(manifest["source"], record["time"], hwaccel=cfg.hwaccel)
-        page = rotate_image(warp_roi(source, roi), cfg.rotation)
+        upright, roi, crop = _whole_spread_geometry(source, record, spread, cfg)
+        page = warp_roi(upright, roi)
         mask = None
         if cfg.finger_repair and record.get("hand_mask"):
             saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
@@ -332,21 +385,39 @@ def _render_whole_spread(project, manifest, spread, cfg):
                 saved = cv2.resize(
                     saved, (source.shape[1], source.shape[0]), interpolation=cv2.INTER_NEAREST
                 )
-                mask = rotate_image(
-                    warp_roi(saved, roi, interpolation=cv2.INTER_NEAREST), cfg.rotation
+                upright_mask = rotate_image(saved, cfg.rotation)
+                mask = warp_roi(
+                    upright_mask, roi, interpolation=cv2.INTER_NEAREST
                 )
                 mask |= boundary_finger_mask(
                     page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding
                 )
-        cache[candidate_id] = page, mask
-        return page, mask
+        cache[candidate_id] = {
+            "page": page,
+            "mask": mask,
+            "crop": crop,
+            "upright": upright,
+        }
+        return cache[candidate_id]
 
     chosen = _candidate_by_id(spread, spread["selected"])
-    page, mask = load(chosen["id"])
+    selected = load(chosen["id"])
+    page, mask = selected["page"], selected["mask"]
+    crop = selected["crop"]
+    spread["whole_spread_crop"] = {key: value for key, value in crop.items() if key != "detection"}
+    detection = crop.get("detection")
+    if detection is not None:
+        spread["page_contours"] = detection
+        debug_path = f"debug/page_contours/{spread['id']}_whole.jpg"
+        save_image(project / debug_path, draw_page_quads(selected["upright"], detection))
+        spread["page_contour_debug"] = debug_path
+    else:
+        spread.pop("page_contours", None)
+        spread.pop("page_contour_debug", None)
     source_path = f"selected/{spread['id']}.png"
     save_image(project / source_path, page)
     spread["path"] = source_path
-    spread["perspective_mode_used"] = "spread"
+    spread["perspective_mode_used"] = f"spread_{crop['status']}"
     repair = {"status": "disabled", "coverage": 0.0, "donors": []}
     if cfg.finger_repair:
         if mask is None:
@@ -360,9 +431,13 @@ def _render_whole_spread(project, manifest, spread, cfg):
                 for record in records:
                     if record["id"] == chosen["id"]:
                         continue
-                    donor, donor_mask = load(record["id"])
-                    if donor_mask is not None:
-                        yield {"candidate_id": record["id"], "image": donor, "mask": donor_mask}
+                    donor = load(record["id"])
+                    if donor["mask"] is not None:
+                        yield {
+                            "candidate_id": record["id"],
+                            "image": donor["page"],
+                            "mask": donor["mask"],
+                        }
 
             page, repair, unresolved = repair_finger_regions(
                 page,
@@ -409,10 +484,15 @@ def _render_whole_spread(project, manifest, spread, cfg):
             ]
         )
     )
+    if crop["status"] == "fallback":
+        suspect.append("page_contour_low_confidence")
+    if detection and any(detection[side]["touches_frame"] for side in ("left", "right")):
+        suspect.append("source_frame_clipped")
     if repair["status"] in ("clean", "complete"):
         suspect = [reason for reason in suspect if reason != "hand_overlap"]
     elif repair["status"] in ("incomplete", "unavailable"):
         suspect.append("finger_repair_incomplete")
+    suspect = list(dict.fromkeys(suspect))
     spread["suspect"] = suspect
     manifest["pdf_stale"] = True
     return [
@@ -428,6 +508,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
             "enabled": not bool(spread.get("duplicate_of")),
             "suspect": suspect,
             "finger_repair": repair,
+            "crop": spread["whole_spread_crop"],
             "dewarp": {"mode": "off", "status": "off", "applied": False},
         }
     ]
@@ -437,6 +518,7 @@ def render_spread(project, manifest, spread):
     cfg = Config.from_dict(manifest["config"])
     if spread.get("output_layout", cfg.output_layout) == "spread":
         return _render_whole_spread(project, manifest, spread, cfg)
+    spread.pop("whole_spread_crop", None)
     selected_pages = spread.get("selected_pages") or {
         "left": spread["selected"],
         "right": spread["selected"],
@@ -951,7 +1033,14 @@ def edit(project, action, **params):
                             if p["spread_id"] == spread["id"])
             manifest["pages"] = [p for p in manifest["pages"] if p["spread_id"] != spread["id"]]
             manifest["pages"][position:position] = new_pages
-        elif action in ("select_candidate", "swap", "spine", "toggle_dewarp", "crop"):
+        elif action in (
+            "select_candidate",
+            "swap",
+            "spine",
+            "toggle_dewarp",
+            "crop",
+            "reset_crop",
+        ):
             spread = next(s for s in manifest["spreads"] if s["id"] == params["spread_id"])
             layout = spread.get("output_layout", cfg.output_layout)
             if layout == "spread" and (
@@ -969,13 +1058,19 @@ def edit(project, action, **params):
                     manifest["pages"][a],
                 )
             else:
-                if action == "crop":
+                if action in ("crop", "reset_crop"):
                     candidate_id = int(params["candidate_id"])
                     if candidate_id not in [c["id"] for c in spread["candidates"]]:
                         raise ValueError("Unknown candidate")
-                    # The review editor displays the original frame upright.
-                    roi = rotate_roi(params["roi"], (360 - cfg.rotation) % 360).tolist()
-                    spread.setdefault("roi_overrides", {})[str(candidate_id)] = roi
+                    if action == "crop":
+                        # The review editor displays the original frame upright.
+                        roi = rotate_roi(params["roi"], (360 - cfg.rotation) % 360).tolist()
+                        spread.setdefault("roi_overrides", {})[str(candidate_id)] = roi
+                    else:
+                        overrides = spread.get("roi_overrides", {})
+                        overrides.pop(str(candidate_id), None)
+                        if not overrides:
+                            spread.pop("roi_overrides", None)
                 elif action == "spine":
                     ratio = float(params["ratio"])
                     if not 0.25 <= ratio <= 0.75:

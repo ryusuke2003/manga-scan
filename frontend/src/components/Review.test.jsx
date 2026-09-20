@@ -8,7 +8,9 @@ const manifest = {
   config: { output_layout: 'spread', candidate_selection_mode: 'per_page', spine_ratio: .5 },
   metadata: { duration: 10 },
   pages: [{ id: 's_whole', spread_id: 's', side: 'spread', enabled: true, suspect: [], path: 'whole.png' }],
-  spreads: [{ id: 's', start: 1, end: 2, selected: 0, suspect: [], candidates: [{ id: 0, time: 1,
+  spreads: [{ id: 's', start: 1, end: 2, selected: 0, suspect: [], whole_spread_crop: {
+    status: 'auto_pages', candidate_id: 0, confidence: .86, roi: [[.1, .1], [.9, .1], [.9, .9], [.1, .9]],
+  }, page_contour_debug: 'debug/contour.jpg', candidates: [{ id: 0, time: 1,
     path: 'original.png', preview: 'preview.png', hand_mask: 'mask.png',
     roi: [[0, 0], [1, 0], [1, 1], [0, 1]], metrics: { score: 1, sharpness: 100, hand_overlap: 0 } }] }],
 };
@@ -18,6 +20,7 @@ it('defaults new projects to whole spreads and retains split controls', () => {
   render(<Setup busy={false} onChoose={vi.fn()} onCreate={onCreate} />);
   expect(screen.getByLabelText('出力形式').value).toBe('spread');
   expect(screen.getByLabelText('候補フレーム選択').disabled).toBe(true);
+  expect(screen.getByLabelText('ページ輪郭の最低信頼度').value).toBe('0.55');
   fireEvent.change(screen.getByLabelText('出力形式'), { target: { value: 'split' } });
   expect(screen.getByLabelText('候補フレーム選択').disabled).toBe(false);
   expect(screen.getByLabelText('左右別の台形補正').disabled).toBe(false);
@@ -32,9 +35,24 @@ it('labels whole pages and offers layout switching and crop correction', () => {
   expect(screen.getByText('001 · 見開き')).toBeTruthy();
   expect(screen.queryByText('左右の順番を入れ替え')).toBeNull();
   expect(screen.queryByText('左に採用中')).toBeNull();
-  expect(screen.getByText('切り抜き範囲を調整')).toBeTruthy();
+  expect(screen.getByText((_text, node) => node.tagName === 'P'
+    && node.textContent.includes('左右ページから外周を自動検出 · 信頼度 86%'))).toBeTruthy();
+  expect(screen.getByText('外周を確認・調整')).toBeTruthy();
+  expect(screen.getByText('検出結果 ↗')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('この見開きの出力形式'), { target: { value: 'split' } });
   expect(onEdit).toHaveBeenCalledWith('output_layout', { spread_id: 's', layout: 'split' });
+});
+
+it('can discard a manual crop and return to automatic detection', () => {
+  const onEdit = vi.fn();
+  const manual = {
+    ...manifest,
+    spreads: [{ ...manifest.spreads[0], roi_overrides: { 0: [[.1, .1], [.9, .1], [.9, .9], [.1, .9]] },
+      whole_spread_crop: { ...manifest.spreads[0].whole_spread_crop, status: 'manual' } }],
+  };
+  render(<Review manifest={manual} file={path => path} busy={false} onEdit={onEdit} />);
+  fireEvent.click(screen.getByText('自動検出に戻す'));
+  expect(onEdit).toHaveBeenCalledWith('reset_crop', { spread_id: 's', candidate_id: 0 });
 });
 
 it('retains split review controls for legacy projects without the new setting', () => {
