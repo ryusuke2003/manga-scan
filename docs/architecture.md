@@ -112,8 +112,9 @@ nearest-neighborで戻し、設定回転を同じように適用してから、�
 
 手領域がある場合は、同じstable interval内の別候補をhand overlapの少ない順・page scoreの高い順で
 最大5件までdonor候補として元解像度再取得する。各donorも同じ回転・ページ幾何へ射影した後、
-OpenCV ECCのaffine alignmentで採用ページへ追加位置合わせする。alignmentは採用側またはdonor側で
-手マスクに含まれる画素を除外して推定し、score不足・過大translation・過大scaleのdonorは使わない。
+OpenCV ECCのEUCLIDEAN alignment（小さな回転＋平行移動のみ）で採用ページへ追加位置合わせする。
+採用側・donor側それぞれの手マスク領域は各画像の自座標で中立値へ置換してECCから実質除外し、
+score不足・5度超の回転・ページ寸法の8%超のtranslationは拒否する。scale/shearは許可しない。
 
 置換対象は採用ページの手マスク内だけで、donor側でも手に隠れていない画素だけを利用する。
 複数donorを順番に使い、1枚で埋まらない領域を補う。境界はdistance transformに基づくfeatherで
@@ -190,7 +191,8 @@ README参照。`manifest.json` の `pages` 配列がページ順の唯一の根�
 
 - 10fpsでサンプル間に完了するページは見えない。静止5フレームは約0.5秒必要。
 - 手で全候補にわたって常に隠れる箇所は指補修でも復元不能。生成せず元画素を残し、要確認にする。
-- donor候補の位置合わせが誤ると継ぎ目が出るため、ECC scoreと変形量に上限を設ける。
+- donor候補の位置合わせが誤ると別の線・文字を貼る危険があるため、ECC scoreを高めに取り、
+  residual transformを小さな回転＋平行移動だけに限定する。条件を外れたdonorは補修せずfallbackする。
 - MediaPipeは一部だけ見える指、漫画に描かれた手で誤判定し得る。
 - 白飛び、黒つぶれ、照明反射、コマ内黒ベタを正確に区別できない。
 - 射影変換は平面を仮定。背の湾曲・厚み・机から浮く紙は完全には直らない。
