@@ -18,10 +18,17 @@ from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads, draw_page_quads
 from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
-from .perspective import validate_roi, warp_roi
+from .perspective import rotate_roi, validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
-from .split import auto_dewarp_page, dewarp_debug_grid, enhance_page, spine_position, split_spread
+from .split import (
+    auto_dewarp_page,
+    dewarp_debug_grid,
+    enhance_page,
+    rotate_image,
+    spine_position,
+    split_spread,
+)
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
@@ -119,7 +126,7 @@ def selected_spread_preview(project, spread, cfg):
         preview = cv2.imread(str(project / candidate_record["preview"]))
         if preview is None:
             raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
-        return preview
+        return rotate_image(preview, cfg.rotation)
 
     physical_pages = []
     for side, candidate_id in zip(("left", "right"), selected):
@@ -127,6 +134,7 @@ def selected_spread_preview(project, spread, cfg):
         rectified = cv2.imread(str(project / candidate_record["preview"]))
         if rectified is None:
             raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
+        rectified = rotate_image(rectified, cfg.rotation)
         sides, _ = split_spread(
             rectified,
             spread.get("spine_ratio", cfg.spine_ratio),
@@ -227,12 +235,13 @@ def candidate_page_hand_mask(project, data, side, cfg):
     if mask is None:
         return None
 
-    frame_height, frame_width = data["frame_shape"][:2]
+    source_height, source_width = data["source_frame_shape"][:2]
     full_mask = cv2.resize(
         mask,
-        (frame_width, frame_height),
+        (source_width, source_height),
         interpolation=cv2.INTER_NEAREST,
     )
+    rotated_mask = rotate_image(full_mask, cfg.rotation)
     state = data["state"]
     if (
         state.get("perspective_mode_used") == "per_page"
@@ -243,16 +252,19 @@ def candidate_page_hand_mask(project, data, side, cfg):
             for name, page in data["sides"].items()
         }
         return warp_detected_pages(
-            full_mask,
+            rotated_mask,
             state["page_contours"],
             output_sizes=output_sizes,
             interpolation=cv2.INTER_NEAREST,
         )[side]
 
-    rectified_mask = warp_roi(
-        full_mask,
-        chosen["roi"],
-        interpolation=cv2.INTER_NEAREST,
+    rectified_mask = rotate_image(
+        warp_roi(
+            full_mask,
+            chosen["roi"],
+            interpolation=cv2.INTER_NEAREST,
+        ),
+        cfg.rotation,
     )
     spine = state.get("spine_px")
     if spine is None:
@@ -306,8 +318,10 @@ def render_spread(project, manifest, spread):
         if candidate_id in cache:
             return cache[candidate_id]
         chosen = _candidate_by_id(spread, candidate_id)
-        image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
-        rectified = warp_roi(image, chosen["roi"])
+        source_image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
+        rectified = rotate_image(warp_roi(source_image, chosen["roi"]), cfg.rotation)
+        image = rotate_image(source_image, cfg.rotation)
+        roi = rotate_roi(chosen["roi"], cfg.rotation)
         use_spread_state = (
             same_candidate and candidate_id == selected_pages["left"]
         )
@@ -320,13 +334,13 @@ def render_spread(project, manifest, spread):
                 "extra_suspect": [],
             }
         )
-        sides = rectify_spread_pages(project, image, rectified, chosen["roi"], state, cfg)
+        sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
         cache[candidate_id] = {
             "chosen": chosen,
             "rectified": rectified,
             "sides": sides,
             "state": state,
-            "frame_shape": image.shape,
+            "source_frame_shape": source_image.shape,
         }
         return cache[candidate_id]
 
@@ -426,6 +440,7 @@ def render_spread(project, manifest, spread):
             elif np.any(target_mask > 127):
                 target_mask_path = f"debug/finger_repair/{spread['id']}_{side}_target.png"
                 save_image(project / target_mask_path, target_mask)
+
                 def donor_pages():
                     for donor_record in _finger_donor_candidates(
                         spread,
@@ -482,7 +497,7 @@ def render_spread(project, manifest, spread):
                     source_page,
                     grayscale=cfg.grayscale,
                     contrast=cfg.contrast,
-                    rotation=cfg.rotation,
+                    rotation=0,
                     dewarp_strength=0.0,
                     white_normalization=cfg.white_normalization,
                     white_target=cfg.white_target,
@@ -512,7 +527,7 @@ def render_spread(project, manifest, spread):
             source_page,
             grayscale=cfg.grayscale,
             contrast=cfg.contrast,
-            rotation=cfg.rotation,
+            rotation=0,
             dewarp_strength=manual_dewarp,
             white_normalization=cfg.white_normalization,
             white_target=cfg.white_target,
