@@ -466,7 +466,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         <input
           aria-label="外部画像をページ追加"
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+          accept="image/png,image/jpeg,image/webp"
           disabled={busy}
           onChange={event => {
             const image = event.target.files?.[0];
@@ -553,7 +553,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
           <input
             aria-label={`${page.id}を外部画像で差し替え`}
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+            accept="image/png,image/jpeg,image/webp"
             disabled={busy}
             onChange={event => {
               const image = event.target.files?.[0];
