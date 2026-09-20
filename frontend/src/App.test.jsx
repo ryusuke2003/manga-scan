@@ -130,3 +130,40 @@ it('falls back to the existing four-point editor when reference detection fails'
   expect(screen.getByText('外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。')).toBeTruthy();
   expect(screen.getByText('0 / 4 点')).toBeTruthy();
 });
+
+
+it('shows PDF generation instead of stale 100% scan progress during export', () => {
+  scanner.project = 'scan-123';
+  scanner.busy = true;
+  scanner.server.job = { busy: true, project: 'scan-123', action: 'export', error: null };
+  scanner.manifest = {
+    source: '/tmp/book.mov',
+    status: 'complete',
+    progress: 1,
+    message: '完了 — 要確認ページを確認してください',
+    warnings: [],
+    pages: [
+      {
+        id: 'page-1',
+        spread_id: 'spread-1',
+        side: 'spread',
+        enabled: true,
+        suspect: [],
+        path: 'pages/page.png',
+      },
+    ],
+    spreads: [],
+    metadata: { duration: 10 },
+    config: { rotation: 0, output_layout: 'spread', spine_ratio: 0.5 },
+    cover: { status: 'skipped' },
+    reference: { confirmed: true },
+    pdf: 'output/manga.pdf',
+    pdf_stale: false,
+  };
+
+  render(<App />);
+
+  expect(screen.getByText('PDFを生成中…')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'PDF生成中…' }).disabled).toBe(true);
+  expect(screen.queryByText('処理中…')).toBeNull();
+});
