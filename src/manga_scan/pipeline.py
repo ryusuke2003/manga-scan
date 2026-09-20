@@ -355,8 +355,12 @@ def _whole_spread_geometry(source, record, spread, cfg):
     crop["detection"] = detection
     crop["confidence"] = detection["confidence"]
     if detection["detected"]:
-        crop["roi"] = spread_quad_from_page_quads(detection)
-        crop["status"] = "auto_pages"
+        try:
+            crop["roi"] = spread_quad_from_page_quads(detection)
+        except ValueError:
+            crop["status"] = "fallback"
+        else:
+            crop["status"] = "auto_pages"
     return upright, crop["roi"], crop
 
 
