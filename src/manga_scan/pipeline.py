@@ -856,7 +856,9 @@ def edit(project, action, **params):
                 )
             finally:
                 detector.close()
-            rec["suspect"].append("manual_frame_motion_unmeasured")
+            manual_reason = "manual_frame_motion_unmeasured"
+            rec["suspect"] = list(dict.fromkeys(rec.get("suspect", []) + [manual_reason]))
+            write_json(project / Path(rec["path"]).with_suffix(".json"), rec)
             spread = {
                 "id": spread_id,
                 "start": timestamp,
@@ -865,7 +867,7 @@ def edit(project, action, **params):
                 "selected": 0,
                 "selected_pages": {"left": 0, "right": 0},
                 "candidate_selection_mode": cfg.candidate_selection_mode,
-                "extra_suspect": ["manual_frame"],
+                "extra_suspect": ["manual_frame", manual_reason],
             }
             pages = render_spread(project, manifest, spread)
             # Insert in chronological order; subsequent manual reordering is explicit.
