@@ -5,7 +5,7 @@ Macで撮影した漫画の動画から、**机などの背景を除いた左右
 - Python / OpenCV / FFmpeg / MediaPipeで画像処理
 - React + ViteのローカルWeb UI
 - ページめくり中を避け、静止した候補からベストフレームを選択
-- 任意で左右ページを別々に採点し、それぞれ別時刻のベストフレームを採用
+- 任意で左右ページの外周を自動検出し、各ページを別々に台形補正
 - 任意で低周波の照明ムラ・緩い影をページ単位に補正
 - 手の重なり、ブレ、重複候補などを「要確認」として表示
 - 候補切替、除外/復元、ページ順、左右交換、分割位置を後から修正可能
@@ -110,7 +110,6 @@ manga-scan ui --config config.toml --projects projects
 2. **読み方と出力を選ぶ**
    - 日本漫画なら通常は「右 → 左」。
    - PNGは画質優先、JPEGは容量優先です。
-   - 「候補フレーム選択」を「左右ページ別」にすると、同じ見開き内でも左・右を別候補から選べます。
 3. **表紙を追加する（任意）**
    - 表紙が映っている時刻を `±0.1秒 / ±1秒` で選びます。
    - 表紙の外周だけを4点指定し、1ページとして保存します。
@@ -123,8 +122,10 @@ manga-scan ui --config config.toml --projects projects
    - 表紙用ROIとは別で、実際の見開きサイズに合わせます。
 6. **抽出を開始**
    - 基準時刻以降から動きが小さい区間を探し、候補フレームを評価します。
-7. **要確認ページをチェック**
+7. **要確認ページと動画タイムラインをチェック**
    - 手の重なり、ブレ、重複候補、時間間隔などを確認します。
+   - 検出済み見開きを動画全体のタイムラインで確認できます。
+   - 普段より長い見開き間隔は「欠落候補」として表示され、候補時刻を手動追加欄へ入れられます。
 8. **必要なら修正**
    - 候補フレーム切替
    - ページ除外 / 復元
@@ -133,6 +134,7 @@ manga-scan ui --config config.toml --projects projects
    - 分割位置修正
 9. **見落とした見開きを追加**
    - 動画の秒数を指定して追加できます。
+   - タイムラインの欠落候補は推定なので、元動画を確認してから追加してください。
 10. **PDFを出力**
    - 編集後は「PDFを出力」で変更を反映します。
 
@@ -315,7 +317,8 @@ dewarp_strength = 0.15
 | 別ページが1区間になる | `turn_threshold` を下げる |
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
-| 左右でベストな瞬間が違う | `candidate_selection_mode="per_page"`。レビュー画面で左/右だけ候補変更も可能 |
+| 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
+| 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
 | ページの端/中央が緩く暗い | `illumination_correction=true`。強すぎる場合は `illumination_strength` を0.4〜0.7へ下げる |
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
@@ -323,7 +326,10 @@ dewarp_strength = 0.15
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
 
-候補選択はデフォルトで従来互換の `spread` です。`per_page` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
+ページ別台形補正はデフォルトでは従来互換の `perspective_mode="spread"` です。
+`"per_page"` にすると元フレーム上で左右ページの外周を自動検出し、左右を別々の射影変換で補正します。
+両ページの輪郭confidenceが閾値に届かない見開きは `page_contour_low_confidence` として要確認にし、従来の「見開き全体を補正 → 左右分割」へ自動fallbackします。
+検出quadとconfidenceはmanifestに残り、`debug/page_contours/` に確認画像を保存します。
 
 照明ムラ補正はデフォルトOFFです。ON時はページ単位の低周波な明るさだけを均し、二値化や背景除去は行いません。
 黒ベタや網点への影響が気になる場合は `illumination_strength` を下げるかOFFにしてください。

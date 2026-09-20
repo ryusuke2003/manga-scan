@@ -14,11 +14,12 @@ from .dedupe import compare
 from .export import contact_sheets, export_pdf
 from .hand import HandDetector
 from .motion import Sample, StableDetector, choose_candidates, motion_score
+from .page_contour import detect_page_quads, draw_page_quads
 from .page_detect import refine_quad
+from .page_warp import warp_detected_pages
 from .perspective import validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
-from .selection import choose_candidate_selection, score_candidate_pages
-from .split import auto_dewarp_page, dewarp_debug_grid, enhance_page, split_spread
+from .split import auto_dewarp_page, dewarp_debug_grid, enhance_page, spine_position, split_spread
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
@@ -44,29 +45,6 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     save_image(project / f"{base}_hand_mask.png", mask)
     rectified = warp_roi(image, roi)
     save_image(project / f"{base}_spread.png", rectified)
-    if cfg.candidate_selection_mode == "per_page":
-        rectified_mask = (
-            warp_roi(mask, roi)
-            if overlap is not None
-            else np.zeros(rectified.shape[:2], np.uint8)
-        )
-        page_metrics, _ = score_candidate_pages(
-            rectified,
-            rectified_mask,
-            sample.motion,
-            cfg,
-            metrics,
-            hand_enabled=overlap is not None,
-        )
-        page_suspect = {
-            side: suspect_reasons(page_metrics[side], cfg, quad_ok)
-            for side in ("left", "right")
-        }
-    else:
-        page_metrics = {side: metrics.copy() for side in ("left", "right")}
-        page_suspect = {
-            side: suspect_reasons(metrics, cfg, quad_ok) for side in ("left", "right")
-        }
     record = {
         "id": number,
         "time": sample.time,
@@ -75,61 +53,10 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
         "hand_mask": f"{base}_hand_mask.png",
         "roi": roi,
         "metrics": metrics,
-        "page_metrics": page_metrics,
-        "page_suspect": page_suspect,
         "suspect": suspect_reasons(metrics, cfg, quad_ok),
     }
     write_json(project / f"{base}.json", record)
     return record
-
-
-def _candidate_by_id(spread, candidate_id):
-    return next(candidate for candidate in spread["candidates"] if candidate["id"] == candidate_id)
-
-
-def _selected_candidate_id(spread, side):
-    return (spread.get("selected_pages") or {}).get(side, spread["selected"])
-
-
-def _join_physical_pages(physical_pages):
-    height = min(page.shape[0] for page in physical_pages)
-    resized = []
-    for page in physical_pages:
-        width = max(1, round(page.shape[1] * height / page.shape[0]))
-        resized.append(cv2.resize(page, (width, height), interpolation=cv2.INTER_AREA))
-    width = min(page.shape[1] for page in resized)
-    normalized = [
-        page
-        if page.shape[1] == width
-        else cv2.resize(page, (width, height), interpolation=cv2.INTER_AREA)
-        for page in resized
-    ]
-    return np.concatenate(normalized, axis=1)
-
-
-def selected_spread_preview(project, spread, cfg):
-    selected = [_selected_candidate_id(spread, side) for side in ("left", "right")]
-    if selected[0] == selected[1]:
-        candidate_record = _candidate_by_id(spread, selected[0])
-        preview = cv2.imread(str(project / candidate_record["preview"]))
-        if preview is None:
-            raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
-        return preview
-
-    physical_pages = []
-    for side, candidate_id in zip(("left", "right"), selected):
-        candidate_record = _candidate_by_id(spread, candidate_id)
-        rectified = cv2.imread(str(project / candidate_record["preview"]))
-        if rectified is None:
-            raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
-        sides, _ = split_spread(
-            rectified,
-            spread.get("spine_ratio", cfg.spine_ratio),
-            cfg.split_mode,
-            cfg.gutter_fraction,
-        )
-        physical_pages.append(sides[side])
-    return _join_physical_pages(physical_pages)
 
 
 def render_cover(project, manifest):
@@ -172,68 +99,70 @@ def render_cover(project, manifest):
     }
 
 
+def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
+    """Choose per-page perspective correction or the legacy spread fallback."""
+
+    ratio = spread.get("spine_ratio", cfg.spine_ratio)
+    if cfg.perspective_mode == "per_page":
+        detection_image = image
+        if image.shape[1] > cfg.analysis_width:
+            scale = cfg.analysis_width / image.shape[1]
+            detection_image = cv2.resize(
+                image,
+                (cfg.analysis_width, max(2, round(image.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        detection = detect_page_quads(
+            detection_image,
+            chosen_roi,
+            spine_ratio=ratio,
+            min_confidence=cfg.page_contour_min_confidence,
+        )
+        spread["page_contours"] = detection
+        debug_path = f"debug/page_contours/{spread['id']}.jpg"
+        save_image(project / debug_path, draw_page_quads(image, detection))
+        spread["page_contour_debug"] = debug_path
+
+        if detection["detected"]:
+            spread["perspective_mode_used"] = "per_page"
+            spread["spine_px"] = spine_position(rectified, ratio, cfg.split_mode)
+            return warp_detected_pages(image, detection)
+
+        spread["perspective_mode_used"] = "spread_fallback"
+        extra = spread.setdefault("extra_suspect", [])
+        if "page_contour_low_confidence" not in extra:
+            extra.append("page_contour_low_confidence")
+    else:
+        spread["perspective_mode_used"] = "spread"
+
+    sides, spine = split_spread(rectified, ratio, cfg.split_mode, cfg.gutter_fraction)
+    spread["spine_px"] = spine
+    return sides
+
+
 def render_spread(project, manifest, spread):
     cfg = Config.from_dict(manifest["config"])
-    selected_pages = spread.get("selected_pages") or {
-        "left": spread["selected"],
-        "right": spread["selected"],
-    }
-    spread["selected_pages"] = selected_pages
-    cache = {}
-
-    def load_candidate(candidate_id):
-        if candidate_id not in cache:
-            chosen = _candidate_by_id(spread, candidate_id)
-            image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
-            rectified = warp_roi(image, chosen["roi"])
-            sides, spine = split_spread(
-                rectified,
-                spread.get("spine_ratio", cfg.spine_ratio),
-                cfg.split_mode,
-                cfg.gutter_fraction,
-            )
-            cache[candidate_id] = (chosen, rectified, sides, spine)
-        return cache[candidate_id]
-
-    selected_data = {
-        side: load_candidate(selected_pages[side]) for side in ("left", "right")
-    }
-    spread["spine_px_by_side"] = {
-        side: selected_data[side][3] for side in ("left", "right")
-    }
-    spread["spine_px"] = spread["spine_px_by_side"]["left"]
-
+    chosen = next(c for c in spread["candidates"] if c["id"] == spread["selected"])
+    image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
+    rectified = warp_roi(image, chosen["roi"])
     selected = f"selected/{spread['id']}.png"
-    if selected_pages["left"] == selected_pages["right"]:
-        selected_image = selected_data["left"][1]
-    else:
-        selected_image = _join_physical_pages(
-            [selected_data["left"][2]["left"], selected_data["right"][2]["right"]]
-        )
-    save_image(project / selected, selected_image)
+    save_image(project / selected, rectified)
     spread["path"] = selected
-
-    selected_suspect = []
-    for side in ("left", "right"):
-        chosen = selected_data[side][0]
-        selected_suspect.extend(
-            chosen.get("page_suspect", {}).get(side, chosen.get("suspect", []))
-        )
-    spread["suspect"] = list(
-        dict.fromkeys(selected_suspect + spread.get("extra_suspect", []))
+    sides = rectify_spread_pages(
+        project,
+        image,
+        rectified,
+        chosen["roi"],
+        spread,
+        cfg,
     )
-
+    spread["suspect"] = list(dict.fromkeys(chosen["suspect"] + spread.get("extra_suspect", [])))
     pages = []
     order = ["right", "left"] if cfg.reading_order == "rtl" else ["left", "right"]
     ext = "png" if cfg.image_format == "png" else "jpg"
     disabled_sides = set(spread.get("dewarp_disabled_sides", []))
     for side in order:
-        candidate_id = selected_pages[side]
-        chosen, _, sides, _ = selected_data[side]
         source_page = sides[side]
-        selected_source = f"selected/{spread['id']}_{side}.png"
-        save_image(project / selected_source, source_page)
-
         dewarp = {"mode": cfg.dewarp_mode, "applied": False, "status": "off"}
         manual_dewarp = 0.0
         if cfg.dewarp_mode == "manual":
@@ -296,12 +225,7 @@ def render_spread(project, manifest, spread):
         thumb = cv2.resize(page_image, (max(1, round(w * min(1, 480 / h))), min(480, h)))
         preview = f"pages/{spread['id']}_{side}_thumb.jpg"
         save_image(project / preview, thumb)
-        page_suspect = list(
-            dict.fromkeys(
-                chosen.get("page_suspect", {}).get(side, chosen.get("suspect", []))
-                + spread.get("extra_suspect", [])
-            )
-        )
+        page_suspect = spread["suspect"].copy()
         if dewarp.get("status") == "low_confidence":
             page_suspect.append("dewarp_low_confidence")
         pages.append(
@@ -311,9 +235,6 @@ def render_spread(project, manifest, spread):
                 "side": side,
                 "path": name,
                 "preview": preview,
-                "source": selected_source,
-                "candidate_id": candidate_id,
-                "candidate_time": chosen["time"],
                 "enabled": not bool(spread.get("duplicate_of")),
                 "suspect": list(dict.fromkeys(page_suspect)),
                 "dewarp": dewarp,
@@ -434,30 +355,20 @@ def run(project, roi=None):
                             "candidate": j,
                             "time": sample.time,
                             **records[-1]["metrics"],
-                            "left_score": records[-1]["page_metrics"]["left"]["score"],
-                            "right_score": records[-1]["page_metrics"]["right"]["score"],
-                            "left_sharpness": records[-1]["page_metrics"]["left"]["sharpness"],
-                            "right_sharpness": records[-1]["page_metrics"]["right"]["sharpness"],
-                            "left_hand_overlap": records[-1]["page_metrics"]["left"]["hand_overlap"],
-                            "right_hand_overlap": records[-1]["page_metrics"]["right"]["hand_overlap"],
                         }
                     )
-                selected, selected_pages = choose_candidate_selection(
-                    records, cfg.candidate_selection_mode
-                )
+                chosen = max(records, key=lambda c: c["metrics"]["score"])
                 spread = {
                     "id": spread_id,
                     "start": segment[0].time,
                     "end": segment[-1].time,
                     "candidates": records,
-                    "selected": selected,
-                    "selected_pages": selected_pages,
-                    "candidate_selection_mode": cfg.candidate_selection_mode,
+                    "selected": chosen["id"],
                     "extra_suspect": [],
                 }
                 if i and typical_gap and gaps[i - 1] > typical_gap * cfg.interval_gap_factor:
                     spread["extra_suspect"].append("interval_gap")
-                thumbnail = selected_spread_preview(project, spread, cfg)
+                thumbnail = cv2.imread(str(project / chosen["preview"]))
                 for prev_id, prev_thumb in reversed(previous_spreads[-cfg.dedupe_window :]):
                     match = compare(thumbnail, prev_thumb, cfg)
                     if match["suspect"]:
@@ -546,18 +457,7 @@ def edit(project, action, **params):
                     selection = int(params["candidate_id"])
                     if selection not in [c["id"] for c in spread["candidates"]]:
                         raise ValueError("Unknown candidate")
-                    side = params.get("side")
-                    if side is None:
-                        spread["selected"] = selection
-                        spread["selected_pages"] = {"left": selection, "right": selection}
-                    else:
-                        if side not in ("left", "right"):
-                            raise ValueError("Unknown page side")
-                        selected_pages = spread.get("selected_pages") or {
-                            "left": spread["selected"],
-                            "right": spread["selected"],
-                        }
-                        spread["selected_pages"] = {**selected_pages, side: selection}
+                    spread["selected"] = selection
                 replacements = {p["id"]: p for p in render_spread(project, manifest, spread)}
                 for index in indices:
                     old = manifest["pages"][index]
@@ -587,8 +487,6 @@ def edit(project, action, **params):
                 "end": timestamp,
                 "candidates": [rec],
                 "selected": 0,
-                "selected_pages": {"left": 0, "right": 0},
-                "candidate_selection_mode": cfg.candidate_selection_mode,
                 "extra_suspect": ["manual_frame"],
             }
             pages = render_spread(project, manifest, spread)

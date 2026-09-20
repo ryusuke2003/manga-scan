@@ -5,7 +5,6 @@ stable_frames = 5
 motion_threshold = 0.012
 turn_threshold = 0.025
 candidates_per_spread = 7
-candidate_selection_mode = "spread" # "spread" / "per_page"; per_page selects left/right independently
 
 sharpness_weight = 1.0
 motion_weight = 2.0
@@ -24,9 +23,11 @@ duplicate_ssim = 0.985
 duplicate_suspect_ssim = 0.94
 dedupe_window = 3
 
-refine_quad = false # Opt-in conservative contour search; fallback to user ROI
+refine_quad = false # Opt-in conservative spread-ROI refinement
 quad_max_shift = 0.025
-split_mode = "center" # "auto" searches a dark valley near the center
+perspective_mode = "spread" # "per_page" auto-detects left/right page contours and warps each page separately
+page_contour_min_confidence = 0.5 # per_page falls back to legacy spread split below this confidence
+split_mode = "center" # Legacy/fallback split; "auto" searches a dark valley near the center
 spine_ratio = 0.5
 gutter_fraction = 0.0 # Keep all pixels by default
 reading_order = "rtl"
