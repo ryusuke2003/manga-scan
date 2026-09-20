@@ -6,6 +6,7 @@ import cv2
 
 from .config import Config
 from .cover_detect import detect_cover_quad
+from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .perspective import rotate_roi, validate_roi
 from .reference_candidates import scan_reference_candidates
 from .rotation_detection import detect_video_rotation
@@ -70,7 +71,7 @@ def create_project(video, project, config=None, copy_source=False):
             "画像向きの自動判定に自信がありません。プレビューを確認し、必要なら向きを変更してください"
         )
     manifest = {
-        "version": 2,
+        "version": CURRENT_MANIFEST_VERSION,
         "source": source,
         "metadata": metadata,
         "config": config.to_dict(),
