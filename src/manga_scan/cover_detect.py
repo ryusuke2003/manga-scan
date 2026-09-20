@@ -172,13 +172,14 @@ def detect_cover_quad(image, min_confidence=0.62):
         support = _edge_support(distance, quad)
         scored.append((preliminary + 0.28 * support, support, quad))
     confidence, support, quad = max(scored, key=lambda candidate: candidate[0])
+    confidence = max(0.0, min(1.0, float(confidence)))
     detected = confidence >= min_confidence and support >= 0.28
     if not detected:
-        return {"detected": False, "confidence": round(float(confidence), 4), "roi": None}
+        return {"detected": False, "confidence": round(confidence, 4), "roi": None}
     normalized = quad / np.asarray([max(width - 1, 1), max(height - 1, 1)], dtype=np.float32)
     normalized = np.clip(normalized, 0, 1)
     try:
         roi = validate_roi(normalized).tolist()
     except ValueError:
-        return {"detected": False, "confidence": round(float(confidence), 4), "roi": None}
-    return {"detected": True, "confidence": round(float(confidence), 4), "roi": roi}
+        return {"detected": False, "confidence": round(confidence, 4), "roi": None}
+    return {"detected": True, "confidence": round(confidence, 4), "roi": roi}
