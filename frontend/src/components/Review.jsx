@@ -21,6 +21,14 @@ const fingerFallbackLabel = repair => {
   return '';
 };
 
+const backgroundFillLabel = fill => {
+  if (!fill || fill.mode === 'preserve') return '';
+  if (fill.status === 'unavailable') return 'ページ外背景: 輪郭不確かのため変更なし';
+  if (!fill.applied) return 'ページ外背景: 補正不要';
+  const mode = fill.mode === 'white' ? '白' : '紙色';
+  return `ページ外背景: ${mode}で隠す · ${Math.round((fill.filled_fraction ?? 0) * 100)}%`;
+};
+
 function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
 }
@@ -127,6 +135,10 @@ export default function Review({ manifest, file, busy, onEdit }) {
         {page.finger_repair.status === 'incomplete' && <p className="muted">隠れた部分を別候補から十分に補修できず、指が残っています。別の候補も確認してください。</p>}
         <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">指マスク ↗</a>}
           {page.finger_repair.unresolved_mask && <a href={file(page.finger_repair.unresolved_mask)} target="_blank" rel="noopener">未補修領域 ↗</a>}</div>
+      </div>}
+      {backgroundFillLabel(page.background_fill) && <div className="dewarp-meta">
+        <span>{backgroundFillLabel(page.background_fill)}</span>
+        {page.background_fill?.mask && <div className="row"><a href={file(page.background_fill.mask)} target="_blank" rel="noopener">ページmask ↗</a></div>}
       </div>}
       {page.dewarp?.mode === 'auto' && <div className="dewarp-meta">
         <span>湾曲補正: {page.dewarp.status === 'applied' ? `適用 最大 ${(page.dewarp.strength * 100).toFixed(1)}%${page.dewarp.profile_variation ? ` · 高さ方向差 ${(page.dewarp.profile_variation * 100).toFixed(1)}%` : ''}` : page.dewarp.status === 'disabled' ? 'ページ単位でOFF' : page.dewarp.status === 'not_needed' ? '補正不要' : '見送り'}{page.dewarp.confidence !== undefined ? ` · 信頼度 ${Math.round(page.dewarp.confidence * 100)}%` : ''}</span>
