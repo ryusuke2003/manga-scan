@@ -19,6 +19,25 @@ def validate_roi(points):
     return q
 
 
+def rotate_roi(points, rotation=0):
+    """Rotate a normalized TL/TR/BR/BL ROI clockwise with its image."""
+    q = validate_roi(points)
+    if rotation not in (0, 90, 180, 270):
+        raise ValueError("rotation must be 0, 90, 180, or 270")
+    if rotation == 0:
+        return q.copy()
+
+    if rotation == 90:
+        rotated = np.column_stack((1.0 - q[:, 1], q[:, 0]))
+    elif rotation == 180:
+        rotated = 1.0 - q
+    else:
+        rotated = np.column_stack((q[:, 1], 1.0 - q[:, 0]))
+
+    rotated = np.roll(rotated, rotation // 90, axis=0)
+    return validate_roi(rotated)
+
+
 def pixel_quad(points, shape):
     q = validate_roi(points)
     h, w = shape[:2]
