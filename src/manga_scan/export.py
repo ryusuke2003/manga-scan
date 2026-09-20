@@ -3,7 +3,6 @@ import re
 import tempfile
 import zipfile
 from pathlib import Path
-from xml.etree.ElementTree import Element, SubElement, tostring
 
 from PIL import Image, ImageDraw
 from reportlab.pdfgen.canvas import Canvas
@@ -58,8 +57,10 @@ def metadata_output_stem(metadata):
 
 def comicinfo_xml(metadata, page_count):
     """Build ComicInfo.xml for CBZ readers without adding a dependency."""
+    import xml.etree.ElementTree as ET
+
     metadata = normalize_book_metadata(metadata)
-    root = Element("ComicInfo")
+    root = ET.Element("ComicInfo")
     mapping = (
         ("title", "Title"),
         ("series", "Series"),
@@ -70,9 +71,9 @@ def comicinfo_xml(metadata, page_count):
     )
     for field, tag in mapping:
         if field in metadata:
-            SubElement(root, tag).text = metadata[field]
-    SubElement(root, "PageCount").text = str(int(page_count))
-    return tostring(root, encoding="utf-8", xml_declaration=True)
+            ET.SubElement(root, tag).text = metadata[field]
+    ET.SubElement(root, "PageCount").text = str(int(page_count))
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
 def export_pdf(paths, output, dpi=300, image_format="png", jpeg_quality=92, metadata=None):
