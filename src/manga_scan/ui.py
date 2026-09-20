@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from flask import Flask, abort, jsonify, request, send_file
 
 from .config import Config
-from .ingest import create_project, set_cover_roi, set_setup_frame, skip_cover
+from .ingest import create_project, set_cover_roi, set_rotation, set_setup_frame, skip_cover
 from .pipeline import edit, run
 from .storage import project_lock, read_manifest
 
@@ -139,11 +139,18 @@ def create_app(projects, config=None):
             elif action == "skip_cover":
                 manifest = skip_cover(project)
             elif action == "cover_roi":
-                manifest = set_cover_roi(project, data["roi"])
+                from .perspective import rotate_roi
+
+                current = read_manifest(project)
+                cfg = Config.from_dict(current["config"])
+                raw_roi = rotate_roi(data["roi"], (-cfg.rotation) % 360).tolist()
+                manifest = set_cover_roi(project, raw_roi)
             elif action == "reference_frame":
                 manifest = set_setup_frame(
                     project, "reference", data["time"], confirm=bool(data.get("confirm"))
                 )
+            elif action == "rotation":
+                manifest = set_rotation(project, data["rotation"])
             else:
                 raise ValueError("Unknown setup action")
             return jsonify(manifest)
@@ -221,10 +228,13 @@ def create_app(projects, config=None):
     def process(name):
         project = project_path(name)
         roi = request.get_json()["roi"]
-        from .perspective import validate_roi
+        from .perspective import rotate_roi, validate_roi
 
         validate_roi(roi)
-        return start_job(name, lambda: run(project, roi))
+        manifest = read_manifest(project)
+        cfg = Config.from_dict(manifest["config"])
+        raw_roi = rotate_roi(roi, (-cfg.rotation) % 360).tolist()
+        return start_job(name, lambda: run(project, raw_roi))
 
     @app.post("/api/projects/<name>/edit")
     def review(name):

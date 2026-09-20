@@ -18,6 +18,9 @@ export default function FrameSelector({
   onPreview,
   onConfirm,
   onSkip,
+  rotation,
+  rotationDetection,
+  onRotation,
 }) {
   const [value, setValue] = useState(String(time));
   const [loadedImageUrl, setLoadedImageUrl] = useState(null);
@@ -53,6 +56,22 @@ export default function FrameSelector({
         onLoad={() => setLoadedImageUrl(imageUrl)}
       />
     </div>
+    {onRotation && <div className="rotation-confirm">
+      <div>
+        <strong>画像の向き</strong>
+        {rotationDetection?.source === 'page_geometry' && <p className="muted">自動判定: {rotation}° · 信頼度 {Math.round((rotationDetection.confidence ?? 0) * 100)}%。違って見える場合だけ変更してください。</p>}
+        {rotationDetection?.source === 'video_metadata' && <p className="muted">動画の回転メタデータをFFmpegが反映済みです。プレビューが正しければそのままでOKです。</p>}
+        {rotationDetection?.source === 'manual' && <p className="muted">手動で向きを指定しています。</p>}
+      </div>
+      <label>プレビューの向き
+        <select value={String(rotation ?? 0)} disabled={busy} onChange={event => onRotation(Number(event.target.value))}>
+          <option value="0">そのまま</option>
+          <option value="90">右へ90°</option>
+          <option value="180">180°</option>
+          <option value="270">左へ90°</option>
+        </select>
+      </label>
+    </div>}
     <div className="frame-controls">
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 1)}>−1秒</button>
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 0.1)}>−0.1秒</button>

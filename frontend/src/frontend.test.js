@@ -10,6 +10,7 @@ import Setup, {
   buildInitialConfig,
   correctionPresetForConfig,
 } from './components/Setup.jsx';
+import { rotateNormalizedRoi } from './rotation.js';
 import { detectMissingPageCandidates, timelinePercent } from './timeline.js';
 import {
   didJobFinish,
@@ -106,6 +107,15 @@ describe('frontend helpers', () => {
     const bounds = { left: 100, top: 50, width: 400, height: 200 };
     expect(normalizedPoint(300, 150, bounds)).toEqual([0.5, 0.5]);
     expect(normalizedPoint(0, 500, bounds)).toEqual([0, 1]);
+  });
+
+  it('maps saved raw ROIs into rotated preview coordinates', () => {
+    const roi = [[0.1, 0.2], [0.8, 0.2], [0.8, 0.9], [0.1, 0.9]];
+    const rotated = rotateNormalizedRoi(roi, 90);
+    expect(rotated[0][0]).toBeCloseTo(0.1);
+    expect(rotated[0][1]).toBeCloseTo(0.1);
+    expect(rotated[2][0]).toBeCloseTo(0.8);
+    expect(rotated[2][1]).toBeCloseTo(0.8);
   });
 
   it('detects long timeline gaps as missing-page candidates', () => {
@@ -254,15 +264,46 @@ describe('frontend helpers', () => {
     );
   });
 
-  it('submits rotation as a numeric config value from the setup form', () => {
+  it('defaults setup rotation to automatic detection and allows manual override', () => {
+    const initial = buildInitialConfig();
+    expect(initial.auto_rotation).toBe(true);
+
     const onCreate = vi.fn();
-    render(React.createElement(Setup, { busy: false, defaults: buildInitialConfig(), onChoose: vi.fn(), onCreate }));
+    render(React.createElement(Setup, { busy: false, defaults: initial, onChoose: vi.fn(), onCreate }));
     fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/book.mp4' } });
+    expect(screen.getByLabelText('画像の向き').value).toBe('auto');
     fireEvent.change(screen.getByLabelText('画像の向き'), { target: { value: '270' } });
+    expect(screen.getByLabelText('画像の向き').value).toBe('270');
+    fireEvent.change(screen.getByLabelText('画像の向き'), { target: { value: 'auto' } });
+    expect(screen.getByLabelText('画像の向き').value).toBe('auto');
     fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
     expect(onCreate).toHaveBeenCalledWith('/tmp/book.mp4', expect.objectContaining({
-      rotation: 270,
+      auto_rotation: true,
+      rotation: 0,
     }));
+  });
+
+  it('shows detected rotation in frame preview and allows manual override', () => {
+    const onRotation = vi.fn();
+    render(React.createElement(FrameSelector, {
+      step: '04 / 見開き基準フレーム',
+      title: '基準フレーム',
+      description: 'desc',
+      imageUrl: '/rotated-preview.png',
+      time: 3,
+      duration: 20,
+      busy: false,
+      confirmLabel: 'このフレームを基準にする →',
+      onPreview: vi.fn(),
+      onConfirm: vi.fn(),
+      rotation: 270,
+      rotationDetection: { source: 'page_geometry', confidence: 0.82 },
+      onRotation,
+    }));
+
+    expect(screen.getByText(/自動判定: 270°/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('プレビューの向き'), { target: { value: '90' } });
+    expect(onRotation).toHaveBeenCalledWith(90);
   });
 
   it('submits the selected correction preset from the setup form', () => {

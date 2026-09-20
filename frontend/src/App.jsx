@@ -4,6 +4,7 @@ import Setup from './components/Setup.jsx';
 import FrameSelector from './components/FrameSelector.jsx';
 import RoiSelector from './components/RoiSelector.jsx';
 import Review from './components/Review.jsx';
+import { rotateNormalizedRoi } from './rotation.js';
 
 export default function App() {
   const scanner = useScanner();
@@ -24,7 +25,7 @@ export default function App() {
       step="02 / 表紙フレーム（任意）"
       title="表紙にするフレームを選ぶ"
       description="録画冒頭の表紙を1ページとして残す場合は、そのフレームを選びます。不要ならスキップできます。"
-      imageUrl={fileUrl(project, cover.frame || 'source/first_frame.png', revision)}
+      imageUrl={fileUrl(project, cover.preview || cover.frame || 'source/first_frame_preview.png', revision)}
       time={cover.time ?? 0}
       duration={manifest.metadata.duration}
       busy={busy}
@@ -32,12 +33,15 @@ export default function App() {
       onPreview={time => scanner.coverFrame(time)}
       onConfirm={time => scanner.coverFrame(time, true)}
       onSkip={scanner.skipCover}
+      rotation={manifest.config.rotation}
+      rotationDetection={manifest.rotation_detection}
+      onRotation={scanner.rotation}
     />;
   } else if (canConfigure && coverStatus === 'frame_selected') {
     setupStage = <RoiSelector
       key={`${project}-cover`}
-      imageUrl={fileUrl(project, cover.frame, revision)}
-      initialPoints={cover.roi}
+      imageUrl={fileUrl(project, cover.preview || cover.frame, revision)}
+      initialPoints={rotateNormalizedRoi(cover.roi, manifest.config.rotation)}
       metadata={manifest.metadata}
       busy={busy}
       onStart={scanner.coverRoi}
@@ -51,19 +55,22 @@ export default function App() {
       step="04 / 見開き基準フレーム"
       title="最初に本を開いた見開きを選ぶ"
       description="左右2ページがしっかり見えている場面を選んでください。この時刻より前は自動見開き解析から除外します。"
-      imageUrl={fileUrl(project, reference?.frame || 'source/first_frame.png', revision)}
+      imageUrl={fileUrl(project, reference?.preview || reference?.frame || 'source/first_frame_preview.png', revision)}
       time={reference?.time ?? 0}
       duration={manifest.metadata.duration}
       busy={busy}
       confirmLabel="このフレームを基準にする →"
       onPreview={time => scanner.referenceFrame(time)}
       onConfirm={time => scanner.referenceFrame(time, true)}
+      rotation={manifest.config.rotation}
+      rotationDetection={manifest.rotation_detection}
+      onRotation={scanner.rotation}
     />;
   } else if (canConfigure) {
     setupStage = <RoiSelector
       key={`${project}-spread`}
-      imageUrl={fileUrl(project, reference?.frame || 'source/first_frame.png', revision)}
-      initialPoints={manifest.roi}
+      imageUrl={fileUrl(project, reference?.preview || reference?.frame || 'source/first_frame_preview.png', revision)}
+      initialPoints={rotateNormalizedRoi(manifest.roi, manifest.config.rotation)}
       metadata={manifest.metadata}
       busy={busy}
       onStart={scanner.start}

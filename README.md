@@ -134,6 +134,7 @@ npm --prefix frontend install --no-audit --no-fund --no-package-lock
    - 日本漫画なら通常は「右 → 左」。
    - PNGは画質優先、JPEGは容量優先です。
    - 補正は「原画優先 / 標準補正 / スキャン風」のプリセットから選べます。
+   - 画像の向きはデフォルトで自動判定します。動画の回転メタデータを優先し、無い場合は低解像度3フレームだけで0 / 90 / 180 / 270°を推定します。
    - 「候補フレーム選択」を「左右ページ別」にすると、同じ見開き内でも左・右を別候補から選べます。
    - 「別フレームから指を補修」をONにすると、同じ見開きの別候補で指に隠れていない画素だけを使って補修します。
    - 「補正の詳細設定」を開くと、左右別台形、見開き外周、分割位置、湾曲、照明ムラ、白背景を個別に設定できます。
@@ -143,6 +144,8 @@ npm --prefix frontend install --no-audit --no-fund --no-package-lock
    - 表紙が不要ならスキップできます。
 4. **見開きの基準フレームを選ぶ**
    - 最初に本を開いて左右2ページが見えている時刻を選びます。
+   - 自動判定した向きでプレビューされます。正しければそのまま確定し、違う場合だけ0 / 90 / 180 / 270°へ変更できます。
+   - confidenceが低い自動判定は警告表示され、基準フレーム確定時にユーザー確認済みとして記録します。
    - この時刻より前は、自動の見開き検出から除外されます。
 5. **見開きの外周を4点指定**
    - `左上 → 右上 → 右下 → 左下` の順にクリックします。
@@ -336,7 +339,7 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 - **スキャン風**: 標準補正に白背景正規化も加え、スキャナに近い見た目を狙う。新規設定のデフォルト
 - **カスタム**: 詳細設定を変更すると自動的にカスタム扱いになる
 
-詳細設定では `refine_quad`、`perspective_mode`、`page_contour_min_confidence`、`split_mode`、`dewarp_mode`、`illumination_correction`、`white_normalization` と、それぞれの主要な強度・信頼度を変更できます。UIから選んだ値もプロジェクト作成時に `config.resolved.json` へ保存されます。
+詳細設定では `auto_rotation` / `rotation`、`refine_quad`、`perspective_mode`、`page_contour_min_confidence`、`split_mode`、`dewarp_mode`、`illumination_correction`、`white_normalization` と、それぞれの主要な強度・信頼度を変更できます。UIから選んだ値もプロジェクト作成時に `config.resolved.json` へ保存されます。
 
 ## 自動湾曲補正
 
@@ -378,7 +381,7 @@ dewarp_strength = 0.15
 | 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
 | 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
-| 横向き撮影で上下に割れそう | `rotation=90` または `270`。見開き全体を先に回転してから見た目上の左右へ分割 |
+| 横向き撮影で上下に割れそう | 通常は `auto_rotation=true` で自動判定。プレビューが違う場合だけ0 / 90 / 180 / 270°へ手動変更 |
 | ページの端/中央が緩く暗い | `illumination_correction=true`。強すぎる場合は `illumination_strength` を0.4〜0.7へ下げる |
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |

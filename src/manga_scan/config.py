@@ -47,6 +47,7 @@ class Config:
     white_target: int = 245
     white_strength: float = 0.6
     rotation: int = 0
+    auto_rotation: bool = True
     dewarp_mode: str = "auto"
     dewarp_strength: float = 0.0
     dewarp_max_strength: float = 0.25
@@ -142,6 +143,10 @@ class Config:
         data = dict(data)
         if data.get("hand_backend") == "none" and "finger_repair" not in data:
             data["finger_repair"] = False
+        # Numeric rotation existed before auto detection. Keep old configs and
+        # manifests manual unless they explicitly opt into the new behavior.
+        if data.get("rotation") in (90, 180, 270) and "auto_rotation" not in data:
+            data["auto_rotation"] = False
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown settings: {sorted(unknown)}")

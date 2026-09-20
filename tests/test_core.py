@@ -119,6 +119,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.dewarp_mode == "auto"
     assert cfg.illumination_correction is True
     assert cfg.white_normalization is True
+    assert cfg.auto_rotation is True
 
     disabled = Config.from_dict({"hand_backend": "none"})
     assert disabled.hand_backend == "none"
@@ -206,6 +207,16 @@ def test_rotate_roi_keeps_tl_tr_br_bl_order():
         [[0.1, 0.1], [0.8, 0.1], [0.8, 0.8], [0.1, 0.8]],
         atol=1e-6,
     )
+
+    np.testing.assert_allclose(rotate_roi(rotated, 270), roi, atol=1e-6)
+
+
+def test_explicit_legacy_rotation_disables_new_auto_detection_default():
+    cfg = Config.from_dict({"rotation": 270})
+    assert cfg.rotation == 270
+    assert cfg.auto_rotation is False
+    assert Config.from_dict({"rotation": 0}).auto_rotation is True
+    assert Config.from_dict({}).auto_rotation is True
 
 
 def test_auto_spine_and_correction():

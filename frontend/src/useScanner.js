@@ -156,6 +156,7 @@ export default function useScanner() {
     skipCover: () => setup('skip_cover'),
     coverRoi: roi => setup('cover_roi', { roi }),
     referenceFrame: (time, confirm = false) => setup('reference_frame', { time, confirm }),
+    rotation: rotation => setup('rotation', { rotation }),
     start: roi => perform(`/api/projects/${encodeURIComponent(project)}/run`, { roi }),
     edit: (action, params = {}) => perform(`/api/projects/${encodeURIComponent(project)}/edit`, { action, ...params }),
   };
