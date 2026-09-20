@@ -13,7 +13,7 @@ import Setup, {
 import { detectMissingPageCandidates, timelinePercent } from './timeline.js';
 import {
   didJobFinish,
-  isStaleProjectPoll,
+  isStalePoll,
   projectDeleteErrorMessage,
   removeProjectFromServer,
   shouldReportPollError,
@@ -99,8 +99,9 @@ describe('frontend helpers', () => {
     expect(shouldReportPollError(error, false, false, true)).toBe(false);
     expect(Object.assign(new Error('aborted'), { name: 'AbortError' })).toMatchObject({ name: 'AbortError' });
     expect(shouldReportPollError(Object.assign(new Error('aborted'), { name: 'AbortError' }), false, false)).toBe(false);
-    expect(isStaleProjectPoll('scan-old', null)).toBe(true);
-    expect(isStaleProjectPoll('scan-current', 'scan-current')).toBe(false);
+    expect(isStalePoll('scan-old', null, 3, 3)).toBe(true);
+    expect(isStalePoll('scan-current', 'scan-current', 3, 4)).toBe(true);
+    expect(isStalePoll('scan-current', 'scan-current', 4, 4)).toBe(false);
   });
 
   it('removes a deleted project from sidebar state immediately', () => {
