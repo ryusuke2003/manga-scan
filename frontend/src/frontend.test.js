@@ -14,6 +14,7 @@ import { detectMissingPageCandidates, timelinePercent } from './timeline.js';
 import {
   didJobFinish,
   isStaleProjectPoll,
+  projectDeleteErrorMessage,
   removeProjectFromServer,
   shouldReportPollError,
 } from './useScanner.js';
@@ -110,6 +111,13 @@ describe('frontend helpers', () => {
     };
     expect(removeProjectFromServer(state, 'scan-a').projects).toEqual([{ id: 'scan-b' }]);
     expect(state.projects).toHaveLength(2);
+  });
+
+  it('shows restart guidance when an old backend has no delete route', () => {
+    expect(projectDeleteErrorMessage(Object.assign(new Error('NOT FOUND'), { status: 404 })))
+      .toContain('再起動');
+    expect(projectDeleteErrorMessage(Object.assign(new Error('BUSY'), { status: 409 })))
+      .toBe('BUSY');
   });
 
   it('preserves HTTP status codes on API errors', async () => {
