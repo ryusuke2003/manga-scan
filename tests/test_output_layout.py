@@ -178,6 +178,41 @@ def test_crop_applies_to_only_selected_candidate_in_display_orientation(
         pipeline.edit(tmp_path, "crop", spread_id=spread["id"], candidate_id=0, roi=[[0, 0]])
 
 
+def test_whole_spread_flags_hand_added_by_expanded_auto_crop(tmp_path, monkeypatch):
+    image, manifest, spread = fixture(tmp_path, monkeypatch)
+    candidate_roi = [[.08, .08], [.88, .08], [.88, .92], [.08, .92]]
+    spread["candidates"][0]["roi"] = candidate_roi
+    mask = np.zeros(image.shape[:2], np.uint8)
+    mask[55:115, 270:296] = 255
+    save_image(tmp_path / "expanded_hand_mask.png", mask)
+    spread["candidates"][0]["hand_mask"] = "expanded_hand_mask.png"
+    manifest["config"].update(hand_backend="mediapipe", finger_repair=False)
+
+    detected = {
+        "detected": True,
+        "confidence": .9,
+        "left": {
+            "quad": [[.04, .06], [.49, .08], [.49, .92], [.04, .94]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": [[.51, .08], [.99, .06], [.99, .94], [.51, .92]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": True,
+        },
+    }
+    monkeypatch.setattr(pipeline, "detect_page_quads", lambda *_a, **_k: detected)
+
+    result = pipeline.render_spread(tmp_path, manifest, spread)[0]
+
+    assert result["crop"]["status"] == "auto_pages"
+    assert result["finger_repair"]["status"] == "disabled"
+    assert "hand_overlap" in result["suspect"]
+
+
 def test_whole_spread_keeps_finger_repair_active(tmp_path, monkeypatch):
     image, manifest, spread = fixture(tmp_path, monkeypatch)
     mask = np.zeros(image.shape[:2], np.uint8)
