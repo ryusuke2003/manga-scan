@@ -103,11 +103,12 @@ it('opens the fullscreen viewer and changes zoom without leaving Review', () => 
   expect(dialog).toBeTruthy();
 
   fireEvent.click(screen.getByRole('button', { name: 'ズーム 200%' }));
-  const image = screen.getByAltText('s_whole 補正後');
+  const image = dialog.querySelector('img[alt="s_whole 補正後"]');
+  expect(image).toBeTruthy();
   expect(image.style.width).toBe('200%');
 
   fireEvent.click(screen.getByRole('button', { name: '元画像' }));
-  expect(screen.getByAltText('s_whole 元画像')).toBeTruthy();
+  expect(dialog.querySelector('img[alt="s_whole 元画像"]')).toBeTruthy();
 
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByRole('dialog', { name: 'ページ全画面ビューア' })).toBeNull();
