@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import Review from './Review.jsx';
+import Review, { localAlignmentSummary } from './Review.jsx';
 import Setup from './Setup.jsx';
 
 const manifest = {
@@ -54,6 +54,74 @@ it('can discard a manual crop and return to automatic detection', () => {
   render(<Review manifest={manual} file={path => path} busy={false} onEdit={onEdit} />);
   fireEvent.click(screen.getByText('自動検出に戻す'));
   expect(onEdit).toHaveBeenCalledWith('reset_crop', { spread_id: 's', candidate_id: 0 });
+});
+
+it('summarizes optional local finger alignment metadata compactly', () => {
+  expect(localAlignmentSummary({
+    local_alignment: {
+      component_count: 2,
+      components: [
+        { donor_candidate_id: 4, shift: { dx: 3, dy: 4 }, score: .95, coverage: 1 },
+        { donor_candidate_id: 2, dx: -6, dy: 0, score: .91, coverage: .96 },
+      ],
+    },
+  })).toBe('局所補正 2領域 · 最大ずれ 6px');
+
+  expect(localAlignmentSummary({ coverage: 1 })).toBe('');
+});
+
+it('shows local alignment metadata only when present in finger repair results', () => {
+  const withLocalAlignment = {
+    ...manifest,
+    pages: [{
+      ...manifest.pages[0],
+      finger_repair: {
+        status: 'complete',
+        coverage: 1,
+        donors: [4, 2],
+        target_mask: 'debug/target.png',
+        local_alignment: {
+          component_count: 2,
+          max_shift_px: 6,
+          components: [
+            { donor_candidate_id: 4, dx: 2, dy: 1, score: .96, coverage: 1 },
+            { donor_candidate_id: 2, dx: -6, dy: 0, score: .93, coverage: 1 },
+          ],
+        },
+      },
+    }],
+  };
+  render(<Review manifest={withLocalAlignment} file={path => path} busy={false} onEdit={vi.fn()} />);
+
+  expect(screen.getByText((_text, node) => node.tagName === 'SPAN'
+    && node.textContent.includes('指補修: 完了')
+    && node.textContent.includes('donor #4, #2')
+    && node.textContent.includes('局所補正 2領域 · 最大ずれ 6px'))).toBeTruthy();
+});
+
+it('treats an unresolved finger mask as review-required even at high coverage', () => {
+  const unresolved = {
+    ...manifest,
+    pages: [{
+      ...manifest.pages[0],
+      suspect: [],
+      finger_repair: {
+        status: 'complete',
+        coverage: .96,
+        donors: [4],
+        target_mask: 'debug/target.png',
+        unresolved_mask: 'debug/unresolved.png',
+      },
+    }],
+  };
+  render(<Review manifest={unresolved} file={path => path} busy={false} onEdit={vi.fn()} />);
+
+  expect(screen.getByText('1 ページ / 要確認 1')).toBeTruthy();
+  expect(screen.getByText(/要確認: 未補修領域が残っています/)).toBeTruthy();
+  expect(screen.getByText('未補修領域 ↗')).toBeTruthy();
+
+  fireEvent.click(screen.getByLabelText('要確認だけ表示'));
+  expect(screen.getByText('001 · 見開き')).toBeTruthy();
 });
 
 it('retains split review controls for legacy projects without the new setting', () => {
