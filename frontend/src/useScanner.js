@@ -12,7 +12,7 @@ export function shouldReportPollError(error, aborted, mutating) {
 export default function useScanner() {
   const [project, setProject] = useState(null);
   const [manifest, setManifest] = useState(null);
-  const [server, setServer] = useState({ projects: [], job: { busy: false }, token: '' });
+  const [server, setServer] = useState({ projects: [], job: { busy: false }, token: '', defaults: null });
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [refresh, setRefresh] = useState(0);
