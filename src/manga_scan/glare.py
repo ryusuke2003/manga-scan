@@ -56,7 +56,7 @@ def detect_glare_mask(image, roi=None):
     # Keep an absolute white floor so ordinary off-white paper is not enough,
     # while still adapting to HDR/brightly exposed footage.
     bright_threshold = max(242.0, float(np.percentile(roi_values, 96.0)))
-    sigma = max(3.0, min(gray.shape[:2]) * 0.015)
+    sigma = max(5.0, min(gray.shape[:2]) * 0.04)
     local_background = cv2.GaussianBlur(gray, (0, 0), sigmaX=sigma, sigmaY=sigma)
     local_delta = gray.astype(np.float32) - local_background.astype(np.float32)
 
