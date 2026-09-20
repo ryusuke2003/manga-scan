@@ -12,6 +12,7 @@ class Config:
     motion_threshold: float = 0.012
     turn_threshold: float = 0.025
     candidates_per_spread: int = 7
+    candidate_selection_mode: str = "spread"
     sharpness_weight: float = 1.0
     motion_weight: float = 2.0
     hand_overlap_weight: float = 8.0
@@ -113,6 +114,7 @@ class Config:
             "hand_backend": ("mediapipe", "none"),
             "image_format": ("png", "jpeg"),
             "split_mode": ("center", "auto"),
+            "candidate_selection_mode": ("spread", "per_page"),
             "dewarp_mode": ("off", "manual", "auto"),
             "reading_order": ("rtl", "ltr"),
             "hwaccel": ("none", "videotoolbox"),
