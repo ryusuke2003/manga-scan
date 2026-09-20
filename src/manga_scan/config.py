@@ -27,6 +27,7 @@ class Config:
     finger_repair: bool = True
     finger_repair_min_coverage: float = 0.9
     finger_repair_fallback: str = "paper"
+    page_background_fill: str = "paper"
     duplicate_hash_distance: int = 4
     duplicate_ssim: float = 0.985
     duplicate_suspect_ssim: float = 0.94
@@ -129,6 +130,7 @@ class Config:
             "dewarp_mode": ("off", "manual", "auto"),
             "reading_order": ("rtl", "ltr"),
             "finger_repair_fallback": ("preserve", "paper", "white"),
+            "page_background_fill": ("preserve", "paper", "white"),
             "hwaccel": ("none", "videotoolbox"),
             "rotation": (0, 90, 180, 270),
         }.items():
