@@ -1,0 +1,62 @@
+import { useEffect, useState } from 'react';
+
+const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価' };
+const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
+
+function ImageLink({ path, preview, file }) {
+  return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
+}
+
+function Spread({ spread, config, file, busy, onEdit }) {
+  const [ratio, setRatio] = useState(spread.spine_ratio ?? config.spine_ratio);
+  useEffect(() => setRatio(spread.spine_ratio ?? config.spine_ratio), [spread.spine_ratio, config.spine_ratio]);
+  return <details className="spread">
+    <summary>{spread.id} · {spread.start.toFixed(1)}–{spread.end.toFixed(1)}s{spread.duplicate_of ? ' · 重複候補' : ''}</summary>
+    <p className="muted">{reasons(spread.suspect)}</p>
+    <div className="row">
+      <button disabled={busy} onClick={() => onEdit('swap', { spread_id: spread.id })}>左右の順番を入れ替え</button>
+      <label htmlFor={`spine-${spread.id}`}>分割位置</label>
+      <input id={`spine-${spread.id}`} type="number" min="0.25" max="0.75" step="0.005" value={ratio} onChange={event => setRatio(event.target.value)} />
+      <button disabled={busy || ratio === '' || Number(ratio) < .25 || Number(ratio) > .75} onClick={() => onEdit('spine', { spread_id: spread.id, ratio: Number(ratio) })}>反映</button>
+    </div>
+    <div className="candidates">{spread.candidates.map(candidate => <div key={candidate.id} className={`candidate ${candidate.id === spread.selected ? 'selected' : ''}`}>
+      <ImageLink file={file} path={candidate.path} preview={candidate.preview} />
+      <p>{candidate.time.toFixed(2)}s · score {candidate.metrics.score.toFixed(3)}<br />
+        鮮鋭度 {candidate.metrics.sharpness.toFixed(0)} / 手 {candidate.metrics.hand_overlap === null ? '未評価' : `${(candidate.metrics.hand_overlap * 100).toFixed(1)}%`}</p>
+      <a href={file(candidate.hand_mask)} target="_blank" rel="noopener">手のマスク ↗</a>
+      <button disabled={busy || candidate.id === spread.selected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id })}>{candidate.id === spread.selected ? '採用中' : 'この候補を採用'}</button>
+    </div>)}</div>
+  </details>;
+}
+
+export default function Review({ manifest, file, busy, onEdit }) {
+  const [suspectsOnly, setSuspectsOnly] = useState(false);
+  const [showExcluded, setShowExcluded] = useState(false);
+  const [timestamp, setTimestamp] = useState('');
+  const enabled = manifest.pages.filter(page => page.enabled);
+  let number = 0;
+  const numbered = manifest.pages.map(page => ({ ...page, number: page.enabled ? ++number : null }));
+  return <section>
+    <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(page => page.suspect.length).length}</h2></div>
+      <div className="row"><button className="primary" disabled={busy || !enabled.length} onClick={() => onEdit('export')}>PDFを出力</button>
+        {manifest.pdf && !manifest.pdf_stale && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
+    <p className="muted">{manifest.pdf_stale ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。' : '現在のページ順・画質でPDFを出力済みです。'}</p>
+    <div className="toolbar panel">
+      <label className="checkbox"><input type="checkbox" checked={suspectsOnly} onChange={event => setSuspectsOnly(event.target.checked)} /> 要確認だけ表示</label>
+      <label className="checkbox"><input type="checkbox" checked={showExcluded} onChange={event => setShowExcluded(event.target.checked)} /> 除外ページも表示</label>
+      <form className="row" onSubmit={event => { event.preventDefault(); onEdit('add_frame', { time: Number(timestamp) }); }}>
+        <input aria-label="追加する動画の秒数" type="number" min="0" max={manifest.metadata.duration - .001} step="any" placeholder="動画の秒数" required value={timestamp} onChange={event => setTimestamp(event.target.value)} />
+        <button disabled={busy || timestamp === ''}>この時刻から追加</button></form>
+    </div>
+    <div className="page-grid">{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || page.suspect.length)).map(page => <article key={page.id} className={`page-card ${page.suspect.length ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'}`}>
+      <ImageLink file={file} path={page.path} preview={page.preview} />
+      <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {page.side === 'right' ? '右ページ' : '左ページ'}</h3>
+      <p>{reasons(page.suspect)}</p>
+      <div className="row"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
+        <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
+        <button disabled={busy} aria-label={`${page.id}を後ろへ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: 1 })}>→</button></div>
+    </article>)}</div>
+    <h2 className="spreads-heading">見開き・候補フレーム</h2><p className="muted">候補をクリックすると元解像度で再抽出します。手のマスクとスコアも確認できます。</p>
+    {manifest.spreads.map(spread => <Spread key={spread.id} spread={spread} config={manifest.config} file={file} busy={busy} onEdit={onEdit} />)}
+  </section>;
+}

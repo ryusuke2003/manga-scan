@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manga-scan-local"
+version = "0.1.0"
+description = "Offline, hand-aware manga video to image PDF scanner"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "numpy>=2,<3", "opencv-contrib-python>=4.10,<5", "Pillow>=11,<13",
+  "Flask>=3.1,<4", "reportlab>=4.2,<5",
+]
+
+[project.optional-dependencies]
+hands = ["mediapipe==0.10.35"]
+dev = ["pytest>=8,<10", "pypdf>=5,<7", "ruff>=0.11"]
+
+[project.scripts]
+manga-scan = "manga_scan.cli:main"
+
+[tool.setuptools.package-data]
+manga_scan = ["static/*", "static/assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
