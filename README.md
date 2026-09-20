@@ -25,7 +25,7 @@ cp config.example.toml config.toml
 ```
 
 Homebrewが未導入の場合は[公式手順](https://brew.sh/)で導入してください。
-`ffmpeg -version` と `ffprobe -version` で確認できます。
+`ffmpeg -version` と `ffprobe -version`、`node --version`（22.12以上）で確認できます。
 
 依存とモデルの**インストール時だけ**ネット接続が必要です。その後はネットを切って処理できます。
 別のオンラインPCで必要なwheelとモデルを用意して持ち込むこともできます。
