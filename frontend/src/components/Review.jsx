@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import VideoTimeline from './VideoTimeline.jsx';
+
 const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い' };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
 const pageSideLabel = side => side === 'cover' ? '表紙' : (side === 'right' ? '右ページ' : '左ページ');
@@ -42,6 +44,11 @@ export default function Review({ manifest, file, busy, onEdit }) {
       <div className="row"><button className="primary" disabled={busy || !enabled.length} onClick={() => onEdit('export')}>PDFを出力</button>
         {manifest.pdf && !manifest.pdf_stale && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
     <p className="muted">{manifest.pdf_stale ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。' : '現在のページ順・画質でPDFを出力済みです。'}</p>
+    <VideoTimeline
+      manifest={manifest}
+      busy={busy}
+      onSelectTime={time => setTimestamp(time.toFixed(2))}
+    />
     <div className="toolbar panel">
       <label className="checkbox"><input type="checkbox" checked={suspectsOnly} onChange={event => setSuspectsOnly(event.target.checked)} /> 要確認だけ表示</label>
       <label className="checkbox"><input type="checkbox" checked={showExcluded} onChange={event => setShowExcluded(event.target.checked)} /> 除外ページも表示</label>
