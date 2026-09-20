@@ -4,6 +4,7 @@ import Setup from './components/Setup.jsx';
 import FrameSelector from './components/FrameSelector.jsx';
 import RoiSelector from './components/RoiSelector.jsx';
 import Review from './components/Review.jsx';
+import { rotateNormalizedRoi } from './rotation.js';
 
 export default function App() {
   const scanner = useScanner();
@@ -40,7 +41,7 @@ export default function App() {
     setupStage = <RoiSelector
       key={`${project}-cover`}
       imageUrl={fileUrl(project, cover.preview || cover.frame, revision)}
-      initialPoints={cover.roi}
+      initialPoints={rotateNormalizedRoi(cover.roi, manifest.config.rotation)}
       metadata={manifest.metadata}
       busy={busy}
       onStart={scanner.coverRoi}
@@ -69,7 +70,7 @@ export default function App() {
     setupStage = <RoiSelector
       key={`${project}-spread`}
       imageUrl={fileUrl(project, reference?.preview || reference?.frame || 'source/first_frame_preview.png', revision)}
-      initialPoints={manifest.roi}
+      initialPoints={rotateNormalizedRoi(manifest.roi, manifest.config.rotation)}
       metadata={manifest.metadata}
       busy={busy}
       onStart={scanner.start}
