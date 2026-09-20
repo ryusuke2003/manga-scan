@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 _MAX_MAP_SIDE = 512
 _MIN_GAIN = 0.9
 _MAX_GAIN = 1.4
