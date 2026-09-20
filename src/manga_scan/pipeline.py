@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from . import pipeline_render_helpers as render_helpers
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_cbz, export_pdf
@@ -20,7 +21,6 @@ from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
-from . import pipeline_render_helpers as render_helpers
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
