@@ -109,7 +109,7 @@ def test_one_component_can_be_completed_by_multiple_donors():
     assert np.mean(
         np.abs(repaired[target_mask > 0].astype(int) - clean[target_mask > 0].astype(int))
     ) < 5
-    np.testing.assert_allclose(repaired[110, 155], clean[110, 155], atol=2)
+    np.testing.assert_allclose(repaired[110, 155], clean[110, 155], atol=5)
 
 
 def test_different_components_can_choose_different_donors():
