@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from .illumination import correct_illumination
+
 
 def spine_position(image, ratio=0.5, mode="center"):
     h, w = image.shape[:2]
@@ -97,6 +99,8 @@ def enhance_page(
     white_normalization=False,
     white_target=245,
     white_strength=0.6,
+    illumination_correction=False,
+    illumination_strength=0.7,
 ):
     if dewarp_strength:
         # Symmetric cylindrical projection, user-controlled; never synthesizes pixels.
@@ -106,6 +110,8 @@ def enhance_page(
         map_x = np.tile(((np.sin(x * theta) / np.sin(theta) + 1) * (w - 1) / 2), (h, 1))
         map_y = np.tile(np.arange(h, dtype=np.float32)[:, None], (1, w))
         image = cv2.remap(image, map_x.astype(np.float32), map_y, cv2.INTER_CUBIC)
+    if illumination_correction and illumination_strength:
+        image = correct_illumination(image, illumination_strength)
     if white_normalization:
         image = normalize_white_background(image, white_target, white_strength)
     if grayscale:

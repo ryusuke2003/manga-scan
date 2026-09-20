@@ -36,6 +36,8 @@ class Config:
     jpeg_quality: int = 92
     grayscale: bool = False
     contrast: float = 1.0
+    illumination_correction: bool = False
+    illumination_strength: float = 0.7
     white_normalization: bool = False
     white_target: int = 245
     white_strength: float = 0.6
@@ -88,6 +90,7 @@ class Config:
             "quad_max_shift": (0, 0.1),
             "hand_padding": (0, 0.1),
             "dewarp_strength": (0, 0.6),
+            "illumination_strength": (0, 1),
             "contrast": (0.5, 2),
             "white_target": (200, 255),
             "white_strength": (0, 1),

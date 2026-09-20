@@ -66,13 +66,15 @@ def render_cover(project, manifest):
     rectified = warp_roi(image, cover["roi"])
     page_image = enhance_page(
         rectified,
-        cfg.grayscale,
-        cfg.contrast,
-        cfg.rotation,
-        cfg.dewarp_strength,
-        cfg.white_normalization,
-        cfg.white_target,
-        cfg.white_strength,
+        grayscale=cfg.grayscale,
+        contrast=cfg.contrast,
+        rotation=cfg.rotation,
+        dewarp_strength=cfg.dewarp_strength,
+        white_normalization=cfg.white_normalization,
+        white_target=cfg.white_target,
+        white_strength=cfg.white_strength,
+        illumination_correction=cfg.illumination_correction,
+        illumination_strength=cfg.illumination_strength,
     )
     ext = "png" if cfg.image_format == "png" else "jpg"
     path = f"pages/cover.{ext}"
@@ -113,13 +115,15 @@ def render_spread(project, manifest, spread):
     for side in order:
         page_image = enhance_page(
             sides[side],
-            cfg.grayscale,
-            cfg.contrast,
-            cfg.rotation,
-            cfg.dewarp_strength,
-            cfg.white_normalization,
-            cfg.white_target,
-            cfg.white_strength,
+            grayscale=cfg.grayscale,
+            contrast=cfg.contrast,
+            rotation=cfg.rotation,
+            dewarp_strength=cfg.dewarp_strength,
+            white_normalization=cfg.white_normalization,
+            white_target=cfg.white_target,
+            white_strength=cfg.white_strength,
+            illumination_correction=cfg.illumination_correction,
+            illumination_strength=cfg.illumination_strength,
         )
         name = f"pages/{spread['id']}_{side}.{ext}"
         save_image(project / name, page_image, cfg.jpeg_quality)
