@@ -32,7 +32,7 @@ class Config:
     dedupe_window: int = 3
     refine_quad: bool = True
     quad_max_shift: float = 0.025
-    perspective_mode: str = "per_page"
+    perspective_mode: str = "spread"
     page_contour_min_confidence: float = 0.55
     split_mode: str = "auto"
     spine_ratio: float = 0.5

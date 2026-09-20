@@ -9,7 +9,7 @@ import pytest
 from pypdf import PdfReader
 
 from manga_scan.config import Config
-from manga_scan.ingest import create_project, set_cover_roi, set_setup_frame
+from manga_scan.ingest import create_project, reopen_cover_roi, set_cover_roi, set_setup_frame
 from manga_scan.pipeline import edit, run
 from manga_scan.storage import read_manifest
 from manga_scan.video import extract_frame, probe, sample_frames
@@ -110,10 +110,16 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     create_project(video, project, cfg)
 
     manifest = set_setup_frame(project, "cover", 0.2, confirm=True)
-    assert manifest["cover"]["status"] == "frame_selected"
-    assert (project / "source/cover_frame.png").is_file()
-    manifest = set_cover_roi(project, ROI)
     assert manifest["cover"]["status"] == "ready"
+    assert manifest["cover"]["detection"]["detected"] is True
+    assert (project / "source/cover_frame.png").is_file()
+    detected_roi = manifest["cover"]["roi"]
+    manifest = reopen_cover_roi(project)
+    assert manifest["cover"]["status"] == "frame_selected"
+    assert manifest["cover"]["roi"] == detected_roi
+    manifest = set_cover_roi(project, detected_roi)
+    assert manifest["cover"]["status"] == "ready"
+    assert manifest["cover"]["detection"]["source"] == "manual"
 
     manifest = set_setup_frame(project, "reference", 1.6, confirm=True)
     assert manifest["reference"]["confirmed"]
@@ -312,7 +318,6 @@ def test_default_spread_output_pdf_cover_and_manual_add(video, tmp_path):
                  candidates_per_spread=3, candidate_selection_mode="per_page")
     create_project(video, project, cfg)
     set_setup_frame(project, "cover", 0.2, confirm=True)
-    set_cover_roi(project, ROI)
     manifest = run(project, ROI)
     assert manifest["config"]["output_layout"] == "spread"
     assert len(manifest["pages"]) == 5  # One cover + four complete spreads.

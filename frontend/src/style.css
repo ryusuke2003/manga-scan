@@ -4,3 +4,5 @@
 .page-grid.with-spreads .page-card img{height:auto;max-height:420px;aspect-ratio:4/3;object-fit:contain}
 main{min-width:0}
 #root{width:100%;min-width:0}
+.auto-detection-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border:1px solid #b7c9b5;border-radius:8px;background:#edf2ed;color:var(--green);font-size:11px}
+.auto-detection-notice button{padding:7px 10px}

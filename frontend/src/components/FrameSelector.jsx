@@ -21,6 +21,7 @@ export default function FrameSelector({
   rotation,
   rotationDetection,
   onRotation,
+  notice,
 }) {
   const [value, setValue] = useState(String(time));
   const [loadedImageUrl, setLoadedImageUrl] = useState(null);
@@ -47,6 +48,7 @@ export default function FrameSelector({
     <p className="step">{step}</p>
     <h2>{title}</h2>
     <p className="muted">{description}</p>
+    {notice}
     <div className="frame-wrap">
       <img
         key={imageUrl}

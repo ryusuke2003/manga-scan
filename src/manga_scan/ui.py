@@ -12,7 +12,14 @@ from urllib.parse import urlparse
 from flask import Flask, abort, jsonify, request, send_file
 
 from .config import Config
-from .ingest import create_project, set_cover_roi, set_rotation, set_setup_frame, skip_cover
+from .ingest import (
+    create_project,
+    reopen_cover_roi,
+    set_cover_roi,
+    set_rotation,
+    set_setup_frame,
+    skip_cover,
+)
 from .pipeline import edit, run
 from .storage import project_lock, read_manifest
 
@@ -145,6 +152,8 @@ def create_app(projects, config=None):
                 cfg = Config.from_dict(current["config"])
                 raw_roi = rotate_roi(data["roi"], (-cfg.rotation) % 360).tolist()
                 manifest = set_cover_roi(project, raw_roi)
+            elif action == "edit_cover_roi":
+                manifest = reopen_cover_roi(project)
             elif action == "reference_frame":
                 manifest = set_setup_frame(
                     project, "reference", data["time"], confirm=bool(data.get("confirm"))

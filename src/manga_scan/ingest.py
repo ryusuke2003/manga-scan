@@ -5,7 +5,8 @@ from pathlib import Path
 import cv2
 
 from .config import Config
-from .perspective import validate_roi
+from .cover_detect import detect_cover_quad
+from .perspective import rotate_roi, validate_roi
 from .rotation_detection import detect_video_rotation
 from .split import rotate_image
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
@@ -126,16 +127,31 @@ def set_setup_frame(project, kind, time, confirm=False):
 
         if kind == "cover":
             cover = manifest.setdefault("cover", {})
+            detection = None
+            roi = None
+            status = "pending"
+            if confirm:
+                displayed = rotate_image(image, cfg.rotation)
+                detection = detect_cover_quad(displayed)
+                detection["source"] = "auto"
+                if detection["detected"]:
+                    roi = rotate_roi(detection["roi"], (-cfg.rotation) % 360).tolist()
+                    status = "ready"
+                else:
+                    status = "frame_selected"
             cover.update(
-                status="frame_selected" if confirm else "pending",
+                status=status,
                 time=timestamp,
                 frame=path,
                 preview=preview_path,
+                roi=roi,
+                detection=detection,
             )
-            cover["roi"] = None
             manifest["message"] = (
-                "表紙の外周を4点で指定してください"
-                if confirm
+                "表紙の外周を自動検出しました"
+                if status == "ready"
+                else "表紙の外周を自動検出できませんでした。4点で指定してください"
+                if status == "frame_selected"
                 else "表紙にするフレームを選んでください"
             )
         else:
@@ -235,6 +251,22 @@ def set_cover_roi(project, roi):
             raise ValueError("Select a cover frame first")
         cover["roi"] = validate_roi(roi).tolist()
         cover["status"] = "ready"
+        cover["detection"] = {"detected": False, "confidence": 0.0, "source": "manual"}
         manifest["message"] = "基準にする見開きフレームを選んでください"
+        save_manifest(project, manifest)
+        return manifest
+
+
+def reopen_cover_roi(project):
+    project = Path(project).resolve()
+    with project_lock(project):
+        manifest = read_manifest(project)
+        if manifest["status"] == "complete":
+            raise ValueError("Project already processed")
+        cover = manifest.get("cover") or {}
+        if cover.get("status") != "ready" or not cover.get("roi"):
+            raise ValueError("No cover crop to edit")
+        cover["status"] = "frame_selected"
+        manifest["message"] = "表紙の外周を修正してください"
         save_manifest(project, manifest)
         return manifest

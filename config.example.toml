@@ -29,7 +29,7 @@ dedupe_window = 3
 
 refine_quad = true # Conservative spread-ROI refinement
 quad_max_shift = 0.025
-perspective_mode = "per_page" # "per_page" auto-detects left/right page contours and warps each page separately
+perspective_mode = "spread" # "spread" warps the whole spread; "per_page" warps left/right pages separately
 page_contour_min_confidence = 0.55 # spread/split page detection falls back to the reference ROI below this confidence
 split_mode = "auto" # Legacy/fallback split; "auto" searches a dark valley near the center
 spine_ratio = 0.5

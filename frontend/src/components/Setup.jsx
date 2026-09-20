@@ -12,7 +12,7 @@ const FALLBACK_CONFIG = {
   rotation: 0,
   auto_rotation: true,
   refine_quad: true,
-  perspective_mode: 'per_page',
+  perspective_mode: 'spread',
   page_contour_min_confidence: 0.55,
   split_mode: 'auto',
   dewarp_mode: 'auto',
@@ -60,7 +60,7 @@ export const CORRECTION_PRESETS = {
     description: '標準補正に加えて紙面の白を整え、スキャナに近い見た目を狙います。',
     settings: {
       refine_quad: true,
-      perspective_mode: 'per_page',
+      perspective_mode: 'spread',
       page_contour_min_confidence: 0.55,
       split_mode: 'auto',
       dewarp_mode: 'auto',

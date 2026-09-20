@@ -14,6 +14,8 @@ export default function App() {
   const cover = manifest?.cover;
   const reference = manifest?.reference;
   const coverStatus = cover?.status ?? 'skipped';
+  const coverHadManualCrop = cover?.detection?.source === 'manual';
+  const editingCoverCrop = coverStatus === 'frame_selected' && Boolean(cover?.roi);
   // Version 1 projects did not have setup stages; keep their original first-frame flow.
   const referenceConfirmed = reference?.confirmed ?? true;
   const canConfigure = manifest && manifest.status !== 'complete'
@@ -46,13 +48,15 @@ export default function App() {
       busy={busy}
       onStart={scanner.coverRoi}
       step="03 / 表紙を囲む"
-      title="表紙の外周を4点で指定"
-      description="表紙だけの大きさに合わせて4点を指定します。このROIは見開き解析には使いません。"
+      title={editingCoverCrop ? '表紙の外周を確認・修正' : '表紙の外周を4点で指定'}
+      description={editingCoverCrop
+        ? '自動検出した外周です。ずれている場合だけ「やり直す」から4点を指定し直してください。'
+        : '外周を自動検出できなかったため、表紙だけの大きさに合わせて4点を指定してください。'}
       actionLabel="表紙を追加して次へ →"
     />;
   } else if (canConfigure && !referenceConfirmed) {
     setupStage = <FrameSelector
-      step="04 / 見開き基準フレーム"
+      step={`${coverHadManualCrop ? '04' : '03'} / 見開き基準フレーム`}
       title="最初に本を開いた見開きを選ぶ"
       description="左右2ページがしっかり見えている場面を選んでください。この時刻より前は自動見開き解析から除外します。"
       imageUrl={fileUrl(project, reference?.preview || reference?.frame || 'source/first_frame_preview.png', revision)}
@@ -65,6 +69,10 @@ export default function App() {
       rotation={manifest.config.rotation}
       rotationDetection={manifest.rotation_detection}
       onRotation={scanner.rotation}
+      notice={coverStatus === 'ready' && <div className="auto-detection-notice">
+        <span>{coverHadManualCrop ? '表紙の外周を設定済み' : `表紙の外周を自動検出済み · 信頼度 ${Math.round((cover.detection?.confidence ?? 0) * 100)}%`}</span>
+        <button type="button" disabled={busy} onClick={scanner.editCoverRoi}>外周を修正</button>
+      </div>}
     />;
   } else if (canConfigure) {
     setupStage = <RoiSelector
@@ -74,7 +82,7 @@ export default function App() {
       metadata={manifest.metadata}
       busy={busy}
       onStart={scanner.start}
-      step="05 / 見開きを囲む"
+      step={`${coverHadManualCrop ? '05' : '04'} / 見開きを囲む`}
       title="見開きの外周を4点で指定"
       description="左上 → 右上 → 右下 → 左下 の順にクリック。ここで指定した見開きサイズを以後の解析基準にします。"
       actionLabel="抽出を開始 →"

@@ -242,6 +242,7 @@ describe('frontend helpers', () => {
     expect(config.finger_repair).toBe(true);
     expect(config.grayscale).toBe(true);
     expect(config.candidate_selection_mode).toBe('spread');
+    expect(config.perspective_mode).toBe('spread');
     expect(correctionPresetForConfig(config)).toBe('scan');
   });
 
