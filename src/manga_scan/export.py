@@ -1,13 +1,74 @@
 import math
+import re
 import tempfile
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from PIL import Image, ImageDraw
 from reportlab.pdfgen.canvas import Canvas
 
 
-def export_pdf(paths, output, dpi=300, image_format="png", jpeg_quality=92):
+BOOK_METADATA_FIELDS = ("title", "author", "series", "volume", "publisher", "language")
+
+
+def normalize_book_metadata(metadata):
+    """Validate and normalize optional book metadata stored in the manifest."""
+    if metadata is None:
+        return {}
+    if not isinstance(metadata, dict):
+        raise ValueError("book metadata must be an object")
+    unknown = set(metadata) - set(BOOK_METADATA_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown book metadata fields: {sorted(unknown)}")
+
+    normalized = {}
+    for field in BOOK_METADATA_FIELDS:
+        value = metadata.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"book metadata {field} must be a string")
+        value = " ".join(value.split())
+        if not value:
+            continue
+        limit = 32 if field == "language" else (64 if field == "volume" else 200)
+        if len(value) > limit:
+            raise ValueError(f"book metadata {field} is too long")
+        normalized[field] = value
+    return normalized
+
+
+def metadata_output_stem(metadata):
+    """Return a portable file stem while keeping Japanese titles readable."""
+    metadata = normalize_book_metadata(metadata)
+    stem = metadata.get("title") or metadata.get("series") or "manga"
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" .")
+    stem = stem[:120].rstrip(" .")
+    return stem or "manga"
+
+
+def comicinfo_xml(metadata, page_count):
+    """Build ComicInfo.xml for CBZ readers without adding a dependency."""
+    metadata = normalize_book_metadata(metadata)
+    root = ET.Element("ComicInfo")
+    mapping = (
+        ("title", "Title"),
+        ("series", "Series"),
+        ("volume", "Number"),
+        ("author", "Writer"),
+        ("publisher", "Publisher"),
+        ("language", "LanguageISO"),
+    )
+    for field, tag in mapping:
+        if field in metadata:
+            ET.SubElement(root, tag).text = metadata[field]
+    ET.SubElement(root, "PageCount").text = str(int(page_count))
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def export_pdf(paths, output, dpi=300, image_format="png", jpeg_quality=92, metadata=None):
     """PNG pixels are lossless Flate; JPEG inputs are embedded without recompression.
 
     'jpeg' converts lossless inputs once at the requested quality. Existing JPEG
@@ -22,7 +83,23 @@ def export_pdf(paths, output, dpi=300, image_format="png", jpeg_quality=92):
     try:
         with tempfile.TemporaryDirectory(prefix="manga-pdf-") as work:
             canvas = Canvas(str(temporary), pageCompression=1)
-            canvas.setTitle("Manga Scan")
+            metadata = normalize_book_metadata(metadata)
+            canvas.setTitle(metadata.get("title") or "Manga Scan")
+            if metadata.get("author"):
+                canvas.setAuthor(metadata["author"])
+            subject = " / ".join(
+                part
+                for part in (
+                    metadata.get("series"),
+                    f'Vol. {metadata["volume"]}' if metadata.get("volume") else None,
+                    metadata.get("publisher"),
+                )
+                if part
+            )
+            if subject:
+                canvas.setSubject(subject)
+            if metadata.get("language"):
+                canvas.setKeywords(f'language:{metadata["language"]}')
             canvas.setCreator("manga-scan-local (no OCR)")
             for i, path in enumerate(paths):
                 path = Path(path)
@@ -43,7 +120,7 @@ def export_pdf(paths, output, dpi=300, image_format="png", jpeg_quality=92):
     return output
 
 
-def export_cbz(paths, output):
+def export_cbz(paths, output, metadata=None):
     """Store rendered page bytes in manifest order without recompression."""
     paths = [Path(path) for path in paths]
     if not paths:
@@ -67,6 +144,13 @@ def export_cbz(paths, output):
                 archive.write(
                     path,
                     arcname=f"{index:0{digits}d}{suffix}",
+                    compress_type=zipfile.ZIP_STORED,
+                )
+            metadata = normalize_book_metadata(metadata)
+            if metadata:
+                archive.writestr(
+                    "ComicInfo.xml",
+                    comicinfo_xml(metadata, len(paths)),
                     compress_type=zipfile.ZIP_STORED,
                 )
         temporary.replace(output)
