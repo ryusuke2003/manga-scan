@@ -21,6 +21,45 @@ const fingerFallbackLabel = repair => {
   return '';
 };
 
+function localShift(component) {
+  const shift = component?.shift ?? component?.local_shift ?? {};
+  const dx = Number(component?.dx ?? component?.shift_dx ?? shift.dx);
+  const dy = Number(component?.dy ?? component?.shift_dy ?? shift.dy);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+  return Math.hypot(dx, dy);
+}
+
+export function localAlignmentSummary(repair) {
+  const local = repair?.local_alignment;
+  if (!local) return '';
+
+  const components = Array.isArray(local.components) ? local.components : [];
+  const componentCount = Number.isFinite(Number(local.component_count))
+    ? Number(local.component_count)
+    : components.length;
+  if (componentCount <= 0) return '';
+
+  const explicitMax = Number(local.max_shift_px);
+  const shifts = components
+    .filter(component => component?.applied !== false && component?.accepted !== false)
+    .map(localShift)
+    .filter(value => value !== null);
+  const maxShift = Number.isFinite(explicitMax)
+    ? explicitMax
+    : (shifts.length ? Math.max(...shifts) : null);
+
+  const roundedShift = maxShift === null
+    ? ''
+    : (Math.abs(maxShift - Math.round(maxShift)) < 0.05
+      ? String(Math.round(maxShift))
+      : maxShift.toFixed(1));
+  return `局所補正 ${componentCount}領域${roundedShift ? ` · 最大ずれ ${roundedShift}px` : ''}`;
+}
+
+const needsReview = page => Boolean(
+  page?.suspect?.length || page?.finger_repair?.unresolved_mask
+);
+
 const backgroundFillLabel = fill => {
   if (!fill || fill.mode === 'preserve') return '';
   if (fill.status === 'unavailable') return 'ページ外背景: 輪郭不確かのため変更なし';
@@ -116,7 +155,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       ? '編集後のPDFは未出力です。「PDFを出力」で反映してください。'
       : '現在のページ順・画質でPDFを出力済みです。';
   return <section>
-    <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(page => page.suspect.length).length}</h2></div>
+    <div className="review-head"><div><p className="step">03 / 確認して仕上げる</p><h2>{enabled.length} ページ / 要確認 {enabled.filter(needsReview).length}</h2></div>
       <div className="row"><button className="primary" aria-busy={exporting ? 'true' : undefined} disabled={busy || !enabled.length} onClick={() => onEdit('export')}>{exportLabel}</button>
         {pdfReady && <a className="button" href={file(manifest.pdf)} target="_blank" rel="noopener">PDFを開く ↗</a>}</div></div>
     <p className="muted">{exportStatus}</p>
@@ -132,14 +171,15 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         <input aria-label="追加する動画の秒数" type="number" min="0" max={manifest.metadata.duration - .001} step="any" placeholder="動画の秒数" required value={timestamp} onChange={event => setTimestamp(event.target.value)} />
         <button disabled={busy || timestamp === ''}>この時刻から追加</button></form>
     </div>
-    <div className={`page-grid ${manifest.pages.some(page => page.side === 'spread') ? 'with-spreads' : ''}`}>{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || page.suspect.length)).map(page => <article key={page.id} className={`page-card ${page.suspect.length ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'}`}>
+    <div className={`page-grid ${manifest.pages.some(page => page.side === 'spread') ? 'with-spreads' : ''}`}>{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || needsReview(page))).map(page => <article key={page.id} className={`page-card ${needsReview(page) ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'}`}>
       <ImageLink file={file} path={page.path} preview={page.preview} />
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
-        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}</span>
-        {page.finger_repair.status === 'incomplete' && <p className="muted">隠れた部分を別候補から十分に補修できず、指が残っています。別の候補も確認してください。</p>}
+        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
+        {page.finger_repair.unresolved_mask && <p className="muted">要確認: 未補修領域が残っています。文字・コマ線・網点・指の輪郭に不自然さがないか確認してください。</p>}
+        {!page.finger_repair.unresolved_mask && page.finger_repair.status === 'incomplete' && <p className="muted">隠れた部分を別候補から十分に補修できず、指が残っています。別の候補も確認してください。</p>}
         <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">指マスク ↗</a>}
           {page.finger_repair.unresolved_mask && <a href={file(page.finger_repair.unresolved_mask)} target="_blank" rel="noopener">未補修領域 ↗</a>}</div>
       </div>}
