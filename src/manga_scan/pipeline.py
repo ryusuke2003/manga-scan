@@ -405,11 +405,19 @@ def rectify_spread_pages(
     cfg,
     page_detection=None,
     consensus_sides=None,
+    manual_sides=None,
 ):
     """Choose per-page perspective correction or the legacy spread fallback."""
 
     ratio = spread.get("spine_ratio", cfg.spine_ratio)
-    if cfg.perspective_mode == "per_page" and not spread.get("manual_roi"):
+    manual_sides = list(manual_sides or [])
+    force_manual_page = any(
+        _page_override(spread, side).get("page_quad_mode") == "manual"
+        for side in manual_sides
+    )
+    if (
+        cfg.perspective_mode == "per_page" or force_manual_page
+    ) and (not spread.get("manual_roi") or force_manual_page):
         detection_image = image
         if image.shape[1] > cfg.analysis_width:
             scale = cfg.analysis_width / image.shape[1]
@@ -441,12 +449,13 @@ def rectify_spread_pages(
                 detection["consensus"] = page_detection.get("consensus", {})
             else:
                 detection = page_detection
+        detection = _apply_manual_page_quads(detection, spread, manual_sides)
         spread["page_contours"] = detection
         debug_path = f"debug/page_contours/{spread['id']}.jpg"
         save_image(project / debug_path, draw_page_quads(image, detection))
         spread["page_contour_debug"] = debug_path
 
-        if detection["detected"]:
+        if detection["detected"] or detection.get("manual_sides"):
             spread["perspective_mode_used"] = "per_page"
             spread["spine_px"] = spine_position(rectified, ratio, cfg.split_mode)
             return warp_detected_pages(image, detection)
@@ -553,6 +562,90 @@ def candidate_page_glare_mask(data, side, cfg):
     if not cfg.glare_repair:
         return None
     return detect_glare_mask(data["sides"][side])
+
+
+def _page_override(spread, side):
+    overrides = spread.get("page_overrides", {})
+    override = overrides.get(side, {})
+    return override if isinstance(override, dict) else {}
+
+
+def _page_render_settings(spread, side, cfg):
+    """Resolve project settings plus optional page-level Review overrides."""
+
+    override = _page_override(spread, side)
+    dewarp_override = override.get("dewarp")
+    if dewarp_override is None:
+        dewarp_enabled = (
+            cfg.dewarp_mode != "off"
+            and side not in set(spread.get("dewarp_disabled_sides", []))
+        )
+    else:
+        dewarp_enabled = bool(dewarp_override)
+
+    dewarp_mode = cfg.dewarp_mode if cfg.dewarp_mode != "off" else "auto"
+    if not dewarp_enabled:
+        dewarp_mode = "off"
+
+    manual_quad = override.get("manual_quad")
+    page_quad_mode = (
+        "manual"
+        if override.get("page_quad_mode") == "manual" and manual_quad is not None
+        else "auto"
+    )
+    return {
+        "dewarp": bool(dewarp_enabled),
+        "dewarp_mode": dewarp_mode,
+        "illumination_correction": bool(
+            override.get("illumination_correction", cfg.illumination_correction)
+        ),
+        "white_normalization": bool(
+            override.get("white_normalization", cfg.white_normalization)
+        ),
+        "page_quad_mode": page_quad_mode,
+        "manual_quad": manual_quad if page_quad_mode == "manual" else None,
+    }
+
+
+def _apply_manual_page_quads(detection, spread, sides=None):
+    """Overlay validated page-level manual quads on automatic detection."""
+
+    if detection is None:
+        return detection
+    active_sides = set(sides or ("left", "right"))
+    updated = dict(detection)
+    manual_sides = []
+    for side in ("left", "right"):
+        if side not in active_sides:
+            continue
+        override = _page_override(spread, side)
+        if override.get("page_quad_mode") != "manual":
+            continue
+        quad = validate_roi(override.get("manual_quad")).tolist()
+        updated[side] = {
+            **updated.get(side, {}),
+            "quad": quad,
+            "confidence": 1.0,
+            "detected": True,
+            "touches_frame": any(
+                value <= 0.002 or value >= 0.998
+                for point in quad
+                for value in point
+            ),
+            "manual": True,
+        }
+        manual_sides.append(side)
+
+    if manual_sides:
+        updated["confidence"] = min(
+            float(updated["left"].get("confidence", 0.0)),
+            float(updated["right"].get("confidence", 0.0)),
+        )
+        updated["detected"] = bool(
+            updated["left"].get("detected") and updated["right"].get("detected")
+        )
+        updated["manual_sides"] = manual_sides
+    return updated
 
 
 def _finger_donor_candidates(spread, side, selected_id):
@@ -991,6 +1084,7 @@ def render_spread(project, manifest, spread):
                 "id": f"{spread['id']}_candidate_{candidate_id:02d}",
                 "spine_ratio": spread.get("spine_ratio", cfg.spine_ratio),
                 "extra_suspect": [],
+                "page_overrides": spread.get("page_overrides", {}),
             }
         )
         state["manual_roi"] = override is not None
@@ -1009,9 +1103,18 @@ def render_spread(project, manifest, spread):
                 cfg,
                 page_detection=page_consensus,
                 consensus_sides=consensus_sides,
+                manual_sides=consensus_sides,
             )
         else:
-            sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
+            sides = rectify_spread_pages(
+                project,
+                image,
+                rectified,
+                roi,
+                state,
+                cfg,
+                manual_sides=consensus_sides,
+            )
         cache[candidate_id] = {
             "chosen": chosen,
             "rectified": rectified,
