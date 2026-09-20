@@ -551,7 +551,7 @@ def render_spread(project, manifest, spread):
         )
         if dewarp.get("status") == "low_confidence":
             page_suspect.append("dewarp_low_confidence")
-        if finger_repair["status"] == "complete":
+        if finger_repair["status"] in ("complete", "clean"):
             page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
         elif finger_repair["status"] in ("incomplete", "unavailable"):
             page_suspect.append("finger_repair_incomplete")
