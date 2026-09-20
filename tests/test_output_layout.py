@@ -342,3 +342,132 @@ def test_whole_spread_keeps_finger_repair_active(tmp_path, monkeypatch):
     error = np.abs(output[100:115, 230:240].astype(float) - image[100:115, 230:240])
     assert error.mean() < 2
     np.testing.assert_array_equal(output[mask == 0], target[mask == 0])
+
+
+def _review_detected_pages():
+    return {
+        "detected": True,
+        "confidence": 0.9,
+        "left": {
+            "quad": [[0.06, 0.08], [0.48, 0.10], [0.48, 0.90], [0.06, 0.92]],
+            "confidence": 0.9,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": [[0.52, 0.10], [0.94, 0.08], [0.94, 0.92], [0.52, 0.90]],
+            "confidence": 0.9,
+            "detected": True,
+            "touches_frame": False,
+        },
+    }
+
+
+def test_page_settings_override_only_the_requested_split_page(tmp_path, monkeypatch):
+    _, manifest, spread = fixture(tmp_path, monkeypatch)
+    manifest["config"].update(
+        output_layout="split",
+        perspective_mode="per_page",
+        dewarp_mode="auto",
+        illumination_correction=True,
+        white_normalization=True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "detect_page_quads",
+        lambda *_a, **_k: _review_detected_pages(),
+    )
+    manifest["pages"] = pipeline.render_spread(tmp_path, manifest, spread)
+    save_manifest(tmp_path, manifest)
+
+    result = pipeline.edit(
+        tmp_path,
+        "page_settings",
+        page_id="spread_0001_right",
+        settings={
+            "dewarp": False,
+            "illumination_correction": False,
+            "white_normalization": False,
+        },
+    )
+
+    right = next(page for page in result["pages"] if page["side"] == "right")
+    left = next(page for page in result["pages"] if page["side"] == "left")
+    assert right["render_settings"]["dewarp"] is False
+    assert right["render_settings"]["illumination_correction"] is False
+    assert right["render_settings"]["white_normalization"] is False
+    assert right["dewarp"]["status"] == "disabled"
+
+    assert left["render_settings"]["dewarp"] is True
+    assert left["render_settings"]["illumination_correction"] is True
+    assert left["render_settings"]["white_normalization"] is True
+    assert result["spreads"][0]["page_overrides"]["right"] == {
+        "dewarp": False,
+        "illumination_correction": False,
+        "white_normalization": False,
+    }
+    assert result["pdf_stale"] is True
+
+
+def test_page_settings_can_switch_one_page_contour_between_manual_and_auto(
+    tmp_path,
+    monkeypatch,
+):
+    _, manifest, spread = fixture(tmp_path, monkeypatch)
+    manifest["config"].update(
+        output_layout="split",
+        perspective_mode="per_page",
+        dewarp_mode="off",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "detect_page_quads",
+        lambda *_a, **_k: _review_detected_pages(),
+    )
+    manifest["pages"] = pipeline.render_spread(tmp_path, manifest, spread)
+    save_manifest(tmp_path, manifest)
+    manual_quad = [[0.56, 0.14], [0.91, 0.12], [0.92, 0.87], [0.55, 0.89]]
+
+    result = pipeline.edit(
+        tmp_path,
+        "page_settings",
+        page_id="spread_0001_right",
+        settings={"page_quad_mode": "manual", "manual_quad": manual_quad},
+    )
+
+    right = next(page for page in result["pages"] if page["side"] == "right")
+    left = next(page for page in result["pages"] if page["side"] == "left")
+    assert right["page_contour"]["mode"] == "manual"
+    assert right["page_contour"]["manual"] is True
+    np.testing.assert_allclose(right["page_contour"]["quad"], manual_quad, atol=1e-6)
+    assert left["page_contour"]["mode"] == "auto"
+    assert left["page_contour"]["manual"] is False
+
+    result = pipeline.edit(
+        tmp_path,
+        "page_settings",
+        page_id="spread_0001_right",
+        settings={"page_quad_mode": "auto"},
+    )
+    right = next(page for page in result["pages"] if page["side"] == "right")
+    assert right["page_contour"]["mode"] == "auto"
+    assert right["page_contour"]["manual"] is False
+    assert "manual_quad" not in result["spreads"][0]["page_overrides"]["right"]
+
+
+def test_page_settings_rejects_invalid_manual_quad(tmp_path, monkeypatch):
+    _, manifest, spread = fixture(tmp_path, monkeypatch)
+    manifest["config"]["output_layout"] = "split"
+    manifest["pages"] = pipeline.render_spread(tmp_path, manifest, spread)
+    save_manifest(tmp_path, manifest)
+
+    with pytest.raises(ValueError, match="ROI"):
+        pipeline.edit(
+            tmp_path,
+            "page_settings",
+            page_id="spread_0001_right",
+            settings={
+                "page_quad_mode": "manual",
+                "manual_quad": [[0, 0], [1, 0]],
+            },
+        )
