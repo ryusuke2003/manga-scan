@@ -9,9 +9,11 @@ import cv2
 import pytest
 from pypdf import PdfReader
 
+import manga_scan.pipeline as pipeline
 from manga_scan.config import Config
 from manga_scan.ingest import create_project, reopen_cover_roi, set_cover_roi, set_setup_frame
 from manga_scan.pipeline import edit, run
+from manga_scan.processing_control import request_cancel
 from manga_scan.storage import read_manifest
 from manga_scan.video import extract_frame, probe, sample_frames
 
@@ -92,6 +94,48 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert read_manifest(project)["pdf_stale"]
     with pytest.raises(ValueError, match="already processed"):
         run(project, ROI)
+
+
+def test_cancelled_processing_resumes_after_completed_spread(video, tmp_path, monkeypatch):
+    project = tmp_path / "resume-book"
+    cfg = Config(
+        output_layout="split",
+        hand_backend="none",
+        finger_repair=False,
+        analysis_width=480,
+        candidates_per_spread=2,
+    )
+    create_project(video, project, cfg)
+
+    original_update = pipeline.update
+    requested = False
+
+    def cancel_after_first_spread(current_project, manifest, progress, message):
+        nonlocal requested
+        original_update(current_project, manifest, progress, message)
+        if not requested and message.startswith("候補評価・補正 1 /"):
+            requested = True
+            request_cancel(current_project)
+
+    monkeypatch.setattr(pipeline, "update", cancel_after_first_spread)
+    cancelled = pipeline.run(project, ROI)
+
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["processing_checkpoint"]["motion_analysis_complete"] is True
+    assert cancelled["processing_checkpoint"]["completed_spreads"] == 1
+    assert len(cancelled["spreads"]) == 1
+    first_candidate = project / cancelled["spreads"][0]["candidates"][0]["path"]
+    first_mtime = first_candidate.stat().st_mtime_ns
+
+    monkeypatch.setattr(pipeline, "update", original_update)
+    resumed = pipeline.run(project, ROI)
+
+    assert resumed["status"] == "complete"
+    assert len(resumed["spreads"]) == 4
+    assert "processing_checkpoint" not in resumed
+    assert first_candidate.stat().st_mtime_ns == first_mtime
+    assert (project / "output/manga.pdf").is_file()
+    assert (project / "output/manga.cbz").is_file()
 
 
 def test_sampling_and_seeking_use_presentation_time(video):

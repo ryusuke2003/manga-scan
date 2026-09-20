@@ -21,7 +21,14 @@ export default function App() {
   const referenceDetected = Boolean(reference?.detection?.detected && manifest?.roi);
   const activeProjectJob = Boolean(server.job?.busy && server.job.project === project);
   const exportingBook = activeProjectJob && server.job.action === 'export';
-  const activeJobMessage = activeProjectJob
+  const cancellingProcess = activeProjectJob
+    && server.job.action === 'process'
+    && server.job.cancel_requested;
+  const resumeReady = manifest?.status === 'cancelled'
+    && Boolean(manifest?.processing_checkpoint?.motion_analysis_complete);
+  const activeJobMessage = cancellingProcess
+    ? '安全な区切りで停止中…'
+    : activeProjectJob
     ? server.job.action === 'export'
       ? 'PDF / CBZを生成中…'
       : server.job.action === 'process'
@@ -101,7 +108,9 @@ export default function App() {
       description={referenceDetected
         ? `左右ページから外周を自動検出しました · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。合っていればそのまま抽出を開始してください。ずれている場合だけ「やり直す」から4点を指定し直せます。`
         : '外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。'}
-      actionLabel={referenceDetected ? 'この範囲で抽出開始 →' : '抽出を開始 →'}
+      actionLabel={manifest.status === 'cancelled'
+        ? (resumeReady ? '続きから再開 →' : '抽出を再開 →')
+        : (referenceDetected ? 'この範囲で抽出開始 →' : '抽出を開始 →')}
     />;
   }
   return <>
@@ -127,7 +136,7 @@ export default function App() {
       {!project && <Setup busy={busy} defaults={server.defaults} onChoose={scanner.choose} onCreate={scanner.create} />}
       {manifest && <>
         {setupStage}
-        <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{activeJobMessage ?? (busy && !server.job?.busy && manifest.status !== 'processing' ? '処理中…' : manifest.message)}</strong><span>{activeProjectJob && server.job.action !== 'process' ? '—' : `${Math.round(manifest.progress * 100)}%`}</span></div><progress max="1" value={activeProjectJob && server.job.action !== 'process' ? undefined : manifest.progress} /><p className="muted">{manifest.warnings.join(' / ')}</p></section>
+        <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{activeJobMessage ?? (busy && !server.job?.busy && manifest.status !== 'processing' ? '処理中…' : manifest.message)}</strong><span>{activeProjectJob && server.job.action !== 'process' ? '—' : `${Math.round(manifest.progress * 100)}%`}</span>{activeProjectJob && server.job.action === 'process' && <button type="button" className="danger-soft" disabled={cancellingProcess} onClick={scanner.cancelProcessing}>{cancellingProcess ? '停止を待っています…' : '処理を停止'}</button>}</div><progress max="1" value={activeProjectJob && server.job.action !== 'process' ? undefined : manifest.progress} />{manifest.status === 'cancelled' && <p className="muted">{resumeReady ? '完了済みの見開きは保持されています。続きから再開できます。' : '動き解析の途中で停止したため、再開時は動き解析からやり直します。'}</p>}<p className="muted">{manifest.warnings.join(' / ')}</p></section>
         {(manifest.pages.length > 0 || manifest.roi) && <Review key={project} manifest={manifest} file={file} busy={busy} exporting={exportingBook} onEdit={scanner.edit} onImportExternal={scanner.importExternalPage} />}
       </>}
       <footer>完全ローカル · 元動画を変更しません · 手や絵の描き足しは行いません</footer>
