@@ -5,8 +5,8 @@ from pathlib import Path
 import cv2
 
 from .config import Config
-from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .cover_detect import detect_cover_quad
+from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .perspective import rotate_roi, validate_roi
 from .reference_candidates import scan_reference_candidates
 from .rotation_detection import detect_video_rotation
