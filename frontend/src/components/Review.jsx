@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import VideoTimeline from './VideoTimeline.jsx';
 
-const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い', finger_repair_incomplete: '指の補修が不完全' };
+const labels = { low_sharpness: '鮮鋭度が低い', hand_detection_disabled: '手の検出が無効', hand_overlap: '手の重なり', high_motion: '動きが大きい', page_quad_uncertain: '外周を確認', underexposed: '暗い', interval_gap: '時間間隔が長い', duplicate_suspected: '重複候補', manual_frame: '手動追加', manual_frame_motion_unmeasured: '動き未評価', dewarp_low_confidence: '湾曲補正の信頼度が低い', finger_repair_incomplete: '指の補修が不完全', source_frame_clipped: '元動画の画面端に接触・見切れを確認', page_contour_low_confidence: 'ページ外周の検出が不確か' };
 const reasons = items => (items || []).map(item => labels[item] || item).join(' / ');
 const pageSideLabel = side => side === 'cover' ? '表紙' : (side === 'right' ? '右ページ' : '左ページ');
 
@@ -84,7 +84,7 @@ export default function Review({ manifest, file, busy, onEdit }) {
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
-        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指なし' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}</span>
+        <span>指補修: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? '指を未検出' : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'} · 復元率 {Math.round((page.finger_repair.coverage ?? 0) * 100)}%{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}</span>
         <div className="row">{page.finger_repair.target_mask && <a href={file(page.finger_repair.target_mask)} target="_blank" rel="noopener">指マスク ↗</a>}
           {page.finger_repair.unresolved_mask && <a href={file(page.finger_repair.unresolved_mask)} target="_blank" rel="noopener">未補修領域 ↗</a>}</div>
       </div>}

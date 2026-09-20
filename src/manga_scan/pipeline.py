@@ -13,7 +13,7 @@ from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
-from .hand import HandDetector
+from .hand import HandDetector, boundary_finger_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads, draw_page_quads
 from .page_detect import refine_quad
@@ -249,6 +249,14 @@ def candidate_page_hand_mask(project, data, side, cfg):
     )
     rotated_mask = rotate_image(full_mask, cfg.rotation)
     state = data["state"]
+
+    def supplement(page_mask):
+        # Re-evaluate the final page boundary, including newly recovered pixels
+        # outside an older candidate's ROI. Saved masks alone miss those fingers.
+        page = data["sides"][side]
+        extra = boundary_finger_mask(page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding)
+        return page_mask | extra
+
     if (
         state.get("perspective_mode_used") == "per_page"
         and (state.get("page_contours") or {}).get("detected")
@@ -257,12 +265,12 @@ def candidate_page_hand_mask(project, data, side, cfg):
             name: (page.shape[1], page.shape[0])
             for name, page in data["sides"].items()
         }
-        return warp_detected_pages(
+        return supplement(warp_detected_pages(
             rotated_mask,
             state["page_contours"],
             output_sizes=output_sizes,
             interpolation=cv2.INTER_NEAREST,
-        )[side]
+        )[side])
 
     rectified_mask = rotate_image(
         warp_roi(
@@ -282,7 +290,7 @@ def candidate_page_hand_mask(project, data, side, cfg):
     gutter = round(rectified_mask.shape[1] * cfg.gutter_fraction / 2)
     left_end = max(1, spine - gutter)
     right_start = min(rectified_mask.shape[1] - 1, spine + gutter)
-    return (
+    return supplement(
         rectified_mask[:, :left_end]
         if side == "left"
         else rectified_mask[:, right_start:]
@@ -562,6 +570,9 @@ def render_spread(project, manifest, spread):
         )
         if dewarp.get("status") == "low_confidence":
             page_suspect.append("dewarp_low_confidence")
+        contours = data["state"].get("page_contours") or {}
+        if contours.get(side, {}).get("touches_frame"):
+            page_suspect.append("source_frame_clipped")
         if finger_repair["status"] in ("complete", "clean"):
             page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
         elif finger_repair["status"] in ("incomplete", "unavailable"):

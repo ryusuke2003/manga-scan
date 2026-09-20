@@ -6,6 +6,57 @@ import numpy as np
 from .perspective import pixel_quad
 
 
+def boundary_finger_mask(image, roi, padding=0.015):
+    """Supplement landmarks with edge-connected skin on monochrome pages.
+
+    This is deliberately limited to small reddish components on otherwise
+    neutral pages. It is not a general skin classifier for colored artwork.
+    """
+    h, w = image.shape[:2]
+    result = np.zeros((h, w), np.uint8)
+    if image.ndim != 3 or image.shape[2] != 3:
+        return result
+    if max(h, w) > 960:
+        scale = 960 / max(h, w)
+        small = cv2.resize(image, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
+        mask = boundary_finger_mask(small, roi, padding)
+        return cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+    page = np.zeros_like(result)
+    cv2.fillConvexPoly(page, np.rint(pixel_quad(roi, image.shape)).astype(np.int32), 255)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    if np.mean(hsv[:, :, 1][page > 0] < 85) < 0.75:
+        return result
+    ycc = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+    skin = (
+        ((hsv[:, :, 0] <= 12) | (hsv[:, :, 0] >= 175))
+        & (hsv[:, :, 1] >= 50) & (hsv[:, :, 2] > 35)
+        & (ycc[:, :, 1] > 140) & (ycc[:, :, 2] > 100)
+    ).astype(np.uint8)
+    skin = cv2.morphologyEx(skin, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    # Break thin colored cover strips that otherwise join a fingertip to the
+    # whole book outline; also discard colored noise along printed ink.
+    size = max(3, round(min(h, w) * 0.02) | 1)
+    skin = cv2.morphologyEx(skin, cv2.MORPH_OPEN, np.ones((size, size), np.uint8))
+    band = page & ~cv2.erode(page, np.ones((9, 9), np.uint8), borderValue=0)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(skin)
+    page_area = np.count_nonzero(page)
+    for index in range(1, count):
+        if stats[index, cv2.CC_STAT_AREA] < page_area * 0.0003:
+            continue
+        component = labels == index
+        overlap = np.count_nonzero(component & (page > 0)) / max(1, page_area)
+        if not 0.0003 <= overlap <= 0.12 or not np.any(component & (band > 0)):
+            continue
+        # Long book-cover/desk strips are not fingertips.
+        if stats[index, cv2.CC_STAT_WIDTH] > w * 0.6:
+            continue
+        if stats[index, cv2.CC_STAT_HEIGHT] > h * 0.6:
+            continue
+        result[component] = 255
+    radius = max(1, round(min(h, w) * padding))
+    return cv2.dilate(result, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1,) * 2))
+
+
 def overlap_from_landmarks(shape, roi, hands, padding=0.015):
     """Union of padded landmark hulls / page ROI area. A conservative mask proxy."""
     h, w = shape[:2]
@@ -66,9 +117,14 @@ class HandDetector:
         result = self.detector.detect(
             self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb)
         )
-        return overlap_from_landmarks(
+        _, mask = overlap_from_landmarks(
             image.shape, roi, result.hand_landmarks, self.config.hand_padding
         )
+        mask |= boundary_finger_mask(image, roi, self.config.hand_padding)
+        page = np.zeros(image.shape[:2], np.uint8)
+        cv2.fillConvexPoly(page, np.rint(pixel_quad(roi, image.shape)).astype(np.int32), 255)
+        overlap = np.count_nonzero(mask & page) / max(1, np.count_nonzero(page))
+        return float(overlap), mask
 
     def close(self):
         if self.detector is not None:

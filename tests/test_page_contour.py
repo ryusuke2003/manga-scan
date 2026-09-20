@@ -106,3 +106,35 @@ def test_detect_page_quads_rejects_invalid_thresholds(spine_ratio, min_confidenc
             spine_ratio=spine_ratio,
             min_confidence=min_confidence,
         )
+
+
+def test_paper_outline_tracks_outward_shift_without_cropping_edge_art():
+    image = np.full((400, 700, 3), (40, 95, 155), np.uint8)
+    cv2.rectangle(image, (95, 35), (605, 365), (220, 225, 230), -1)
+    # Content outside the old crop must remain inside the new page quad.
+    cv2.putText(image, "EDGE", (96, 100), cv2.FONT_HERSHEY_SIMPLEX, .4, (20, 20, 20), 1)
+    prior = [[.16, .12], [.84, .12], [.84, .88], [.16, .88]]
+    result = detect_page_quads(image, prior)
+    assert result["detected"]
+    left = np.asarray(result["left"]["quad"]) * [699, 399]
+    right = np.asarray(result["right"]["quad"]) * [699, 399]
+    assert left[0, 0] < 100
+    assert left[0, 1] < 40
+    assert right[1, 0] > 600
+    assert right[2, 1] > 360
+    assert not result["left"]["touches_frame"]
+
+
+def test_neutral_background_cannot_fabricate_an_expanded_paper_boundary():
+    image = np.full((400, 700, 3), 220, np.uint8)
+    result = detect_page_quads(image, REFERENCE)
+    assert not result["detected"]
+
+
+def test_paper_at_source_frame_edge_is_flagged():
+    image = np.full((400, 700, 3), (40, 95, 155), np.uint8)
+    cv2.rectangle(image, (95, 0), (605, 365), (220, 225, 230), -1)
+    result = detect_page_quads(image, [[.16, .04], [.84, .04], [.84, .88], [.16, .88]])
+    assert result["detected"]
+    assert result["left"]["touches_frame"]
+    assert result["right"]["touches_frame"]

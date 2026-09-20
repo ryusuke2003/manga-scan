@@ -1,4 +1,4 @@
-"""Conservative left/right page contour detection inside a known spread ROI."""
+"""Conservative left/right page contour detection near a known spread ROI."""
 
 from __future__ import annotations
 
@@ -136,6 +136,67 @@ def _detect_side(edges, prior):
     return best_quad, best_confidence
 
 
+def _paper_outline(image, prior, side):
+    """Track neutral paper against a colored desk within 5% of the reference.
+
+    Unlike ink contours, this silhouette may extend outside the original ROI.
+    Reject outlines made by the search window itself, and keep the spine fixed.
+    Grayscale/colored pages fall back to ordinary edge detection.
+    """
+    if image.ndim != 3 or image.shape[2] != 3:
+        return None
+    h, w = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    paper = ((hsv[:, :, 1] < 85) & (hsv[:, :, 2] > 65)).astype(np.uint8) * 255
+    kernel_size = max(3, round(min(h, w) * 0.016) | 1)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((kernel_size,) * 2, np.uint8))
+    search = np.zeros((h, w), np.uint8)
+    cv2.fillConvexPoly(search, np.rint(prior).astype(np.int32), 255)
+    if np.mean(hsv[:, :, 1][search > 0] < 85) < 0.65:
+        return None
+    radius = max(2, round(max(h, w) * 0.05))
+    search = cv2.dilate(search, np.ones((2 * radius + 1,) * 2, np.uint8))
+    a, b = (prior[1], prior[2]) if side == "left" else (prior[0], prior[3])
+    yy, xx = np.indices((h, w))
+    cross = (b[0] - a[0]) * (yy - a[1]) - (b[1] - a[1]) * (xx - a[0])
+    search[cross < 0 if side == "left" else cross > 0] = 0
+    contours, _ = cv2.findContours(paper & search, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+    contour = max(contours, key=cv2.contourArea)
+    quads = _quad_candidates(contour)
+    if not quads:
+        return None
+    quad = quads[0]
+    area = abs(cv2.contourArea(quad))
+    prior_area = abs(cv2.contourArea(prior))
+    intersection, _ = cv2.intersectConvexConvex(quad, prior)
+    if not (0.85 < area / prior_area < 1.3 and intersection / prior_area > 0.8):
+        return None
+    if np.max(np.linalg.norm((quad - prior) / [w, h], axis=1)) > 0.10:
+        return None
+
+    # A neutral desk or missing boundary must not turn the dilated search ROI
+    # into a fabricated paper edge. Require colored background along the real
+    # silhouette, excluding the artificial spine and the source frame boundary.
+    points = contour.reshape(-1, 2)
+    distance = cv2.distanceTransform(search, cv2.DIST_L2, 5)
+    spine_distance = np.abs(cross[points[:, 1], points[:, 0]]) / max(np.linalg.norm(b - a), 1)
+    exterior = (
+        (spine_distance > 3) & (points[:, 0] > 1) & (points[:, 0] < w - 2)
+        & (points[:, 1] > 1) & (points[:, 1] < h - 2)
+    )
+    boundary = points[exterior]
+    if len(boundary) < 10 or np.mean(distance[boundary[:, 1], boundary[:, 0]] < 2) > 0.1:
+        return None
+    silhouette = np.zeros((h, w), np.uint8)
+    cv2.drawContours(silhouette, [contour], -1, 255, -1)
+    ring = cv2.dilate(silhouette, np.ones((7, 7), np.uint8)) & ~silhouette & search
+    if not np.any(ring) or np.mean(hsv[:, :, 1][ring > 0] >= 85) < 0.45:
+        return None
+    return quad, 0.85
+
+
 def _normalize_quad(quad, shape):
     h, w = shape[:2]
     scale = np.asarray([max(w - 1, 1), max(h - 1, 1)], dtype=np.float32)
@@ -159,12 +220,12 @@ def detect_page_quads(
     spine_ratio=0.5,
     min_confidence=0.5,
 ):
-    """Detect left/right page quads within a known spread ROI.
+    """Detect left/right page quads near a known spread ROI.
 
     Returned quads are normalized TL,TR,BR,BL coordinates in the input image.
     Each side falls back to its reference split when no sufficiently confident
-    contour is found, so callers can safely opt into detection without adding
-    desk pixels.
+    contour is found. A verified paper silhouette can follow small outward
+    shifts; ordinary ink contours remain constrained to the reference.
     """
 
     if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
@@ -183,12 +244,18 @@ def detect_page_quads(
 
     for side, prior in priors.items():
         detected_quad, confidence = _detect_side(edges, prior)
+        outline = _paper_outline(image, prior, side)
+        if outline is not None:
+            detected_quad, confidence = outline
         detected = detected_quad is not None and confidence >= min_confidence
         selected = detected_quad if detected else prior
         result[side] = {
             "quad": _normalize_quad(selected, image.shape),
             "confidence": round(float(confidence), 4),
             "detected": bool(detected),
+            "touches_frame": bool(detected and np.any(
+                (selected <= 1) | (selected >= np.asarray([image.shape[1], image.shape[0]]) - 2)
+            )),
         }
 
     result["confidence"] = min(result["left"]["confidence"], result["right"]["confidence"])
