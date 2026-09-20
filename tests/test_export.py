@@ -7,7 +7,7 @@ from pypdf import PdfReader
 
 import manga_scan.pipeline as pipeline
 from manga_scan.config import Config
-from manga_scan.export import export_cbz, export_pdf
+from manga_scan.export import export_cbz, export_pdf, metadata_output_stem
 from manga_scan.pipeline import edit
 from manga_scan.storage import read_manifest, save_manifest
 
@@ -24,6 +24,60 @@ def test_png_pdf_preserves_pixels_and_page_ratio(tmp_path):
     embedded = list(page.images)[0].image.convert("RGB")
     np.testing.assert_array_equal(np.array(embedded), array)
     assert page.extract_text() == ""
+
+
+def test_pdf_embeds_book_metadata(tmp_path):
+    path = tmp_path / "page.png"
+    Image.new("RGB", (40, 60), "white").save(path)
+    metadata = {
+        "title": "テスト漫画 1",
+        "author": "漫画 太郎",
+        "series": "テスト漫画",
+        "volume": "1",
+        "publisher": "Example Press",
+        "language": "ja",
+    }
+
+    export_pdf([path], tmp_path / "book.pdf", metadata=metadata)
+
+    info = PdfReader(tmp_path / "book.pdf").metadata
+    assert info.title == "テスト漫画 1"
+    assert info.author == "漫画 太郎"
+    assert "テスト漫画" in info.subject
+    assert "Vol. 1" in info.subject
+    assert "Example Press" in info.subject
+    assert "language:ja" in info.get("/Keywords", "")
+
+
+def test_cbz_writes_comicinfo_when_metadata_exists(tmp_path):
+    path = tmp_path / "page.png"
+    Image.new("RGB", (40, 60), "white").save(path)
+    metadata = {
+        "title": "テスト漫画 1",
+        "author": "漫画 太郎",
+        "series": "テスト漫画",
+        "volume": "1",
+        "publisher": "Example Press",
+        "language": "ja",
+    }
+
+    output = export_cbz([path], tmp_path / "book.cbz", metadata)
+
+    with zipfile.ZipFile(output) as archive:
+        assert archive.namelist() == ["001.png", "ComicInfo.xml"]
+        xml = archive.read("ComicInfo.xml").decode()
+        assert "<Title>テスト漫画 1</Title>" in xml
+        assert "<Writer>漫画 太郎</Writer>" in xml
+        assert "<Series>テスト漫画</Series>" in xml
+        assert "<Number>1</Number>" in xml
+        assert "<Publisher>Example Press</Publisher>" in xml
+        assert "<LanguageISO>ja</LanguageISO>" in xml
+        assert "<PageCount>1</PageCount>" in xml
+
+
+def test_metadata_output_stem_is_safe_and_readable():
+    assert metadata_output_stem({"title": " 漫画 / 第1巻 "}) == "漫画 _ 第1巻"
+    assert metadata_output_stem({}) == "manga"
 
 
 def test_jpeg_embedded_without_second_recompression(tmp_path):
@@ -115,6 +169,51 @@ def test_combined_export_failure_keeps_previous_pdf_and_cbz(tmp_path, monkeypatc
     persisted = read_manifest(tmp_path)
     assert persisted["pdf_stale"] is True
     assert persisted["message"] == "PDF / CBZの出力に失敗しました"
+
+
+def test_metadata_edit_marks_exports_stale_and_uses_title_for_next_export(tmp_path):
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    Image.new("RGB", (40, 60), "white").save(pages / "page.png")
+    config = Config(hand_backend="none", finger_repair=False).to_dict()
+    save_manifest(
+        tmp_path,
+        {
+            "source": "/tmp/book.mp4",
+            "status": "complete",
+            "config": config,
+            "pages": [
+                {
+                    "id": "page-1",
+                    "spread_id": "spread-1",
+                    "side": "spread",
+                    "path": "pages/page.png",
+                    "enabled": True,
+                    "suspect": [],
+                }
+            ],
+            "spreads": [],
+            "pdf_stale": False,
+            "pdf": "output/manga.pdf",
+            "cbz": "output/manga.cbz",
+            "progress": 1,
+            "message": "完了",
+        },
+    )
+
+    edited = edit(
+        tmp_path,
+        "book_metadata",
+        metadata={"title": "私の漫画 / 1", "author": "作者", "language": "ja"},
+    )
+    assert edited["book_metadata"]["title"] == "私の漫画 / 1"
+    assert edited["pdf_stale"] is True
+
+    exported = edit(tmp_path, "export")
+    assert exported["pdf"] == "output/私の漫画 _ 1.pdf"
+    assert exported["cbz"] == "output/私の漫画 _ 1.cbz"
+    assert (tmp_path / exported["pdf"]).is_file()
+    assert (tmp_path / exported["cbz"]).is_file()
 
 
 def test_review_export_persists_completion_message(tmp_path):
