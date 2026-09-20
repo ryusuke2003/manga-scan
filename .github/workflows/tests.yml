@@ -1,17 +1,23 @@
 name: tests
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python: ['3.12', '3.14']
-    runs-on: ${{ matrix.os }}
+  fast:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -21,13 +27,31 @@ jobs:
         run: npm --prefix frontend test
       - name: Build frontend
         run: npm --prefix frontend run build
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check src tests scripts
+      - run: python -m pytest -q --ignore=tests/test_pipeline.py
+
+  pipeline:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-latest
+            python: '3.14'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libgl1
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: brew install ffmpeg
       - run: python -m pip install -e '.[dev]'
-      - run: ruff check src tests scripts
-      - run: python -m pytest -q
-
+      - run: python -m pytest -q tests/test_pipeline.py
