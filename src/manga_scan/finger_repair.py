@@ -11,6 +11,11 @@ _LOCAL_MASK_MARGIN_FRACTION = 0.006
 _MIN_LOCAL_ALIGNMENT_SCORE = 0.55
 _MAX_LOCAL_CONTEXT_RESIDUAL = 0.18
 _MIN_LOCAL_CONTEXT_PIXELS = 80
+_PHOTOMETRIC_GAIN_MIN = 0.90
+_PHOTOMETRIC_GAIN_MAX = 1.10
+_PHOTOMETRIC_BIAS_LIMIT = 12.0
+_PHOTOMETRIC_MIN_IMPROVEMENT = 0.002
+_PHOTOMETRIC_MIN_STD = 5.0
 
 
 def _gray(image):
@@ -312,6 +317,91 @@ def _context_residual(target_gray, donor_gray, context):
     return float(np.mean(delta) / 255.0)
 
 
+def _estimate_photometric_alignment(target, donor, context):
+    """Fit a bounded scalar exposure correction from clean aligned context.
+
+    The same gain/bias is applied to every channel so chroma relationships are
+    preserved. The correction is only returned when it measurably improves the
+    context residual; otherwise the donor is left untouched.
+    """
+    if np.count_nonzero(context) < _MIN_LOCAL_CONTEXT_PIXELS:
+        return donor, {
+            "applied": False,
+            "gain": 1.0,
+            "bias": 0.0,
+            "residual_before": None,
+            "residual_after": None,
+        }
+
+    target_gray = _gray(target).astype(np.float32)
+    donor_gray = _gray(donor).astype(np.float32)
+    x = donor_gray[context]
+    y = target_gray[context]
+
+    finite = np.isfinite(x) & np.isfinite(y)
+    # Avoid clipped black/white pixels dominating the exposure fit. If the
+    # page is mostly flat paper, fall back to all finite clean context pixels.
+    unclipped = finite & (x > 5) & (x < 250) & (y > 5) & (y < 250)
+    if np.count_nonzero(unclipped) >= _MIN_LOCAL_CONTEXT_PIXELS:
+        x_fit = x[unclipped]
+        y_fit = y[unclipped]
+    else:
+        x_fit = x[finite]
+        y_fit = y[finite]
+
+    if x_fit.size < _MIN_LOCAL_CONTEXT_PIXELS:
+        return donor, {
+            "applied": False,
+            "gain": 1.0,
+            "bias": 0.0,
+            "residual_before": None,
+            "residual_after": None,
+        }
+
+    x_centered = x_fit - float(np.mean(x_fit))
+    variance = float(np.mean(x_centered * x_centered))
+    if variance >= _PHOTOMETRIC_MIN_STD ** 2:
+        covariance = float(
+            np.mean(x_centered * (y_fit - float(np.mean(y_fit))))
+        )
+        gain = covariance / variance
+    else:
+        # On nearly uniform paper, gain is ill-conditioned; a simple offset
+        # is safer and still removes the common AE brightness seam.
+        gain = 1.0
+
+    gain = float(np.clip(gain, _PHOTOMETRIC_GAIN_MIN, _PHOTOMETRIC_GAIN_MAX))
+    bias = float(np.median(y_fit - gain * x_fit))
+    bias = float(np.clip(bias, -_PHOTOMETRIC_BIAS_LIMIT, _PHOTOMETRIC_BIAS_LIMIT))
+
+    residual_before = _context_residual(target_gray, donor_gray, context)
+    corrected_gray = np.clip(donor_gray * gain + bias, 0, 255)
+    residual_after = _context_residual(target_gray, corrected_gray, context)
+    if (
+        residual_before is None
+        or residual_after is None
+        or residual_after + _PHOTOMETRIC_MIN_IMPROVEMENT >= residual_before
+    ):
+        return donor, {
+            "applied": False,
+            "gain": 1.0,
+            "bias": 0.0,
+            "residual_before": residual_before,
+            "residual_after": residual_before,
+        }
+
+    corrected = np.clip(donor.astype(np.float32) * gain + bias, 0, 255).astype(
+        donor.dtype
+    )
+    return corrected, {
+        "applied": True,
+        "gain": gain,
+        "bias": bias,
+        "residual_before": residual_before,
+        "residual_after": residual_after,
+    }
+
+
 def _validate_local_candidate(
     target,
     donor,
@@ -349,9 +439,20 @@ def _validate_local_candidate(
     context, _ = context_data
     target_gray = _gray(target)
     donor_gray = _gray(aligned_image)
-    residual = _context_residual(target_gray, donor_gray, context)
-    if residual is None or residual > _MAX_LOCAL_CONTEXT_RESIDUAL:
+    raw_residual = _context_residual(target_gray, donor_gray, context)
+    # Geometry remains the primary safety gate. Photometric correction must
+    # never make a badly aligned donor look geometrically acceptable.
+    if raw_residual is None or raw_residual > _MAX_LOCAL_CONTEXT_RESIDUAL:
         return None
+
+    corrected_image, photometric = _estimate_photometric_alignment(
+        target,
+        aligned_image,
+        context,
+    )
+    residual = photometric["residual_after"]
+    if residual is None:
+        residual = raw_residual
 
     usable = component["mask"] & clean
     clean_coverage = float(np.count_nonzero(usable) / component["area"])
@@ -365,13 +466,16 @@ def _validate_local_candidate(
         + 0.20 * (1.0 - residual)
     )
     return {
-        "image": aligned_image,
+        "image": corrected_image,
         "mask": aligned_mask,
         "clean": clean,
         "score": bounded_score,
         "dx": float(dx),
         "dy": float(dy),
         "residual": residual,
+        "selection_residual": raw_residual,
+        "raw_residual": raw_residual,
+        "photometric": photometric,
         "clean_coverage": clean_coverage,
         "quality": quality,
         "method": method,
@@ -481,7 +585,7 @@ def _align_local_component(
     # Prefer local refinement only when it measurably improves the surrounding
     # context, or exposes more clean donor pixels inside the finger component.
     if (
-        local["residual"] + 0.005 < best["residual"]
+        local["selection_residual"] + 0.005 < best["selection_residual"]
         or local["clean_coverage"] > best["clean_coverage"] + 0.03
     ):
         return local
@@ -793,6 +897,22 @@ def repair_occluded_regions(
                     "dx": round(local["dx"], 3),
                     "dy": round(local["dy"], 3),
                     "context_residual": round(local["residual"], 4),
+                    "context_residual_raw": (
+                        None
+                        if local.get("raw_residual") is None
+                        else round(local["raw_residual"], 4)
+                    ),
+                    "photometric_applied": bool(
+                        local.get("photometric", {}).get("applied")
+                    ),
+                    "photometric_gain": round(
+                        float(local.get("photometric", {}).get("gain", 1.0)),
+                        4,
+                    ),
+                    "photometric_bias": round(
+                        float(local.get("photometric", {}).get("bias", 0.0)),
+                        3,
+                    ),
                     "coverage": round(usable_pixels / original_pixels, 4),
                 }
             )
