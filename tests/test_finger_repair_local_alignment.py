@@ -4,6 +4,7 @@ import pytest
 
 from manga_scan.finger_repair import (
     _component_records,
+    _estimate_photometric_alignment,
     _validate_local_candidate,
     align_donor_page,
     repair_finger_regions,
@@ -126,6 +127,96 @@ def test_global_shifted_donor_mask_uses_aligned_coordinates():
     # an alignment error.
     np.testing.assert_allclose(repaired[115, 177], clean[115, 177], atol=5)
     np.testing.assert_array_equal(repaired[target_mask == 0], target[target_mask == 0])
+
+
+def test_photometric_alignment_reduces_exposure_seam_inside_mask():
+    clean = _textured_page()
+    target_mask = _mask(clean.shape, [(108, 74, 202, 156)])
+    target = clean.copy()
+    target[target_mask > 0] = (30, 100, 200)
+
+    # Same manga pixels under a darker AE/exposure result.
+    donor = np.clip(
+        clean.astype(np.float32) * 0.96 - 4.0,
+        0,
+        255,
+    ).astype(np.uint8)
+    raw_error = float(
+        np.mean(
+            np.abs(
+                donor[target_mask > 0].astype(np.int16)
+                - clean[target_mask > 0].astype(np.int16)
+            )
+        )
+    )
+
+    repaired, metadata, unresolved = repair_finger_regions(
+        target,
+        target_mask,
+        [{"candidate_id": 12, "image": donor, "mask": np.zeros(target.shape[:2], np.uint8)}],
+        min_coverage=1.0,
+    )
+
+    assert metadata["status"] == "complete"
+    assert not np.any(unresolved)
+    donor_meta = metadata["components"][0]["donors"][0]
+    assert donor_meta["photometric_applied"] is True
+    assert 0.9 <= donor_meta["photometric_gain"] <= 1.1
+    assert -12 <= donor_meta["photometric_bias"] <= 12
+    assert donor_meta["context_residual"] < donor_meta["context_residual_raw"]
+
+    repaired_error = float(
+        np.mean(
+            np.abs(
+                repaired[target_mask > 0].astype(np.int16)
+                - clean[target_mask > 0].astype(np.int16)
+            )
+        )
+    )
+    assert repaired_error < raw_error * 0.6
+    np.testing.assert_array_equal(repaired[target_mask == 0], target[target_mask == 0])
+
+
+def test_photometric_alignment_is_noop_when_exposure_already_matches():
+    clean = _textured_page()
+    target_mask = _mask(clean.shape, [(108, 74, 202, 156)])
+    target = clean.copy()
+    target[target_mask > 0] = (30, 100, 200)
+
+    _, metadata, unresolved = repair_finger_regions(
+        target,
+        target_mask,
+        [{"candidate_id": 13, "image": clean, "mask": np.zeros(target.shape[:2], np.uint8)}],
+        min_coverage=1.0,
+    )
+
+    assert not np.any(unresolved)
+    donor_meta = metadata["components"][0]["donors"][0]
+    assert donor_meta["photometric_applied"] is False
+    assert donor_meta["photometric_gain"] == pytest.approx(1.0)
+    assert donor_meta["photometric_bias"] == pytest.approx(0.0)
+
+
+def test_photometric_alignment_clamps_gain_and_bias():
+    donor = np.tile(
+        np.linspace(50, 150, 120, dtype=np.float32),
+        (100, 1),
+    )
+    target = np.clip(donor * 1.5 + 30, 0, 255).astype(np.uint8)
+    donor = donor.astype(np.uint8)
+    context = np.ones(target.shape, bool)
+
+    corrected, info = _estimate_photometric_alignment(
+        target,
+        donor,
+        context,
+    )
+
+    assert info["applied"] is True
+    assert info["gain"] == pytest.approx(1.1)
+    assert info["bias"] == pytest.approx(12.0)
+    assert info["residual_after"] < info["residual_before"]
+    assert corrected.dtype == donor.dtype
 
 
 def test_one_component_can_be_completed_by_multiple_donors():
