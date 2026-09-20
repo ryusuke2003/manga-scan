@@ -205,3 +205,42 @@ it('distinguishes current PDF, stale PDF, and an active export job', () => {
   expect(exporting.getAttribute('aria-busy')).toBe('true');
   expect(screen.getByText(/PDFを生成中です/)).toBeTruthy();
 });
+
+
+it('shows glare metrics and generalized occlusion repair metadata', () => {
+  const withGlare = {
+    ...manifest,
+    pages: [{
+      ...manifest.pages[0],
+      finger_repair: {
+        status: 'complete',
+        donor_coverage: 1,
+        coverage: 1,
+        donors: [2],
+        occlusion_kinds: ['glare'],
+        target_mask: 'debug/target.png',
+        glare_mask: 'debug/glare.png',
+      },
+    }],
+    spreads: [{
+      ...manifest.spreads[0],
+      candidates: [{
+        ...manifest.spreads[0].candidates[0],
+        glare_mask: 'candidate_glare.png',
+        metrics: {
+          ...manifest.spreads[0].candidates[0].metrics,
+          glare_overlap: .034,
+        },
+      }],
+    }],
+  };
+
+  render(<Review manifest={withGlare} file={path => path} busy={false} onEdit={vi.fn()} />);
+
+  expect(screen.getByText((_text, node) => node.tagName === 'P'
+    && node.textContent.includes('反射 3.4%'))).toBeTruthy();
+  expect(screen.getByText((_text, node) => node.tagName === 'SPAN'
+    && node.textContent.includes('遮蔽補修: 完了')
+    && node.textContent.includes('donor #2'))).toBeTruthy();
+  expect(screen.getAllByText('反射マスク ↗').length).toBeGreaterThan(0);
+});
