@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -63,6 +64,74 @@ def test_page_scoring_penalizes_hand_only_on_covered_side():
     assert metrics["left"]["hand_overlap"] == pytest.approx(1.0)
     assert metrics["right"]["hand_overlap"] == pytest.approx(0.0)
     assert metrics["right"]["score"] > metrics["left"]["score"]
+
+
+def test_page_scoring_rotates_before_assigning_visual_sides():
+    upright = np.full((80, 160, 3), 220, np.uint8)
+    upright[::4, :] = 30
+    upright_mask = np.zeros((80, 160), np.uint8)
+    upright_mask[:, :80] = 255
+
+    sideways = np.rot90(upright, 1).copy()
+    sideways_mask = np.rot90(upright_mask, 1).copy()
+    cfg = Config(rotation=90, hand_overlap_weight=8.0)
+
+    metrics, spine = score_candidate_pages(
+        sideways,
+        sideways_mask,
+        motion=0.0,
+        config=cfg,
+        geometry_metrics={"distortion": 0.0, "flatness_proxy": 0.0},
+        hand_enabled=True,
+    )
+
+    assert spine == 80
+    assert metrics["left"]["hand_overlap"] == pytest.approx(1.0)
+    assert metrics["right"]["hand_overlap"] == pytest.approx(0.0)
+
+
+def test_render_spread_rotates_before_left_right_split(tmp_path, monkeypatch):
+    upright = np.empty((80, 160, 3), np.uint8)
+    upright[:, :80] = (20, 40, 220)
+    upright[:, 80:] = (220, 80, 20)
+    sideways = np.rot90(upright, 1).copy()
+
+    cfg = Config(
+        hand_backend="none",
+        rotation=90,
+        dewarp_mode="off",
+        perspective_mode="spread",
+        image_format="png",
+    )
+    manifest = {"config": cfg.to_dict(), "source": "unused.mov"}
+    spread = {
+        "id": "spread_0001",
+        "selected": 0,
+        "candidates": [
+            {
+                "id": 0,
+                "time": 1.0,
+                "roi": [[0, 0], [1, 0], [1, 1], [0, 1]],
+                "suspect": [],
+                "page_suspect": {"left": [], "right": []},
+            }
+        ],
+        "extra_suspect": [],
+    }
+
+    monkeypatch.setattr(
+        pipeline,
+        "extract_frame",
+        lambda *args, **kwargs: sideways.copy(),
+    )
+
+    pages = pipeline.render_spread(tmp_path, manifest, spread)
+    by_side = {page["side"]: page for page in pages}
+    left = cv2.imread(str(tmp_path / by_side["left"]["path"]))
+    right = cv2.imread(str(tmp_path / by_side["right"]["path"]))
+
+    np.testing.assert_allclose(left[left.shape[0] // 2, left.shape[1] // 2], (20, 40, 220), atol=2)
+    np.testing.assert_allclose(right[right.shape[0] // 2, right.shape[1] // 2], (220, 80, 20), atol=2)
 
 
 def test_disabled_hand_detection_stays_none_per_page():

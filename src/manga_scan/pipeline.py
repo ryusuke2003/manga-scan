@@ -17,10 +17,17 @@ from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads, draw_page_quads
 from .page_detect import refine_quad
 from .page_warp import warp_detected_pages
-from .perspective import validate_roi, warp_roi
+from .perspective import rotate_roi, validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
-from .split import auto_dewarp_page, dewarp_debug_grid, enhance_page, spine_position, split_spread
+from .split import (
+    auto_dewarp_page,
+    dewarp_debug_grid,
+    enhance_page,
+    rotate_image,
+    spine_position,
+    split_spread,
+)
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
@@ -118,7 +125,7 @@ def selected_spread_preview(project, spread, cfg):
         preview = cv2.imread(str(project / candidate_record["preview"]))
         if preview is None:
             raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
-        return preview
+        return rotate_image(preview, cfg.rotation)
 
     physical_pages = []
     for side, candidate_id in zip(("left", "right"), selected):
@@ -126,6 +133,7 @@ def selected_spread_preview(project, spread, cfg):
         rectified = cv2.imread(str(project / candidate_record["preview"]))
         if rectified is None:
             raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
+        rectified = rotate_image(rectified, cfg.rotation)
         sides, _ = split_spread(
             rectified,
             spread.get("spine_ratio", cfg.spine_ratio),
@@ -237,8 +245,10 @@ def render_spread(project, manifest, spread):
         if candidate_id in cache:
             return cache[candidate_id]
         chosen = _candidate_by_id(spread, candidate_id)
-        image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
-        rectified = warp_roi(image, chosen["roi"])
+        source_image = extract_frame(manifest["source"], chosen["time"], hwaccel=cfg.hwaccel)
+        rectified = rotate_image(warp_roi(source_image, chosen["roi"]), cfg.rotation)
+        image = rotate_image(source_image, cfg.rotation)
+        roi = rotate_roi(chosen["roi"], cfg.rotation)
         state = (
             spread
             if same_candidate
@@ -248,7 +258,7 @@ def render_spread(project, manifest, spread):
                 "extra_suspect": [],
             }
         )
-        sides = rectify_spread_pages(project, image, rectified, chosen["roi"], state, cfg)
+        sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
         cache[candidate_id] = {
             "chosen": chosen,
             "rectified": rectified,
@@ -359,7 +369,7 @@ def render_spread(project, manifest, spread):
                     source_page,
                     grayscale=cfg.grayscale,
                     contrast=cfg.contrast,
-                    rotation=cfg.rotation,
+                    rotation=0,
                     dewarp_strength=0.0,
                     white_normalization=cfg.white_normalization,
                     white_target=cfg.white_target,
@@ -389,7 +399,7 @@ def render_spread(project, manifest, spread):
             source_page,
             grayscale=cfg.grayscale,
             contrast=cfg.contrast,
-            rotation=cfg.rotation,
+            rotation=0,
             dewarp_strength=manual_dewarp,
             white_normalization=cfg.white_normalization,
             white_target=cfg.white_target,
