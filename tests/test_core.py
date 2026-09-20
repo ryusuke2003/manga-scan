@@ -110,6 +110,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.jpeg_quality == 92
     assert cfg.hand_backend == "mediapipe"
     assert cfg.finger_repair is True
+    assert cfg.page_background_fill == "paper"
     assert cfg.candidate_selection_mode == "spread"
     assert cfg.grayscale is False
     assert cfg.refine_quad is True
@@ -456,6 +457,7 @@ def test_hand_union_intersection_only_on_page():
         {"dewarp_mode": "guess"},
         {"dewarp_max_strength": 0.5},
         {"dewarp_min_confidence": 1.1},
+        {"page_background_fill": "paint"},
     ],
 )
 def test_config_rejects_invalid_values(data):
