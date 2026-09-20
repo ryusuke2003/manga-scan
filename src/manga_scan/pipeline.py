@@ -1356,7 +1356,12 @@ def _refresh_adjacent_final_quality(project, manifest, cfg):
     previous = None
     previous_image = None
     for page in (item for item in manifest.get("pages", []) if item.get("enabled")):
-        image = cv2.imread(str(project / page["path"]), cv2.IMREAD_COLOR)
+        path = page.get("path")
+        if not path:
+            previous = None
+            previous_image = None
+            continue
+        image = cv2.imread(str(project / path), cv2.IMREAD_COLOR)
         if image is None:
             previous = None
             previous_image = None
