@@ -224,6 +224,18 @@ def test_curvature_confidence_rejects_jagged_scanline_measurements(monkeypatch):
     assert estimate["confidence"] < 0.6
 
 
+def test_curvature_confidence_rejects_single_large_outlier(monkeypatch):
+    image = synthetic_line_page()
+    ratios = iter([0.78, 0.79, 0.78, 0.79, 1.35, 0.79, 0.78, 0.79, 0.78])
+    monkeypatch.setattr(split_module, "_spacing_ratio", lambda *args: next(ratios))
+
+    estimate = estimate_curvature(image, "right", max_strength=0.25)
+
+    assert estimate["bands"] == 9
+    assert estimate["strength"] > 0
+    assert estimate["confidence"] < 0.6
+
+
 @pytest.mark.parametrize("side", ["left", "right"])
 def test_profiled_dewarp_handles_height_varying_book_curve(side):
     flat = synthetic_line_page()
