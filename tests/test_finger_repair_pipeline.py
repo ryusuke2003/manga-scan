@@ -175,6 +175,9 @@ def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monke
     assert repair["alignment_scores"] == [0.9312, 0.8876]
     assert repair["components"][0]["component_id"] == 1
     assert [entry["candidate_id"] for entry in repair["components"][0]["donors"]] == [1, 2]
+    assert repair["local_alignment"]["component_count"] == 1
+    assert repair["local_alignment"]["max_shift_px"] == pytest.approx(np.hypot(2.0, -1.0))
+    assert [entry["candidate_id"] for entry in repair["local_alignment"]["components"]] == [1, 2]
     assert repair["fallback"]["mode"] == "preserve"
     assert repair["target_mask"].endswith("_whole_target.png")
     assert "unresolved_mask" not in repair
@@ -183,6 +186,7 @@ def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monke
     assert (tmp_path / repair["components_debug"]).is_file()
     payload = json.loads((tmp_path / repair["components_debug"]).read_text())
     assert payload["components"] == repair["components"]
+    assert payload["local_alignment"] == repair["local_alignment"]
     assert "hand_overlap" not in page["suspect"]
     assert "finger_repair_incomplete" not in page["suspect"]
 
@@ -221,6 +225,8 @@ def test_split_output_keeps_components_unresolved_and_multiple_donors(tmp_path, 
     assert repair["alignment_scores"] == [0.9312, 0.8876]
     assert len(repair["components"]) == 1
     assert [entry["candidate_id"] for entry in repair["components"][0]["donors"]] == [1, 2]
+    assert repair["local_alignment"]["component_count"] == 1
+    assert [entry["candidate_id"] for entry in repair["local_alignment"]["components"]] == [1, 2]
     assert repair["target_mask"].endswith("_right_target.png")
     assert repair["unresolved_mask"].endswith("_right_unresolved.png")
     assert repair["components_debug"].endswith("_right_components.json")
@@ -237,6 +243,7 @@ def test_split_output_keeps_components_unresolved_and_multiple_donors(tmp_path, 
         entry["candidate_id"]
         for entry in complete["finger_repair"]["components"][0]["donors"]
     ] == [1, 2]
+    assert complete["finger_repair"]["local_alignment"]["component_count"] == 1
     assert "hand_overlap" not in complete["suspect"]
     assert "finger_repair_incomplete" not in complete["suspect"]
     assert "finger_repair_incomplete" in spread["suspect"]
@@ -265,6 +272,7 @@ def test_legacy_repair_metadata_without_components_remains_compatible(
     assert repair["alignment_scores"] == [0.9312, 0.8876]
     assert repair["fallback"]["mode"] == "preserve"
     assert "components" not in repair
+    assert "local_alignment" not in repair
     assert "components_debug" not in repair
 
 
