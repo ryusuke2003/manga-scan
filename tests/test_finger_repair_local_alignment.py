@@ -85,8 +85,8 @@ def test_one_component_can_be_completed_by_multiple_donors():
     target = clean.copy()
     target[target_mask > 0] = (30, 105, 205)
 
-    donor_one_mask = _mask(clean.shape, [(105, 76, 158, 154)])
-    donor_two_mask = _mask(clean.shape, [(158, 76, 205, 154)])
+    donor_one_mask = _mask(clean.shape, [(105, 76, 145, 154)])
+    donor_two_mask = _mask(clean.shape, [(165, 76, 205, 154)])
     repaired, metadata, unresolved = repair_finger_regions(
         target,
         target_mask,
