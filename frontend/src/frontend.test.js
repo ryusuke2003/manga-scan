@@ -50,15 +50,18 @@ describe('frontend helpers', () => {
 
     const input = screen.getByLabelText('動画の秒数');
     const confirm = screen.getByRole('button', { name: 'このフレームを基準にする →' });
-    expect(confirm).not.toBeDisabled();
+    expect(confirm.disabled).toBe(true);
+
+    fireEvent.load(screen.getByAltText('選択中の動画フレーム'));
+    expect(confirm.disabled).toBe(false);
 
     fireEvent.change(input, { target: { value: '10' } });
-    expect(confirm).toBeDisabled();
+    expect(confirm.disabled).toBe(true);
     expect(screen.getByText(/プレビュー更新.*確認してから確定/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'プレビュー更新' }));
     expect(onPreview).toHaveBeenCalledWith(10);
-    expect(confirm).toBeDisabled();
+    expect(confirm.disabled).toBe(true);
     expect(onConfirm).not.toHaveBeenCalled();
 
     rerender(React.createElement(FrameSelector, {
@@ -67,8 +70,11 @@ describe('frontend helpers', () => {
       time: 10,
     }));
 
-    expect(screen.getByRole('button', { name: 'このフレームを基準にする →' })).not.toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'このフレームを基準にする →' }));
+    const refreshedConfirm = screen.getByRole('button', { name: 'このフレームを基準にする →' });
+    expect(refreshedConfirm.disabled).toBe(true);
+    fireEvent.load(screen.getByAltText('選択中の動画フレーム'));
+    expect(refreshedConfirm.disabled).toBe(false);
+    fireEvent.click(refreshedConfirm);
     expect(onConfirm).toHaveBeenCalledWith(10);
   });
 
