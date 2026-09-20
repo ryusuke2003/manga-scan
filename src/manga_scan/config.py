@@ -36,6 +36,9 @@ class Config:
     jpeg_quality: int = 92
     grayscale: bool = False
     contrast: float = 1.0
+    white_normalization: bool = False
+    white_target: int = 245
+    white_strength: float = 0.6
     rotation: int = 0
     dewarp_strength: float = 0.0
     pdf_dpi: int = 300
@@ -54,6 +57,7 @@ class Config:
             "jpeg_quality",
             "pdf_dpi",
             "rotation",
+            "white_target",
             "duplicate_hash_distance",
         }
         for f in fields(self):
@@ -85,6 +89,8 @@ class Config:
             "hand_padding": (0, 0.1),
             "dewarp_strength": (0, 0.6),
             "contrast": (0.5, 2),
+            "white_target": (200, 255),
+            "white_strength": (0, 1),
             "suspect_sharpness": (0, 100000),
             "suspect_hand_overlap": (0, 1),
             "interval_gap_factor": (1, 20),
