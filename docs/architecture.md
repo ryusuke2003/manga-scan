@@ -13,7 +13,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
        └─ project manifest + per-stage inspectable artifacts
 ```
 
-- `ingest.py`: ローカル動画確認、ffprobeメタデータ、最初のフレーム、プロジェクト作成。
+- `ingest.py`: ローカル動画確認、ffprobeメタデータ、表紙/見開き基準フレーム選択、プロジェクト作成。
 - `video.py`: FFmpeg境界。回転メタデータを適用した画像、表示時刻でのseek、縮小パイプ。
 - `motion.py`: ROI差分、stable/turning状態機械、時間分散した候補抽出。
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
@@ -38,7 +38,7 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 
 ## 3. MVP範囲
 
-動画入力、メタデータ、ROI、めくりと静止検出、ベストフレーム、手の重なり評価、
+動画入力、メタデータ、任意の表紙1ページ、見開き基準フレーム/ROI、めくりと静止検出、ベストフレーム、手の重なり評価、
 重複除外、射影変換、左右分割、画像/PDF保存、ログ、レビューまで。
 除外はmanifestのフラグで行い、重複候補も画像を残す。
 初回解析で自動PDF生成。編集後は `pdf_stale=true` とし再出力を明示する。
@@ -51,7 +51,9 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 ### 時間・動き
 
 FFmpegの `setpts=PTS-STARTPTS,fps=10,scale=...` でプレゼンテーション時刻を基準に
-サンプルする。`index / sample_fps` はサンプルの時刻であって元動画のフレーム番号ではない。
+サンプルする。UIで見開き基準フレームを確定した場合は、その時刻からFFmpeg入力を開始し、
+それ以前の表紙区間は見開き解析へ入れない。サンプル時刻は
+`analysis_start + index / sample_fps` で、元動画のフレーム番号ではない。
 VFRでの候補seekはその時刻に対応する元フレームをFFmpegで取得するため、解析フレームと
 最大1元フレーム程度ずれる場合がある。候補取得後に画質・手・幾何を再評価する。
 iPhoneスローモーションの実撮影fpsを推測して時間を圧縮しない。
@@ -86,7 +88,8 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 ### 幾何
 
 正規化ROIは表示方向のTL/TR/BR/BL順。凸性・面積・範囲・順序を検証。
-透視補正で机を外し、中央で左右分割。auto splitは中央±4%の暗い縦谷を検索する実験機能。
+表紙は独立した時刻・ROIで1ページとして切り出し、見開きROIとは共有しない。
+見開きはユーザーが選んだ基準フレームのROIで透視補正して机を外し、中央で左右分割。auto splitは中央±4%の暗い縦谷を検索する実験機能。
 自動外周補正は元ROIより外へ広げず、各点最大2.5%の移動まで。検出失敗はROI fallbackと警告。
 デフォルトは手動ROI固定なので、漫画が動いた場合の背景混入を自動保証できない。
 
