@@ -60,6 +60,8 @@ def refresh_page_count_check(manifest):
     difference = None if expected is None else actual - expected
     if expected is None:
         status = "unset"
+    elif manifest.get("status") != "complete":
+        status = "pending"
     elif difference == 0:
         status = "match"
     elif difference < 0:
