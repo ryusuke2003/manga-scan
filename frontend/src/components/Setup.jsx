@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 const FALLBACK_CONFIG = {
+  output_layout: 'spread',
   reading_order: 'rtl',
   image_format: 'png',
   jpeg_quality: 92,
@@ -148,7 +149,8 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
 
       <h3 className="form-heading">出力</h3>
       <div className="options">
-        <label>読む順番<select value={config.reading_order} onChange={event => change('reading_order', event.target.value)}><option value="rtl">右 → 左（日本漫画）</option><option value="ltr">左 → 右</option></select></label>
+        <label>出力形式<select value={config.output_layout} onChange={event => change('output_layout', event.target.value)}><option value="spread">見開きのまま / 標準</option><option value="split">左右のページに分割</option></select></label>
+        <label>読む順番<select disabled={config.output_layout === 'spread'} value={config.reading_order} onChange={event => change('reading_order', event.target.value)}><option value="rtl">右 → 左（日本漫画）</option><option value="ltr">左 → 右</option></select></label>
         <label>ページ画像<select value={config.image_format} onChange={event => change('image_format', event.target.value)}><option value="png">PNG / 可逆圧縮</option><option value="jpeg">JPEG / 小さいサイズ</option></select></label>
         <label>JPEG品質<input type="number" min="1" max="100" required value={config.jpeg_quality} onChange={event => change('jpeg_quality', Number(event.target.value))} /></label>
         <label>手の検出<select value={config.hand_backend} onChange={event => {
@@ -157,8 +159,9 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
           if (backend === 'none') change('finger_repair', false);
         }}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
         <label className="setting-check"><input type="checkbox" checked={config.finger_repair} disabled={config.hand_backend === 'none'} onChange={event => change('finger_repair', event.target.checked)} /><span><strong>別フレームから指を補修</strong><small>同じページの別時刻に写っている実画素だけで指領域を置き換えます。</small></span></label>
-        <label>候補フレーム選択<select value={config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位 / 従来</option><option value="per_page">左右ページ別</option></select></label>
+        <label>候補フレーム選択<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'spread' : config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位</option><option value="per_page">左右ページ別</option></select></label>
       </div>
+      <p className="muted">見開きは中央で切らず、1見開きをPDFの1ページに保存します。左右別の台形・分割位置・湾曲補正は、分割出力を選んだときに使います。</p>
       <label className="checkbox"><input type="checkbox" checked={config.grayscale} onChange={event => change('grayscale', event.target.checked)} /> グレースケールで保存</label>
 
       <div className="correction-head">
@@ -180,12 +183,12 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
         <div className="advanced-grid">
           <label>画像の向き<select value={config.auto_rotation ? 'auto' : String(config.rotation)} onChange={event => changeRotation(event.target.value)}><option value="auto">自動判定 / プレビューで確認</option><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></label>
           <label className="setting-check"><input type="checkbox" checked={config.refine_quad} onChange={event => change('refine_quad', event.target.checked)} /><span><strong>見開き外周を自動微調整</strong><small>手動ROIの内側だけで外周を微調整します。</small></span></label>
-          <label>左右別の台形補正<select value={config.perspective_mode} onChange={event => change('perspective_mode', event.target.value)}><option value="spread">従来方式 / 見開き全体</option><option value="per_page">左右ページを別々に補正</option></select></label>
-          {config.perspective_mode === 'per_page' && <label>ページ輪郭の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.page_contour_min_confidence} onChange={event => change('page_contour_min_confidence', Number(event.target.value))} /></label>}
-          <label>見開きの分割位置<select value={config.split_mode} onChange={event => change('split_mode', event.target.value)}><option value="center">中央固定</option><option value="auto">背の位置を自動推定</option></select></label>
-          <label>湾曲補正<select value={config.dewarp_mode} onChange={event => change('dewarp_mode', event.target.value)}><option value="off">OFF</option><option value="auto">自動</option><option value="manual">固定強度</option></select></label>
-          {config.dewarp_mode === 'manual' && <label>湾曲補正の固定強度<input type="number" min="0" max="0.6" step="0.05" value={config.dewarp_strength} onChange={event => change('dewarp_strength', Number(event.target.value))} /></label>}
-          {config.dewarp_mode === 'auto' && <>
+          <label>左右別の台形補正<select disabled={config.output_layout === 'spread'} value={config.perspective_mode} onChange={event => change('perspective_mode', event.target.value)}><option value="spread">従来方式 / 見開き全体</option><option value="per_page">左右ページを別々に補正</option></select></label>
+          {config.output_layout === 'split' && config.perspective_mode === 'per_page' && <label>ページ輪郭の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.page_contour_min_confidence} onChange={event => change('page_contour_min_confidence', Number(event.target.value))} /></label>}
+          <label>見開きの分割位置<select disabled={config.output_layout === 'spread'} value={config.split_mode} onChange={event => change('split_mode', event.target.value)}><option value="center">中央固定</option><option value="auto">背の位置を自動推定</option></select></label>
+          <label>湾曲補正<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'off' : config.dewarp_mode} onChange={event => change('dewarp_mode', event.target.value)}><option value="off">OFF</option><option value="auto">自動</option><option value="manual">固定強度</option></select></label>
+          {config.output_layout === 'split' && config.dewarp_mode === 'manual' && <label>湾曲補正の固定強度<input type="number" min="0" max="0.6" step="0.05" value={config.dewarp_strength} onChange={event => change('dewarp_strength', Number(event.target.value))} /></label>}
+          {config.output_layout === 'split' && config.dewarp_mode === 'auto' && <>
             <label>自動湾曲の最大強度<input type="number" min="0" max="0.35" step="0.01" value={config.dewarp_max_strength} onChange={event => change('dewarp_max_strength', Number(event.target.value))} /></label>
             <label>自動湾曲の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.dewarp_min_confidence} onChange={event => change('dewarp_min_confidence', Number(event.target.value))} /></label>
           </>}
