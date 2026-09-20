@@ -13,6 +13,13 @@ export function isStaleProjectPoll(polledProject, selectedProject) {
   return polledProject !== selectedProject;
 }
 
+export function removeProjectFromServer(server, projectId) {
+  return {
+    ...server,
+    projects: server.projects.filter(item => item.id !== projectId),
+  };
+}
+
 export default function useScanner() {
   const [project, setProject] = useState(null);
   const [manifest, setManifest] = useState(null);
@@ -125,10 +132,7 @@ export default function useScanner() {
       `/api/projects/${encodeURIComponent(id)}/delete`,
       {},
       () => {
-        setServer(value => ({
-          ...value,
-          projects: value.projects.filter(item => item.id !== id),
-        }));
+        setServer(value => removeProjectFromServer(value, id));
         if (id === selectedProject.current) selectProject(null);
       },
       error => error.status === 404
