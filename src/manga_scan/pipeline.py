@@ -18,6 +18,7 @@ from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
+from .page_turns import analyze_page_turns
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
@@ -1041,7 +1042,13 @@ def run(project, roi=None):
         LOG.setLevel(logging.INFO)
         started = time.monotonic()
         try:
-            manifest.update(status="processing", spreads=[], pages=[], pdf_stale=True)
+            manifest.update(
+                status="processing",
+                spreads=[],
+                pages=[],
+                pdf_stale=True,
+                page_turn_analysis=None,
+            )
             manifest.pop("error", None)
             cover_page = render_cover(project, manifest)
             if cover_page:
@@ -1058,7 +1065,7 @@ def run(project, roi=None):
             fps = min(cfg.video_sample_fps, manifest["metadata"]["fps"] or cfg.video_sample_fps)
             manifest["analysis_fps"] = fps
             machine = StableDetector(cfg.stable_frames, cfg.motion_threshold, cfg.turn_threshold)
-            segments, previous = [], None
+            segments, previous, motion_samples = [], None, []
             with (project / "debug/motion.csv").open("w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["index", "time", "motion", "sharpness", "state"])
@@ -1068,6 +1075,7 @@ def run(project, roi=None):
                     cropped = warp_roi(frame, manifest["roi"])
                     motion = motion_score(previous, cropped) if previous is not None else 1.0
                     sample = Sample(index, timestamp, motion, sharpness(cropped))
+                    motion_samples.append(sample)
                     complete = machine.push(sample)
                     if complete:
                         segments.append(complete)
@@ -1094,6 +1102,15 @@ def run(project, roi=None):
                 raise ValueError(
                     "No stable intervals found. Hold pages longer, tune motion_threshold/stable_frames, or add frames manually"
                 )
+            page_turn_analysis = analyze_page_turns(
+                motion_samples,
+                segments,
+                cfg.motion_threshold,
+                cfg.turn_threshold,
+                fps,
+            )
+            manifest["page_turn_analysis"] = page_turn_analysis
+            write_json(project / "debug/page_turns.json", page_turn_analysis)
             write_json(
                 project / "debug/intervals.json",
                 [
