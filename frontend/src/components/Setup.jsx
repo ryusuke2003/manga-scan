@@ -115,8 +115,18 @@ export function applyCorrectionPreset(config, name) {
   };
 }
 
-export default function Setup({ busy, defaults, onChoose, onCreate }) {
+export default function Setup({
+  busy,
+  defaults,
+  onChoose,
+  onChooseFolder,
+  onCreate,
+  onCreateImages,
+}) {
+  const [inputMode, setInputMode] = useState('video');
   const [videos, setVideos] = useState(['']);
+  const [folder, setFolder] = useState('');
+  const [expectedPageCount, setExpectedPageCount] = useState('');
   const [config, setConfig] = useState(() => buildInitialConfig(defaults));
   const customized = useRef(false);
   const initializedDefaults = useRef(Boolean(defaults));
@@ -143,47 +153,87 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
       : { ...current, auto_rotation: false, rotation: Number(value) });
   };
   const preset = correctionPresetForConfig(config);
+  const sourceMissing = inputMode === 'video'
+    ? videos.some(video => !video.trim())
+    : !folder.trim();
+  const expected = expectedPageCount === '' ? null : Number(expectedPageCount);
 
   return <section className="panel">
-    <p className="step">01 / 動画を選ぶ</p><h2>机の上で撮った動画を読み込みます</h2>
-    <p className="muted">.mov / .mp4 に対応。カメラを固定し、各見開きで手を引いて少し静止すると、きれいに抽出できます。</p>
+    <p className="step">01 / 入力を選ぶ</p><h2>動画または静止画フォルダから1冊を作ります</h2>
+    <div className="row" role="group" aria-label="入力形式">
+      <button type="button" className={inputMode === 'video' ? 'active' : ''} aria-pressed={inputMode === 'video'} onClick={() => setInputMode('video')}>動画</button>
+      <button type="button" className={inputMode === 'images' ? 'active' : ''} aria-pressed={inputMode === 'images'} onClick={() => setInputMode('images')}>静止画フォルダ</button>
+    </div>
+    <p className="muted">{inputMode === 'video'
+      ? '.mov / .mp4 に対応。各見開きで手を引いて少し静止すると、候補フレームから自動抽出します。'
+      : 'PNG / JPEG / WebPをファイル名の自然順（1, 2, 10…）で一括投入します。EXIFの向きも反映します。'}</p>
     <form onSubmit={event => {
       event.preventDefault();
+      if (inputMode === 'images') {
+        onCreateImages(folder.trim(), config, expected);
+        return;
+      }
       const selected = videos.map(value => value.trim()).filter(Boolean);
-      onCreate(selected.length === 1 ? selected[0] : selected, config);
+      onCreate(selected.length === 1 ? selected[0] : selected, config, expected);
     }}>
-      <label htmlFor="video">動画のローカルパス</label>
-      <p className="muted">1冊を分けて撮影した場合は、撮影順に動画を追加してください。連続した1本のタイムラインとして解析します。</p>
-      {videos.map((video, index) => <div className="row" key={index}>
+      {inputMode === 'video' ? <>
+        <label htmlFor="video">動画のローカルパス</label>
+        <p className="muted">1冊を分けて撮影した場合は、撮影順に動画を追加してください。連続した1本のタイムラインとして解析します。</p>
+        {videos.map((video, index) => <div className="row" key={index}>
+          <input
+            id={index === 0 ? 'video' : `video-${index + 1}`}
+            aria-label={index === 0 ? '動画のローカルパス' : `動画${index + 1}のローカルパス`}
+            placeholder="/Users/you/Movies/manga.mov"
+            required
+            value={video}
+            onChange={event => setVideos(current => current.map((value, i) => i === index ? event.target.value : value))}
+          />
+          <button type="button" disabled={busy} onClick={() => onChoose(path => setVideos(current => current.map((value, i) => i === index ? path : value)))}>ファイルを選択</button>
+          {index > 0 && <button type="button" disabled={busy} onClick={() => setVideos(current => current.filter((_, i) => i !== index))}>削除</button>}
+        </div>)}
+        <button type="button" disabled={busy} onClick={() => setVideos(current => [...current, ''])}>＋ 動画を追加</button>
+      </> : <>
+        <label htmlFor="image-folder">静止画フォルダのローカルパス</label>
+        <div className="row">
+          <input id="image-folder" aria-label="静止画フォルダのローカルパス" placeholder="/Users/you/Pictures/manga" required value={folder} onChange={event => setFolder(event.target.value)} />
+          <button type="button" disabled={busy} onClick={() => onChooseFolder?.(setFolder)}>フォルダを選択</button>
+        </div>
+        <p className="muted">サブフォルダは読み込みません。元画像は変更せず、プロジェクト内へ正規化コピーを保存します。</p>
+      </>}
+      <label>期待ページ数（任意）
         <input
-          id={index === 0 ? 'video' : `video-${index + 1}`}
-          aria-label={index === 0 ? '動画のローカルパス' : `動画${index + 1}のローカルパス`}
-          placeholder="/Users/you/Movies/manga.mov"
-          required
-          value={video}
-          onChange={event => setVideos(current => current.map((value, i) => i === index ? event.target.value : value))}
+          aria-label="期待ページ数"
+          type="number"
+          min="1"
+          max="10000"
+          step="1"
+          placeholder="例: 192"
+          value={expectedPageCount}
+          onChange={event => setExpectedPageCount(event.target.value)}
         />
-        <button type="button" disabled={busy} onClick={() => onChoose(path => setVideos(current => current.map((value, i) => i === index ? path : value)))}>ファイルを選択</button>
-        {index > 0 && <button type="button" disabled={busy} onClick={() => setVideos(current => current.filter((_, i) => i !== index))}>削除</button>}
-      </div>)}
-      <button type="button" disabled={busy} onClick={() => setVideos(current => [...current, ''])}>＋ 動画を追加</button>
+        <small>見開き出力は2ページ、表紙・左右分割・外部画像は1ページとして最終ページ数を照合します。</small>
+      </label>
 
       <h3 className="form-heading">出力</h3>
       <div className="options">
-        <label>出力形式<select value={config.output_layout} onChange={event => change('output_layout', event.target.value)}><option value="spread">見開きのまま / 標準</option><option value="split">左右のページに分割</option></select></label>
-        <label>読む順番<select disabled={config.output_layout === 'spread'} value={config.reading_order} onChange={event => change('reading_order', event.target.value)}><option value="rtl">右 → 左（日本漫画）</option><option value="ltr">左 → 右</option></select></label>
+        {inputMode === 'video' && <>
+          <label>出力形式<select value={config.output_layout} onChange={event => change('output_layout', event.target.value)}><option value="spread">見開きのまま / 標準</option><option value="split">左右のページに分割</option></select></label>
+          <label>読む順番<select disabled={config.output_layout === 'spread'} value={config.reading_order} onChange={event => change('reading_order', event.target.value)}><option value="rtl">右 → 左（日本漫画）</option><option value="ltr">左 → 右</option></select></label>
+        </>}
         <label>ページ画像<select value={config.image_format} onChange={event => change('image_format', event.target.value)}><option value="png">PNG / 可逆圧縮</option><option value="jpeg">JPEG / 小さいサイズ</option></select></label>
         <label>JPEG品質<input type="number" min="1" max="100" required value={config.jpeg_quality} onChange={event => change('jpeg_quality', Number(event.target.value))} /></label>
-        <label>手の検出<select value={config.hand_backend} onChange={event => {
-          const backend = event.target.value;
-          change('hand_backend', backend);
-          if (backend === 'none') change('finger_repair', false);
-        }}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
-        <label className="setting-check"><input type="checkbox" checked={config.finger_repair} disabled={config.hand_backend === 'none'} onChange={event => change('finger_repair', event.target.checked)} /><span><strong>別フレームから指を補修</strong><small>同じページの別時刻に写っている実画素だけで指領域を置き換えます。</small></span></label>
-        <label>補修できない指<select disabled={!config.finger_repair || config.hand_backend === 'none'} value={config.finger_repair_fallback} onChange={event => change('finger_repair_fallback', event.target.value)}><option value="paper">紙面だけ自然に補完 / おすすめ</option><option value="preserve">元の画像を残す</option><option value="white">未補修部分を白塗り</option></select></label>
-        <label>候補フレーム選択<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'spread' : config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位</option><option value="per_page">左右ページ別</option></select></label>
+        {inputMode === 'video' && <>
+          <label>手の検出<select value={config.hand_backend} onChange={event => {
+            const backend = event.target.value;
+            change('hand_backend', backend);
+            if (backend === 'none') change('finger_repair', false);
+          }}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
+          <label className="setting-check"><input type="checkbox" checked={config.finger_repair} disabled={config.hand_backend === 'none'} onChange={event => change('finger_repair', event.target.checked)} /><span><strong>別フレームから指を補修</strong><small>同じページの別時刻に写っている実画素だけで指領域を置き換えます。</small></span></label>
+          <label>補修できない指<select disabled={!config.finger_repair || config.hand_backend === 'none'} value={config.finger_repair_fallback} onChange={event => change('finger_repair_fallback', event.target.value)}><option value="paper">紙面だけ自然に補完 / おすすめ</option><option value="preserve">元の画像を残す</option><option value="white">未補修部分を白塗り</option></select></label>
+          <label>候補フレーム選択<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'spread' : config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位</option><option value="per_page">左右ページ別</option></select></label>
+        </>}
       </div>
-      <p className="muted">見開きは中央で切らず、1見開きをPDFの1ページに保存します。左右別の台形・分割位置・湾曲補正は、分割出力を選んだときに使います。</p>
+      {inputMode === 'video' && <p className="muted">見開きは中央で切らず、1見開きをPDFの1ページに保存します。左右別の台形・分割位置・湾曲補正は、分割出力を選んだときに使います。</p>}
       <label className="checkbox"><input type="checkbox" checked={config.grayscale} onChange={event => change('grayscale', event.target.checked)} /> グレースケールで保存</label>
 
       <div className="correction-head">
@@ -204,15 +254,17 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
         <summary>補正の詳細設定</summary>
         <div className="advanced-grid">
           <label>画像の向き<select value={config.auto_rotation ? 'auto' : String(config.rotation)} onChange={event => changeRotation(event.target.value)}><option value="auto">自動判定 / プレビューで確認</option><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></label>
-          <label className="setting-check"><input type="checkbox" checked={config.refine_quad} onChange={event => change('refine_quad', event.target.checked)} /><span><strong>見開き外周を自動調整</strong><small>採用候補ごとに左右ページの外周を検出します。</small></span></label>
-          <label>左右別の台形補正<select disabled={config.output_layout === 'spread'} value={config.perspective_mode} onChange={event => change('perspective_mode', event.target.value)}><option value="spread">従来方式 / 見開き全体</option><option value="per_page">左右ページを別々に補正</option></select></label>
-          {config.refine_quad && (config.output_layout === 'spread' || config.perspective_mode === 'per_page') && <label>ページ輪郭の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.page_contour_min_confidence} onChange={event => change('page_contour_min_confidence', Number(event.target.value))} /></label>}
-          <label>見開きの分割位置<select disabled={config.output_layout === 'spread'} value={config.split_mode} onChange={event => change('split_mode', event.target.value)}><option value="center">中央固定</option><option value="auto">背の位置を自動推定</option></select></label>
-          <label>湾曲補正<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'off' : config.dewarp_mode} onChange={event => change('dewarp_mode', event.target.value)}><option value="off">OFF</option><option value="auto">自動</option><option value="manual">固定強度</option></select></label>
-          {config.output_layout === 'split' && config.dewarp_mode === 'manual' && <label>湾曲補正の固定強度<input type="number" min="0" max="0.6" step="0.05" value={config.dewarp_strength} onChange={event => change('dewarp_strength', Number(event.target.value))} /></label>}
-          {config.output_layout === 'split' && config.dewarp_mode === 'auto' && <>
-            <label>自動湾曲の最大強度<input type="number" min="0" max="0.35" step="0.01" value={config.dewarp_max_strength} onChange={event => change('dewarp_max_strength', Number(event.target.value))} /></label>
-            <label>自動湾曲の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.dewarp_min_confidence} onChange={event => change('dewarp_min_confidence', Number(event.target.value))} /></label>
+          {inputMode === 'video' && <>
+            <label className="setting-check"><input type="checkbox" checked={config.refine_quad} onChange={event => change('refine_quad', event.target.checked)} /><span><strong>見開き外周を自動調整</strong><small>採用候補ごとに左右ページの外周を検出します。</small></span></label>
+            <label>左右別の台形補正<select disabled={config.output_layout === 'spread'} value={config.perspective_mode} onChange={event => change('perspective_mode', event.target.value)}><option value="spread">従来方式 / 見開き全体</option><option value="per_page">左右ページを別々に補正</option></select></label>
+            {config.refine_quad && (config.output_layout === 'spread' || config.perspective_mode === 'per_page') && <label>ページ輪郭の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.page_contour_min_confidence} onChange={event => change('page_contour_min_confidence', Number(event.target.value))} /></label>}
+            <label>見開きの分割位置<select disabled={config.output_layout === 'spread'} value={config.split_mode} onChange={event => change('split_mode', event.target.value)}><option value="center">中央固定</option><option value="auto">背の位置を自動推定</option></select></label>
+            <label>湾曲補正<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'off' : config.dewarp_mode} onChange={event => change('dewarp_mode', event.target.value)}><option value="off">OFF</option><option value="auto">自動</option><option value="manual">固定強度</option></select></label>
+            {config.output_layout === 'split' && config.dewarp_mode === 'manual' && <label>湾曲補正の固定強度<input type="number" min="0" max="0.6" step="0.05" value={config.dewarp_strength} onChange={event => change('dewarp_strength', Number(event.target.value))} /></label>}
+            {config.output_layout === 'split' && config.dewarp_mode === 'auto' && <>
+              <label>自動湾曲の最大強度<input type="number" min="0" max="0.35" step="0.01" value={config.dewarp_max_strength} onChange={event => change('dewarp_max_strength', Number(event.target.value))} /></label>
+              <label>自動湾曲の最低信頼度<input type="number" min="0" max="1" step="0.05" value={config.dewarp_min_confidence} onChange={event => change('dewarp_min_confidence', Number(event.target.value))} /></label>
+            </>}
           </>}
           <label className="setting-check"><input type="checkbox" checked={config.illumination_correction} onChange={event => change('illumination_correction', event.target.checked)} /><span><strong>照明ムラ・影を補正</strong><small>低周波の明るさムラだけを均します。</small></span></label>
           {config.illumination_correction && <label>照明補正の強度<input type="number" min="0" max="1" step="0.05" value={config.illumination_strength} onChange={event => change('illumination_strength', Number(event.target.value))} /></label>}
@@ -225,7 +277,9 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
         </div>
       </details>
 
-      <button id="create" className="primary" disabled={busy || videos.some(video => !video.trim())}>動画を読み込む →</button>
+      <button id="create" className="primary" disabled={busy || sourceMissing}>
+        {inputMode === 'video' ? '動画を読み込む →' : '静止画を一括読み込み →'}
+      </button>
     </form>
   </section>;
 }
