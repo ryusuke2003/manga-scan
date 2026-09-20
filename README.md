@@ -219,10 +219,11 @@ python scripts/download_hand_model.py
 
 すでに `models/hand_landmarker.task` が存在する場合、ダウンロードスクリプトは上書きしません。
 
-手検出なしで動作確認だけする場合は `config.toml` の次の値を変更できます。
+手検出なしで動作確認だけする場合は `config.toml` の次の2値を変更します。
 
 ```toml
 hand_backend = "none"
+finger_repair = false
 ```
 
 この場合、手の重なりを判定できないため全ページが要確認扱いになります。
@@ -241,7 +242,7 @@ brew install ffmpeg
 manga-scan ui --config config.toml --projects projects --port 8766
 ```
 
-指補修はデフォルトOFFです。`finger_repair=true` の場合だけ、MediaPipeで保存済みの手マスクをページ座標へ写し、同じ見開き区間の別候補をOpenCVで位置合わせします。採用ページで指と判定された画素のうち、donor側で手に隠れていない場所だけを実画素で置き換えます。生成AIやinpaintingモデルは使いません。位置合わせが不確実なdonorは使わず、復元率が `finger_repair_min_coverage`（既定90%）未満なら残りを元画素のまま `finger_repair_incomplete` として要確認にします。
+指補修はデフォルトONです。`finger_repair=true` の場合、MediaPipeで保存済みの手マスクをページ座標へ写し、同じ見開き区間の別候補をOpenCVで位置合わせします。採用ページで指と判定された画素のうち、donor側で手に隠れていない場所だけを実画素で置き換えます。生成AIやinpaintingモデルは使いません。位置合わせが不確実なdonorは使わず、復元率が `finger_repair_min_coverage`（既定90%）未満なら残りを元画素のまま `finger_repair_incomplete` として要確認にします。
 
 ### `No stable intervals found`
 
@@ -332,7 +333,7 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 
 - **原画優先**: 従来の見開き全体補正を使い、自動湾曲・照明・白背景を抑えて原画を優先
 - **標準補正 / おすすめ**: 左右別台形補正、自動外周微調整、自動split、自動湾曲、照明ムラ補正を有効化。白背景正規化はOFF
-- **スキャン風**: 標準補正に白背景正規化も加え、スキャナに近い見た目を狙う
+- **スキャン風**: 標準補正に白背景正規化も加え、スキャナに近い見た目を狙う。新規設定のデフォルト
 - **カスタム**: 詳細設定を変更すると自動的にカスタム扱いになる
 
 詳細設定では `refine_quad`、`perspective_mode`、`page_contour_min_confidence`、`split_mode`、`dewarp_mode`、`illumination_correction`、`white_normalization` と、それぞれの主要な強度・信頼度を変更できます。UIから選んだ値もプロジェクト作成時に `config.resolved.json` へ保存されます。
@@ -386,15 +387,15 @@ dewarp_strength = 0.15
 
 候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
 
-ページ別台形補正はデフォルトでは従来互換の `perspective_mode="spread"` です。
+ページ別台形補正はデフォルトで `perspective_mode="per_page"` です。従来方式へ固定したい場合は `"spread"` を選べます。
 `"per_page"` にすると元フレーム上で左右ページの外周を自動検出し、左右を別々の射影変換で補正します。
 両ページの輪郭confidenceが閾値に届かない見開きは `page_contour_low_confidence` として要確認にし、従来の「見開き全体を補正 → 左右分割」へ自動fallbackします。
 検出quadとconfidenceはmanifestに残り、`debug/page_contours/` に確認画像を保存します。
 
-照明ムラ補正はデフォルトOFFです。ON時はページ単位の低周波な明るさだけを均し、二値化や背景除去は行いません。
+照明ムラ補正はデフォルトONです。ページ単位の低周波な明るさだけを均し、二値化や背景除去は行いません。
 黒ベタや網点への影響が気になる場合は `illumination_strength` を下げるかOFFにしてください。
 
-白背景正規化はデフォルトOFFです。ONでも暗部はほぼ触らず、明るい紙面候補だけを白へ寄せます。
+白背景正規化はデフォルトONです。暗部はほぼ触らず、明るい紙面候補だけを白へ寄せます。
 薄いトーンを残したい場合は `white_strength` を下げてください。
 
 詳しい判定式やアルゴリズムは [docs/architecture.md](docs/architecture.md) を参照してください。
