@@ -471,3 +471,40 @@ def test_page_settings_rejects_invalid_manual_quad(tmp_path, monkeypatch):
                 "manual_quad": [[0, 0], [1, 0]],
             },
         )
+
+
+def test_manual_page_contour_keeps_other_side_unchanged_in_spread_perspective(
+    tmp_path,
+    monkeypatch,
+):
+    _, manifest, spread = fixture(tmp_path, monkeypatch)
+    manifest["config"].update(
+        output_layout="split",
+        perspective_mode="spread",
+        dewarp_mode="off",
+    )
+    manifest["pages"] = pipeline.render_spread(tmp_path, manifest, spread)
+    left_before = next(page for page in manifest["pages"] if page["side"] == "left")
+    left_before_image = cv2.imread(str(tmp_path / left_before["path"])).copy()
+    save_manifest(tmp_path, manifest)
+
+    monkeypatch.setattr(
+        pipeline,
+        "detect_page_quads",
+        lambda *_a, **_k: _review_detected_pages(),
+    )
+    manual_quad = [[0.56, 0.14], [0.91, 0.12], [0.92, 0.87], [0.55, 0.89]]
+    result = pipeline.edit(
+        tmp_path,
+        "page_settings",
+        page_id="spread_0001_right",
+        settings={"page_quad_mode": "manual", "manual_quad": manual_quad},
+    )
+
+    left = next(page for page in result["pages"] if page["side"] == "left")
+    right = next(page for page in result["pages"] if page["side"] == "right")
+    left_after_image = cv2.imread(str(tmp_path / left["path"]))
+    np.testing.assert_array_equal(left_after_image, left_before_image)
+    assert right["page_contour"]["mode"] == "manual"
+    assert result["spreads"][0]["perspective_mode_used"] == "mixed_manual"
+    assert result["spreads"][0]["manual_page_sides"] == ["right"]
