@@ -19,19 +19,8 @@ from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
-from .pipeline_render_helpers import (
-    _finger_donor_candidates,
-    _page_override,
-    _page_render_settings,
-    _persist_finger_repair_component_debug,
-    _union_occlusion_masks,
-    _whole_spread_geometry as _whole_spread_geometry_impl,
-    candidate_page_glare_mask,
-    candidate_page_hand_mask as _candidate_page_hand_mask_impl,
-    detect_spread_page_consensus as _detect_spread_page_consensus_impl,
-    rectify_spread_pages as _rectify_spread_pages_impl,
-)
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
+from . import pipeline_render_helpers as render_helpers
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
@@ -41,9 +30,20 @@ from .split import (
     rotate_image,
     split_spread,
 )
-from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .spread_render import render_whole_spread as _render_whole_spread_impl
+from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
+
+_finger_donor_candidates = render_helpers._finger_donor_candidates
+_page_override = render_helpers._page_override
+_page_render_settings = render_helpers._page_render_settings
+_persist_finger_repair_component_debug = render_helpers._persist_finger_repair_component_debug
+_union_occlusion_masks = render_helpers._union_occlusion_masks
+_whole_spread_geometry_impl = render_helpers._whole_spread_geometry
+candidate_page_glare_mask = render_helpers.candidate_page_glare_mask
+_candidate_page_hand_mask_impl = render_helpers.candidate_page_hand_mask
+_detect_spread_page_consensus_impl = render_helpers.detect_spread_page_consensus
+_rectify_spread_pages_impl = render_helpers.rectify_spread_pages
 
 LOG = logging.getLogger("manga_scan")
 
