@@ -36,10 +36,22 @@ def _alignment_scale(shape):
 
 
 def _global_alignment_residual(target_gray, donor_gray, target_mask, donor_mask):
-    blocked = (
-        _binary_mask(target_mask, target_gray.shape)
-        | _binary_mask(donor_mask, target_gray.shape)
-    ).astype(np.uint8)
+    height, width = target_gray.shape[:2]
+    if target_mask.shape != (height, width):
+        target_mask = cv2.resize(
+            target_mask,
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    if donor_mask.shape != (height, width):
+        donor_mask = cv2.resize(
+            donor_mask,
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    # Internal alignment masks may already be normalized to 0/1 while warped
+    # masks use 0/255. Non-zero is the mask contract here, not a gray threshold.
+    blocked = ((target_mask > 0) | (donor_mask > 0)).astype(np.uint8)
     kernel = np.ones((5, 5), np.uint8)
     clean = cv2.dilate(blocked, kernel, iterations=1) == 0
     if np.count_nonzero(clean) < clean.size * 0.2:
