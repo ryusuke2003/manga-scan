@@ -78,6 +78,15 @@ def test_cbz_writes_comicinfo_when_metadata_exists(tmp_path):
 def test_metadata_output_stem_is_safe_and_readable():
     assert metadata_output_stem({"title": " 漫画 / 第1巻 "}) == "漫画 _ 第1巻"
     assert metadata_output_stem({}) == "manga"
+    long_japanese = metadata_output_stem({"title": "漫画" * 100})
+    assert len(long_japanese.encode("utf-8")) <= 180
+
+
+def test_book_metadata_rejects_control_characters(tmp_path):
+    path = tmp_path / "page.png"
+    Image.new("RGB", (40, 60), "white").save(path)
+    with pytest.raises(ValueError, match="control characters"):
+        export_cbz([path], tmp_path / "book.cbz", {"title": "bad\x00title"})
 
 
 def test_jpeg_embedded_without_second_recompression(tmp_path):
