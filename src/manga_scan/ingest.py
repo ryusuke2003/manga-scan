@@ -120,13 +120,20 @@ def _refresh_reference_candidates(project, manifest, cfg):
         return
 
     start_time = float(cover.get("time", 0.0)) if cover.get("status") == "ready" else 0.0
-    candidates = scan_reference_candidates(
-        manifest["source"],
-        manifest["metadata"],
-        cfg,
-        start_time=start_time,
-        limit=5,
-    )
+    try:
+        candidates = scan_reference_candidates(
+            manifest["source"],
+            manifest["metadata"],
+            cfg,
+            start_time=start_time,
+            limit=5,
+        )
+    except (OSError, RuntimeError, ValueError, cv2.error) as exc:
+        reference["candidates"] = []
+        reference["candidate_search_error"] = str(exc)
+        return
+
+    reference.pop("candidate_search_error", None)
     directory = project / "source/reference_candidates"
     if directory.exists():
         shutil.rmtree(directory)
