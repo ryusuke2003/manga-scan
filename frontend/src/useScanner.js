@@ -81,6 +81,9 @@ export default function useScanner() {
     selectProject,
     create: (video, config) => perform('/api/projects', { video, config }, result => selectProject(result.id)),
     choose: onSuccess => perform('/api/choose', {}, result => onSuccess(result.path)),
+    deleteProject: id => perform(`/api/projects/${encodeURIComponent(id)}/delete`, {}, () => {
+      if (id === project) selectProject(null);
+    }),
     start: roi => perform(`/api/projects/${encodeURIComponent(project)}/run`, { roi }),
     edit: (action, params = {}) => perform(`/api/projects/${encodeURIComponent(project)}/edit`, { action, ...params }),
   };
