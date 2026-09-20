@@ -127,13 +127,22 @@ export default function App() {
       <p className="aside-note">動画から、読むための一冊へ。<br />OCRなし・画像生成なし。</p>
     </aside>
     <main>
-      <header><div><p className="eyebrow">VIDEO → PAGES → PDF / CBZ</p><h1>{project ? (
-        manifest?.sources?.length > 1
-          ? `${manifest.sources[0].split('/').pop()} +${manifest.sources.length - 1}`
-          : (manifest?.sources?.[0]?.split('/').pop() || manifest?.source.split('/').pop() || '読み込み中…')
+      <header><div><p className="eyebrow">VIDEO / IMAGES → PAGES → PDF / CBZ</p><h1>{project ? (
+        manifest?.source_type === 'image_folder'
+          ? `${manifest.source.split('/').filter(Boolean).pop()} · ${manifest.pages.length}枚`
+          : manifest?.sources?.length > 1
+            ? `${manifest.sources[0].split('/').pop()} +${manifest.sources.length - 1}`
+            : (manifest?.sources?.[0]?.split('/').pop() || manifest?.source.split('/').pop() || '読み込み中…')
       ) : '漫画を、ページに。'}</h1></div><span className="badge">OFFLINE</span></header>
       {error && <div id="error" role="alert">{error}</div>}
-      {!project && <Setup busy={busy} defaults={server.defaults} onChoose={scanner.choose} onCreate={scanner.create} />}
+      {!project && <Setup
+        busy={busy}
+        defaults={server.defaults}
+        onChoose={scanner.choose}
+        onChooseFolder={scanner.chooseFolder}
+        onCreate={scanner.create}
+        onCreateImages={scanner.createImages}
+      />}
       {manifest && <>
         {setupStage}
         <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{activeJobMessage ?? (busy && !server.job?.busy && manifest.status !== 'processing' ? '処理中…' : manifest.message)}</strong><span>{activeProjectJob && server.job.action !== 'process' ? '—' : `${Math.round(manifest.progress * 100)}%`}</span>{activeProjectJob && server.job.action === 'process' && <button type="button" className="danger-soft" disabled={cancellingProcess} onClick={scanner.cancelProcessing}>{cancellingProcess ? '停止を待っています…' : '処理を停止'}</button>}</div><progress max="1" value={activeProjectJob && server.job.action !== 'process' ? undefined : manifest.progress} />{manifest.status === 'cancelled' && <p className="muted">{resumeReady ? '完了済みの見開きは保持されています。続きから再開できます。' : '動き解析の途中で停止したため、再開時は動き解析からやり直します。'}</p>}<p className="muted">{manifest.warnings.join(' / ')}</p></section>
