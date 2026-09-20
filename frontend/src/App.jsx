@@ -16,7 +16,7 @@ export default function App() {
       <h2>プロジェクト</h2><div id="projects">{server.projects.map(item => <div className="project-item" key={item.id}>
         <button className={`project-select ${item.id === project ? 'active' : ''}`} title={item.id} onClick={() => scanner.selectProject(item.id)}>{item.source_name}</button>
         <button className="project-delete" disabled={busy} aria-label={`${item.source_name}を削除`} title="プロジェクトを削除" onClick={() => {
-          if (window.confirm(`「${item.source_name}」を削除しますか？\n生成したページ画像やPDFも削除されます。この操作は元に戻せません。`)) scanner.deleteProject(item.id);
+          if (window.confirm(`「${item.source_name}」を削除しますか？\nプロジェクトID: ${item.id}\n\n生成したページ画像やPDFも削除されます。この操作は元に戻せません。`)) scanner.deleteProject(item.id);
         }}>削除</button>
       </div>)}</div>
       <p className="aside-note">動画から、読むための一冊へ。<br />OCRなし・画像生成なし。</p>
