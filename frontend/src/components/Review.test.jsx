@@ -62,3 +62,27 @@ it('retains split review controls for legacy projects without the new setting', 
   expect(screen.getByLabelText('この見開きの出力形式').value).toBe('split');
   expect(screen.getByText('左右の順番を入れ替え')).toBeTruthy();
 });
+
+
+it('distinguishes current PDF, stale PDF, and an active export job', () => {
+  const current = { ...manifest, pdf: 'output/manga.pdf', pdf_stale: false };
+  const { rerender } = render(
+    <Review manifest={current} file={path => path} busy={false} onEdit={vi.fn()} />,
+  );
+  expect(screen.getByRole('button', { name: 'PDFを再出力' }).disabled).toBe(false);
+  expect(screen.getByRole('link', { name: 'PDFを開く ↗' })).toBeTruthy();
+
+  rerender(
+    <Review manifest={{ ...current, pdf_stale: true }} file={path => path} busy={false} onEdit={vi.fn()} />,
+  );
+  expect(screen.getByRole('button', { name: 'PDFを出力' }).disabled).toBe(false);
+  expect(screen.queryByRole('link', { name: 'PDFを開く ↗' })).toBeNull();
+
+  rerender(
+    <Review manifest={current} file={path => path} busy exporting onEdit={vi.fn()} />,
+  );
+  const exporting = screen.getByRole('button', { name: 'PDF生成中…' });
+  expect(exporting.disabled).toBe(true);
+  expect(exporting.getAttribute('aria-busy')).toBe('true');
+  expect(screen.getByText(/PDFを生成中です/)).toBeTruthy();
+});
