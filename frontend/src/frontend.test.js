@@ -136,8 +136,9 @@ describe('frontend helpers', () => {
   });
 
   it('initializes correction controls from server defaults', () => {
-    const config = buildInitialConfig({ perspective_mode: 'per_page', page_contour_min_confidence: 0.7, illumination_correction: true, illumination_strength: 0.45 });
+    const config = buildInitialConfig({ perspective_mode: 'per_page', page_contour_min_confidence: 0.7, illumination_correction: true, illumination_strength: 0.45, rotation: 90 });
     expect(config.perspective_mode).toBe('per_page');
+    expect(config.rotation).toBe(90);
     expect(config.page_contour_min_confidence).toBe(0.7);
     expect(config.illumination_strength).toBe(0.45);
   });
@@ -172,6 +173,17 @@ describe('frontend helpers', () => {
       '/tmp/book.mp4',
       expect.objectContaining({ finger_repair: true }),
     );
+  });
+
+  it('submits rotation as a numeric config value from the setup form', () => {
+    const onCreate = vi.fn();
+    render(React.createElement(Setup, { busy: false, defaults: buildInitialConfig(), onChoose: vi.fn(), onCreate }));
+    fireEvent.change(screen.getByLabelText('動画のローカルパス'), { target: { value: '/tmp/book.mp4' } });
+    fireEvent.change(screen.getByLabelText('画像の向き'), { target: { value: '270' } });
+    fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
+    expect(onCreate).toHaveBeenCalledWith('/tmp/book.mp4', expect.objectContaining({
+      rotation: 270,
+    }));
   });
 
   it('submits the selected correction preset from the setup form', () => {
