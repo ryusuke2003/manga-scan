@@ -4,7 +4,7 @@ import pytest
 
 from manga_scan.config import Config
 from manga_scan.perspective import warp_roi
-from manga_scan.pipeline import rectify_spread_pages
+from manga_scan.pipeline import rectify_spread_pages, render_spread
 from manga_scan.split import split_spread
 
 REFERENCE = [[0.05, 0.07], [0.96, 0.07], [0.96, 0.94], [0.05, 0.94]]
@@ -42,6 +42,111 @@ def test_per_page_mode_connects_contour_detection_to_independent_warp(tmp_path):
     assert min(sides["left"].shape[:2]) > 100
     assert min(sides["right"].shape[:2]) > 100
     assert (tmp_path / spread["page_contour_debug"]).is_file()
+
+
+@pytest.mark.parametrize(
+    ("rotation", "source_rotate_code", "source_roi"),
+    [
+        (
+            180,
+            cv2.ROTATE_180,
+            [[0.04, 0.06], [0.95, 0.06], [0.95, 0.93], [0.04, 0.93]],
+        ),
+        (
+            270,
+            cv2.ROTATE_90_CLOCKWISE,
+            [[0.06, 0.05], [0.93, 0.05], [0.93, 0.96], [0.06, 0.96]],
+        ),
+    ],
+)
+def test_render_spread_rotated_per_page_integration(
+    tmp_path,
+    monkeypatch,
+    rotation,
+    source_rotate_code,
+    source_roi,
+):
+    upright = synthetic_spread()
+    # Build the fixture independently from manga_scan's rotation helpers so a
+    # bug in rotate_image()/rotate_roi() cannot cancel itself inside the test.
+    source = cv2.rotate(upright, source_rotate_code)
+
+    expected_dir = tmp_path / "expected"
+    expected_dir.mkdir()
+    expected_spread = {"id": "expected", "extra_suspect": []}
+    expected_cfg = Config(
+        hand_backend="none",
+        perspective_mode="per_page",
+        page_contour_min_confidence=0.5,
+    )
+    expected_sides = rectify_spread_pages(
+        expected_dir,
+        upright,
+        warp_roi(upright, REFERENCE),
+        REFERENCE,
+        expected_spread,
+        expected_cfg,
+    )
+    assert expected_spread["perspective_mode_used"] == "per_page"
+
+    render_dir = tmp_path / "render"
+    render_dir.mkdir()
+    cfg = Config(
+        hand_backend="none",
+        perspective_mode="per_page",
+        page_contour_min_confidence=0.5,
+        rotation=rotation,
+        reading_order="ltr",
+        image_format="png",
+    )
+    manifest = {
+        "source": "unused.mp4",
+        "config": cfg.to_dict(),
+        "pdf_stale": False,
+    }
+    spread = {
+        "id": f"spread_rot_{rotation}",
+        "candidates": [
+            {
+                "id": 0,
+                "time": 1.0,
+                "roi": source_roi,
+                "metrics": {"score": 1.0},
+                "page_suspect": {"left": [], "right": []},
+                "suspect": [],
+            }
+        ],
+        "selected": 0,
+        "selected_pages": {"left": 0, "right": 0},
+        "extra_suspect": [],
+    }
+
+    monkeypatch.setattr(
+        "manga_scan.pipeline.extract_frame",
+        lambda *_args, **_kwargs: source.copy(),
+    )
+
+    pages = render_spread(render_dir, manifest, spread)
+
+    assert spread["perspective_mode_used"] == "per_page"
+    assert spread["page_contours"]["detected"]
+    assert spread["page_contours"]["left"]["detected"]
+    assert spread["page_contours"]["right"]["detected"]
+    assert "page_contour_low_confidence" not in spread["extra_suspect"]
+
+    by_side = {page["side"]: page for page in pages}
+    assert set(by_side) == {"left", "right"}
+    for side in ("left", "right"):
+        output = cv2.imread(str(render_dir / by_side[side]["path"]))
+        assert output is not None
+        assert output.shape == expected_sides[side].shape
+        assert np.mean(
+            np.abs(output.astype(np.int16) - expected_sides[side].astype(np.int16))
+        ) < 1.0
+        assert by_side[side]["candidate_id"] == 0
+
+    assert (render_dir / spread["page_contour_debug"]).is_file()
+    assert manifest["pdf_stale"]
 
 
 def test_low_confidence_contours_fall_back_to_legacy_spread_split(tmp_path):
