@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-import manga_scan.spread_detect as spread_detect
 from manga_scan.config import Config
 from manga_scan.ingest import set_setup_frame
 from manga_scan.perspective import rotate_roi
@@ -117,11 +116,6 @@ def test_reference_confirmation_falls_back_to_manual_points(tmp_path, monkeypatc
     monkeypatch.setattr(
         "manga_scan.ingest.extract_frame",
         lambda *_args, **_kwargs: frame.copy(),
-    )
-    monkeypatch.setattr(
-        spread_detect,
-        "detect_reference_spread",
-        spread_detect.detect_reference_spread,
     )
     monkeypatch.setattr(
         "manga_scan.ingest.detect_reference_spread",
