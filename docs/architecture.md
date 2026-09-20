@@ -20,7 +20,8 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `video.py`: FFmpeg境界。回転メタデータを適用した画像、表示時刻でのseek、縮小パイプ。
 - `motion.py`: ROI差分、stable/turning状態機械、時間分散した候補抽出。
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
-- `finger_repair.py`: 別候補ページの保守的位置合わせ、手マスクで保護した実画素置換、境界feather。
+- `finger_alignment.py`: donorのglobal ECC、component単位local translation、clean-context検証、bounded photometric alignment。
+- `finger_repair.py`: alignment済みdonorの実画素合成、境界feather、未補修fallback、repair metadata。
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py`: ユーザー指定の見開きROIを外側へ広げない保守的な外周微調整。
@@ -31,7 +32,9 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `illumination.py`: ページ輝度の低周波マップ推定と、Lab輝度/グレースケールへの保守的な照明補正。
 - `dedupe.py`: dHashと局所SSIM。左右半分も比較。
 - `export.py`: 画像PDF、分割コンタクトシート。
-- `pipeline.py`: 処理の接続とレビュー操作。画素アルゴリズムをUIから分離。
+- `pipeline_render_helpers.py`: page geometry、mask変換、page-level overrideなどrenderingの共通helper。
+- `spread_render.py`: 見開き1枚出力のrendering実装。
+- `pipeline.py`: scan/render/export/editのorchestrationと互換facade。画素アルゴリズムをUIから分離。
 - `storage.py`: atomic JSON保存、画像保存、プロジェクト排他ロック。
 - `frontend/`: React + ViteのUIソース。開発時は5173番で起動し、`/api` と `/files` をFlaskへproxyする。
 - `src/manga_scan/static/`: `npm --prefix frontend run build` の生成物。Git管理せず、Flaskが通常起動時に配信する。
