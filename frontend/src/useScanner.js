@@ -9,8 +9,8 @@ export function shouldReportPollError(error, aborted, mutating, staleProject = f
   return error.name !== 'AbortError' && !aborted && !mutating && !staleProject;
 }
 
-export function isStaleProjectPoll(polledProject, selectedProject) {
-  return polledProject !== selectedProject;
+export function isStalePoll(polledProject, selectedProject, pollVersion, currentVersion) {
+  return polledProject !== selectedProject || pollVersion !== currentVersion;
 }
 
 export function removeProjectFromServer(server, projectId) {
@@ -36,6 +36,7 @@ export default function useScanner() {
   const [revision, setRevision] = useState(0);
   const manifestJSON = useRef('');
   const mutation = useRef(false);
+  const mutationVersion = useRef(0);
   const jobBusy = useRef(false);
   const selectedProject = useRef(null);
 
@@ -43,13 +44,20 @@ export default function useScanner() {
     const controller = new AbortController();
     let timer;
     const polledProject = project;
+    const pollVersion = mutationVersion.current;
+    const stale = () => isStalePoll(
+      polledProject,
+      selectedProject.current,
+      pollVersion,
+      mutationVersion.current,
+    );
     async function poll() {
       try {
         const next = await request('/api/state', { signal: controller.signal });
         if (
           controller.signal.aborted
           || mutation.current
-          || isStaleProjectPoll(polledProject, selectedProject.current)
+          || stale()
         ) return;
         const data = polledProject
           ? await request(`/api/projects/${encodeURIComponent(polledProject)}`, { signal: controller.signal })
@@ -57,7 +65,7 @@ export default function useScanner() {
         if (
           controller.signal.aborted
           || mutation.current
-          || isStaleProjectPoll(polledProject, selectedProject.current)
+          || stale()
         ) return;
         const finished = didJobFinish(jobBusy.current, next.job);
         jobBusy.current = next.job.busy;
@@ -70,14 +78,13 @@ export default function useScanner() {
         if (finished) setRevision(value => value + 1);
         if (next.job.error && next.job.project === polledProject) setError(next.job.error);
       } catch (err) {
-        const staleProject = isStaleProjectPoll(polledProject, selectedProject.current);
-        if (shouldReportPollError(err, controller.signal.aborted, mutation.current, staleProject)) {
+        if (shouldReportPollError(err, controller.signal.aborted, mutation.current, stale())) {
           setError(err.message);
         }
       } finally {
         if (
           !controller.signal.aborted
-          && !isStaleProjectPoll(polledProject, selectedProject.current)
+          && !stale()
         ) timer = setTimeout(poll, 1500);
       }
     }
@@ -86,6 +93,7 @@ export default function useScanner() {
   }, [project, refresh]);
 
   function selectProject(id) {
+    mutationVersion.current += 1;
     selectedProject.current = id;
     setProject(id);
     setManifest(null);
@@ -103,6 +111,7 @@ export default function useScanner() {
   async function perform(path, body, onSuccess, formatError = error => error.message) {
     if (mutation.current || server.job.busy || !server.token) return;
     mutation.current = true;
+    mutationVersion.current += 1;
     setPending(true);
     setError('');
     try {
