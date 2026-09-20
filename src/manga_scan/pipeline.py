@@ -1044,7 +1044,16 @@ def edit(project, action, **params):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
         if action == "export":
-            build_pdf(project, manifest)
+            manifest["message"] = "PDFを生成中です"
+            save_manifest(project, manifest)
+            try:
+                build_pdf(project, manifest)
+            except Exception:
+                manifest["message"] = "PDFの出力に失敗しました"
+                save_manifest(project, manifest)
+                raise
+            manifest["message"] = "PDFを出力しました"
+            save_manifest(project, manifest)
             return manifest
         if action == "toggle_page":
             page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])

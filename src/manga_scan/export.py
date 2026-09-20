@@ -45,6 +45,8 @@ def export_pdf(paths, output, dpi=300, image_format="png", jpeg_quality=92):
 def contact_sheets(project, pages, per_sheet=80):
     """Paginated so a very long book cannot allocate an unbounded tall bitmap."""
     project = Path(project)
+    debug = project / "debug"
+    debug.mkdir(parents=True, exist_ok=True)
     for offset in range(0, len(pages), per_sheet):
         batch = pages[offset : offset + per_sheet]
         sheet = Image.new("RGB", (5 * 180, math.ceil(len(batch) / 5) * 260), "#e8e5df")
@@ -64,4 +66,4 @@ def contact_sheets(project, pages, per_sheet=80):
             if offset == 0
             else f"contact_sheet_{offset // per_sheet + 1:03d}.jpg"
         )
-        sheet.save(project / "debug" / name, quality=90)
+        sheet.save(debug / name, quality=90)

@@ -19,6 +19,15 @@ export default function App() {
   // Version 1 projects did not have setup stages; keep their original first-frame flow.
   const referenceConfirmed = reference?.confirmed ?? true;
   const referenceDetected = Boolean(reference?.detection?.detected && manifest?.roi);
+  const activeProjectJob = Boolean(server.job?.busy && server.job.project === project);
+  const exportingPdf = activeProjectJob && server.job.action === 'export';
+  const activeJobMessage = activeProjectJob
+    ? server.job.action === 'export'
+      ? 'PDFを生成中…'
+      : server.job.action === 'process'
+        ? manifest?.message
+        : '変更を反映中…'
+    : null;
   const canConfigure = manifest && manifest.status !== 'complete'
     && !(manifest.status === 'processing' && busy);
 
@@ -114,8 +123,8 @@ export default function App() {
       {!project && <Setup busy={busy} defaults={server.defaults} onChoose={scanner.choose} onCreate={scanner.create} />}
       {manifest && <>
         {setupStage}
-        <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{busy && manifest.status !== 'processing' ? '処理中…' : manifest.message}</strong><span>{Math.round(manifest.progress * 100)}%</span></div><progress max="1" value={manifest.progress} /><p className="muted">{manifest.warnings.join(' / ')}</p></section>
-        {(manifest.pages.length > 0 || manifest.roi) && <Review key={project} manifest={manifest} file={file} busy={busy} onEdit={scanner.edit} />}
+        <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{activeJobMessage ?? (busy && !server.job?.busy && manifest.status !== 'processing' ? '処理中…' : manifest.message)}</strong><span>{activeProjectJob && server.job.action !== 'process' ? '—' : `${Math.round(manifest.progress * 100)}%`}</span></div><progress max="1" value={activeProjectJob && server.job.action !== 'process' ? undefined : manifest.progress} /><p className="muted">{manifest.warnings.join(' / ')}</p></section>
+        {(manifest.pages.length > 0 || manifest.roi) && <Review key={project} manifest={manifest} file={file} busy={busy} exporting={exportingPdf} onEdit={scanner.edit} />}
       </>}
       <footer>完全ローカル · 元動画を変更しません · 手や絵の描き足しは行いません</footer>
     </main>
