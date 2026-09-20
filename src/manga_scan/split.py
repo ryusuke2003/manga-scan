@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from .illumination import correct_illumination
+
 
 def spine_position(image, ratio=0.5, mode="center"):
     h, w = image.shape[:2]
@@ -26,7 +28,15 @@ def split_spread(image, ratio=0.5, mode="center", gutter_fraction=0.0):
     return {"left": left, "right": right}, spine
 
 
-def enhance_page(image, grayscale=False, contrast=1.0, rotation=0, dewarp_strength=0.0):
+def enhance_page(
+    image,
+    grayscale=False,
+    contrast=1.0,
+    rotation=0,
+    dewarp_strength=0.0,
+    illumination_correction=False,
+    illumination_strength=0.7,
+):
     if dewarp_strength:
         # Symmetric cylindrical projection, user-controlled; never synthesizes pixels.
         h, w = image.shape[:2]
@@ -35,6 +45,8 @@ def enhance_page(image, grayscale=False, contrast=1.0, rotation=0, dewarp_streng
         map_x = np.tile(((np.sin(x * theta) / np.sin(theta) + 1) * (w - 1) / 2), (h, 1))
         map_y = np.tile(np.arange(h, dtype=np.float32)[:, None], (1, w))
         image = cv2.remap(image, map_x.astype(np.float32), map_y, cv2.INTER_CUBIC)
+    if illumination_correction and illumination_strength:
+        image = correct_illumination(image, illumination_strength)
     if grayscale:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     if contrast != 1:
