@@ -22,6 +22,7 @@ hand_padding = 0.015
 finger_repair = true # Requires hand_backend="mediapipe"; set false when hand detection is disabled
 finger_repair_min_coverage = 0.9 # Final donor + fallback coverage required to clear the review warning
 finger_repair_fallback = "paper" # "paper": fill only safe plain-paper regions; "preserve": keep fingers; "white": force white fill
+page_background_fill = "paper" # Whole-spread output only: "paper" hides desk outside trusted page outlines; "preserve" keeps it; "white" forces white
 
 duplicate_hash_distance = 4
 duplicate_ssim = 0.985
