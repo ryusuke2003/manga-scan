@@ -1537,6 +1537,150 @@ def import_external_page(project, image_path, page_id=None, display_name=None):
         return manifest
 
 
+
+def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, requested_fps=60.0):
+    """Add high-density candidates around one reviewed page without rescanning the book."""
+    page = next((item for item in manifest.get("pages", []) if item["id"] == page_id), None)
+    if page is None:
+        raise ValueError("Unknown page")
+    if page.get("side") in ("cover", "external") or not page.get("spread_id"):
+        raise ValueError("High-fps rescan is only available for video-backed pages")
+
+    spread = next(
+        (item for item in manifest.get("spreads", []) if item["id"] == page["spread_id"]),
+        None,
+    )
+    if spread is None:
+        raise ValueError("Page spread is missing")
+
+    radius = float(radius)
+    requested_fps = float(requested_fps)
+    if not math.isfinite(radius) or not 0.25 <= radius <= 3.0:
+        raise ValueError("Rescan radius must be 0.25..3.0 seconds")
+    if not math.isfinite(requested_fps) or not 10 <= requested_fps <= 120:
+        raise ValueError("Rescan fps must be 10..120")
+
+    selected_id = page.get("candidate_id")
+    if selected_id is None:
+        selected_pages = spread.get("selected_pages") or {}
+        selected_id = selected_pages.get(page.get("side"), spread.get("selected"))
+    selected = _candidate_by_id(spread, selected_id)
+    center = float(selected["time"])
+
+    source_fps = float(manifest.get("metadata", {}).get("fps") or requested_fps)
+    effective_fps = min(requested_fps, source_fps) if source_fps > 0 else requested_fps
+    duration = float(manifest["metadata"]["duration"])
+    start = max(0.0, center - radius)
+    end = min(duration, center + radius)
+
+    height = int(manifest["metadata"]["display_height"])
+    width = int(manifest["metadata"]["display_width"])
+    analysis_width = min(cfg.analysis_width, width)
+    size = (
+        analysis_width,
+        max(2, round(height * analysis_width / width)),
+    )
+
+    samples = []
+    previous = None
+    stream = sample_frames(
+        manifest["source"],
+        effective_fps,
+        size,
+        cfg.hwaccel,
+        start_time=start,
+    )
+    try:
+        for index, timestamp, frame in stream:
+            if timestamp > end + (0.5 / effective_fps):
+                break
+            cropped = warp_roi(frame, manifest["roi"])
+            motion = motion_score(previous, cropped) if previous is not None else 1.0
+            samples.append(Sample(index, timestamp, motion, sharpness(cropped)))
+            previous = cropped
+    finally:
+        stream.close()
+
+    if not samples:
+        raise ValueError("No frames found in the rescan window")
+
+    limit = max(4, min(8, int(cfg.candidates_per_spread)))
+    picked = choose_candidates(samples, limit)
+    existing_times = [float(item["time"]) for item in spread.get("candidates", [])]
+    duplicate_tolerance = 0.5 / effective_fps
+    picked = [
+        sample
+        for sample in picked
+        if all(abs(sample.time - current) > duplicate_tolerance for current in existing_times)
+    ]
+
+    added = []
+    if picked:
+        next_id = max((int(item["id"]) for item in spread.get("candidates", [])), default=-1) + 1
+        detector = HandDetector(cfg)
+        try:
+            for offset, sample in enumerate(picked):
+                record = candidate(
+                    project,
+                    manifest,
+                    cfg,
+                    detector,
+                    spread["id"],
+                    next_id + offset,
+                    sample,
+                )
+                record["rescan"] = {
+                    "center_time": center,
+                    "radius": radius,
+                    "requested_fps": requested_fps,
+                    "effective_fps": effective_fps,
+                }
+                added.append(record)
+        finally:
+            detector.close()
+
+        spread["candidates"].extend(added)
+        _augment_temporal_hand_masks(project, spread["candidates"], cfg)
+        selection_mode = (
+            spread.get("candidate_selection_mode", cfg.candidate_selection_mode)
+            if spread.get("output_layout", cfg.output_layout) == "split"
+            else "spread"
+        )
+        choose_candidate_selection(spread["candidates"], selection_mode)
+        for record in spread["candidates"]:
+            write_json(project / Path(record["path"]).with_suffix(".json"), record)
+
+        indices = [
+            index
+            for index, existing in enumerate(manifest["pages"])
+            if existing.get("spread_id") == spread["id"]
+        ]
+        replacements = {
+            rendered["id"]: rendered
+            for rendered in render_spread(project, manifest, spread)
+        }
+        for index in indices:
+            old = manifest["pages"][index]
+            new = replacements[old["id"]]
+            new["enabled"] = old["enabled"]
+            manifest["pages"][index] = new
+
+    spread["candidate_rescan"] = {
+        "center_time": center,
+        "radius": radius,
+        "requested_fps": requested_fps,
+        "effective_fps": effective_fps,
+        "added": len(added),
+        "candidate_ids": [item["id"] for item in added],
+    }
+    manifest["message"] = (
+        f"{page_id}: 高fps再探索で候補を{len(added)}件追加しました"
+        if added
+        else f"{page_id}: 高fps再探索で新しい候補は見つかりませんでした"
+    )
+    return len(added)
+
+
 def edit(project, action, **params):
     project = Path(project).resolve()
     with project_lock(project):
@@ -1561,6 +1705,19 @@ def edit(project, action, **params):
             manifest["book_metadata"] = metadata
             manifest["pdf_stale"] = True
             manifest["message"] = "書籍メタデータを更新しました。PDF / CBZを再出力してください"
+            save_manifest(project, manifest)
+            return manifest
+        if action == "rescan_candidates":
+            _rescan_page_candidates(
+                project,
+                manifest,
+                cfg,
+                params["page_id"],
+                radius=params.get("radius", 1.0),
+                requested_fps=params.get("fps", 60.0),
+            )
+            manifest["pdf_stale"] = True
+            _refresh_adjacent_final_quality(project, manifest, cfg)
             save_manifest(project, manifest)
             return manifest
         if action in ("undo_page_edit", "redo_page_edit"):
