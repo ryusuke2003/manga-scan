@@ -1262,7 +1262,7 @@ def import_external_page(project, image_path, page_id=None):
 
     project = Path(project).resolve()
     image_path = Path(image_path).expanduser().resolve(strict=True)
-    if image_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"):
+    if image_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
         raise ValueError("Unsupported image format")
 
     with Image.open(image_path) as source:
