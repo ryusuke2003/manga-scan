@@ -3,7 +3,11 @@
 ## 1. アーキテクチャ
 
 ```text
-CLI / loopback Web UI
+React / Vite source (frontend/)
+  ├─ dev: 127.0.0.1:5173 ──proxy /api,/files──> Flask
+  └─ build ──> src/manga_scan/static/ (generated, gitignored)
+                                      │
+CLI / Flask loopback Web UI (127.0.0.1:8765)
   └─ ingest → video → motion → candidate sampling → hand + score
        → dedupe → perspective → split → page enhancement → export
        └─ project manifest + per-stage inspectable artifacts
@@ -20,10 +24,13 @@ CLI / loopback Web UI
 - `export.py`: 画像PDF、分割コンタクトシート。
 - `pipeline.py`: 処理の接続とレビュー操作。画素アルゴリズムをUIから分離。
 - `storage.py`: atomic JSON保存、画像保存、プロジェクト排他ロック。
-- `ui.py` / `static/`: ローカルUI。処理は背景スレッド、状態はディスクに保存。
+- `frontend/`: React + ViteのUIソース。開発時は5173番で起動し、`/api` と `/files` をFlaskへproxyする。
+- `src/manga_scan/static/`: `npm --prefix frontend run build` の生成物。Git管理せず、Flaskが通常起動時に配信する。
+- `ui.py`: loopback限定のFlask APIと静的配信。処理は背景スレッド、状態はディスクに保存。
 
-ネットワークを使うのはユーザーが明示実行する初期セットアップのモデル取得スクリプトだけ。
-ランタイムにモデル自動取得、クラウドAPI、OCR、画像生成、テレメトリはない。
+Homebrew / pip / npmの依存導入とMediaPipeモデル取得にはネット接続が必要になり得る。
+**スキャン実行時**にはモデル自動取得、クラウドAPI、OCR、画像生成、テレメトリ、外部CDN通信を行わない。
+Node.jsはフロントのinstall/build/devに必要だが、build済み静的ファイルをFlaskから使う通常実行では不要。
 
 ## 2. OSS
 
