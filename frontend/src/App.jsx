@@ -1,6 +1,7 @@
 import { fileUrl } from './api.js';
 import useScanner from './useScanner.js';
 import Setup from './components/Setup.jsx';
+import FrameSelector from './components/FrameSelector.jsx';
 import RoiSelector from './components/RoiSelector.jsx';
 import Review from './components/Review.jsx';
 
@@ -8,6 +9,70 @@ export default function App() {
   const scanner = useScanner();
   const { manifest, project, server, busy, error, revision } = scanner;
   const file = path => fileUrl(project, path, revision);
+
+  const cover = manifest?.cover;
+  const reference = manifest?.reference;
+  const coverStatus = cover?.status ?? 'skipped';
+  // Version 1 projects did not have setup stages; keep their original first-frame flow.
+  const referenceConfirmed = reference?.confirmed ?? true;
+  const canConfigure = manifest && manifest.status !== 'complete'
+    && !(manifest.status === 'processing' && busy);
+
+  let setupStage = null;
+  if (canConfigure && coverStatus === 'pending') {
+    setupStage = <FrameSelector
+      step="02 / 表紙フレーム（任意）"
+      title="表紙にするフレームを選ぶ"
+      description="録画冒頭の表紙を1ページとして残す場合は、そのフレームを選びます。不要ならスキップできます。"
+      imageUrl={fileUrl(project, cover.frame || 'source/first_frame.png', revision)}
+      time={cover.time ?? 0}
+      duration={manifest.metadata.duration}
+      busy={busy}
+      confirmLabel="このフレームを表紙にする →"
+      onPreview={time => scanner.coverFrame(time)}
+      onConfirm={time => scanner.coverFrame(time, true)}
+      onSkip={scanner.skipCover}
+    />;
+  } else if (canConfigure && coverStatus === 'frame_selected') {
+    setupStage = <RoiSelector
+      key={`${project}-cover`}
+      imageUrl={fileUrl(project, cover.frame, revision)}
+      initialPoints={cover.roi}
+      metadata={manifest.metadata}
+      busy={busy}
+      onStart={scanner.coverRoi}
+      step="03 / 表紙を囲む"
+      title="表紙の外周を4点で指定"
+      description="表紙だけの大きさに合わせて4点を指定します。このROIは見開き解析には使いません。"
+      actionLabel="表紙を追加して次へ →"
+    />;
+  } else if (canConfigure && !referenceConfirmed) {
+    setupStage = <FrameSelector
+      step="04 / 見開き基準フレーム"
+      title="最初に本を開いた見開きを選ぶ"
+      description="左右2ページがしっかり見えている場面を選んでください。この時刻より前は自動見開き解析から除外します。"
+      imageUrl={fileUrl(project, reference?.frame || 'source/first_frame.png', revision)}
+      time={reference?.time ?? 0}
+      duration={manifest.metadata.duration}
+      busy={busy}
+      confirmLabel="このフレームを基準にする →"
+      onPreview={time => scanner.referenceFrame(time)}
+      onConfirm={time => scanner.referenceFrame(time, true)}
+    />;
+  } else if (canConfigure) {
+    setupStage = <RoiSelector
+      key={`${project}-spread`}
+      imageUrl={fileUrl(project, reference?.frame || 'source/first_frame.png', revision)}
+      initialPoints={manifest.roi}
+      metadata={manifest.metadata}
+      busy={busy}
+      onStart={scanner.start}
+      step="05 / 見開きを囲む"
+      title="見開きの外周を4点で指定"
+      description="左上 → 右上 → 右下 → 左下 の順にクリック。ここで指定した見開きサイズを以後の解析基準にします。"
+      actionLabel="抽出を開始 →"
+    />;
+  }
   return <>
     <aside>
       <a className="brand" href="/">Manga<span>Scan</span><small>LOCAL EDITION / 0.1</small></a>
@@ -26,7 +91,7 @@ export default function App() {
       {error && <div id="error" role="alert">{error}</div>}
       {!project && <Setup busy={busy} onChoose={scanner.choose} onCreate={scanner.create} />}
       {manifest && <>
-        {manifest.status !== 'complete' && !(manifest.status === 'processing' && busy) && <RoiSelector key={project} imageUrl={fileUrl(project, 'source/first_frame.png')} initialPoints={manifest.roi} metadata={manifest.metadata} busy={busy} onStart={scanner.start} />}
+        {setupStage}
         <section className="panel" aria-live="polite"><div className="row"><strong id="progress-text">{busy && manifest.status !== 'processing' ? '処理中…' : manifest.message}</strong><span>{Math.round(manifest.progress * 100)}%</span></div><progress max="1" value={manifest.progress} /><p className="muted">{manifest.warnings.join(' / ')}</p></section>
         {(manifest.pages.length > 0 || manifest.roi) && <Review key={project} manifest={manifest} file={file} busy={busy} onEdit={scanner.edit} />}
       </>}
