@@ -14,10 +14,12 @@ from .dedupe import compare
 from .export import contact_sheets, export_pdf
 from .hand import HandDetector
 from .motion import Sample, StableDetector, choose_candidates, motion_score
+from .page_contour import detect_page_quads, draw_page_quads
 from .page_detect import refine_quad
+from .page_warp import warp_detected_pages
 from .perspective import validate_roi, warp_roi
 from .score import score_frame, sharpness, suspect_reasons
-from .split import enhance_page, split_spread
+from .split import enhance_page, spine_position, split_spread
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
 
@@ -96,6 +98,39 @@ def render_cover(project, manifest):
     }
 
 
+def rectify_spread_pages(project, image, rectified, chosen_roi, spread, cfg):
+    """Choose per-page perspective correction or the legacy spread fallback."""
+
+    ratio = spread.get("spine_ratio", cfg.spine_ratio)
+    if cfg.perspective_mode == "per_page":
+        detection = detect_page_quads(
+            image,
+            chosen_roi,
+            spine_ratio=ratio,
+            min_confidence=cfg.page_contour_min_confidence,
+        )
+        spread["page_contours"] = detection
+        debug_path = f"debug/page_contours/{spread['id']}.jpg"
+        save_image(project / debug_path, draw_page_quads(image, detection))
+        spread["page_contour_debug"] = debug_path
+
+        if detection["detected"]:
+            spread["perspective_mode_used"] = "per_page"
+            spread["spine_px"] = spine_position(rectified, ratio, cfg.split_mode)
+            return warp_detected_pages(image, detection)
+
+        spread["perspective_mode_used"] = "spread_fallback"
+        extra = spread.setdefault("extra_suspect", [])
+        if "page_contour_low_confidence" not in extra:
+            extra.append("page_contour_low_confidence")
+    else:
+        spread["perspective_mode_used"] = "spread"
+
+    sides, spine = split_spread(rectified, ratio, cfg.split_mode, cfg.gutter_fraction)
+    spread["spine_px"] = spine
+    return sides
+
+
 def render_spread(project, manifest, spread):
     cfg = Config.from_dict(manifest["config"])
     chosen = next(c for c in spread["candidates"] if c["id"] == spread["selected"])
@@ -104,10 +139,14 @@ def render_spread(project, manifest, spread):
     selected = f"selected/{spread['id']}.png"
     save_image(project / selected, rectified)
     spread["path"] = selected
-    sides, spine = split_spread(
-        rectified, spread.get("spine_ratio", cfg.spine_ratio), cfg.split_mode, cfg.gutter_fraction
+    sides = rectify_spread_pages(
+        project,
+        image,
+        rectified,
+        chosen["roi"],
+        spread,
+        cfg,
     )
-    spread["spine_px"] = spine
     spread["suspect"] = list(dict.fromkeys(chosen["suspect"] + spread.get("extra_suspect", [])))
     pages = []
     order = ["right", "left"] if cfg.reading_order == "rtl" else ["left", "right"]
