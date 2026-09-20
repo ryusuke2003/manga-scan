@@ -233,7 +233,7 @@ function ReviewViewer({ pages, pageId, file, onClose, onSelect }) {
       <img
         src={file(imagePath)}
         alt={`${page.id} ${mode === 'before' ? '元画像' : '補正後'}`}
-        style={{ width: zoom === 1 ? 'auto' : `${zoom * 100}%` }}
+        style={{ width: `${zoom * 100}%` }}
       />
     </div>
     <p className="review-viewer-help">← → ページ移動 · + / - ズーム · Esc 閉じる</p>
