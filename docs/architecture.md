@@ -18,6 +18,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `motion.py`: ROI差分、stable/turning状態機械、時間分散した候補抽出。
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
 - `score.py`: 品質指標、合成スコア、suspect判定。
+- `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py` / `perspective.py`: 保守的な外周微調整、ROI検証、射影変換。
 - `split.py`: 背の推定、左右分割、自動湾曲推定、左右別の保守的remap、白背景正規化、グレースケール、コントラスト、回転。
 - `illumination.py`: ページ輝度の低周波マップ推定と、Lab輝度/グレースケールへの保守的な照明補正。
@@ -44,7 +45,7 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 除外はmanifestのフラグで行い、重複候補も画像を残す。
 初回解析で自動PDF生成。編集後は `pdf_stale=true` とし再出力を明示する。
 
-改善余地: optical flow併用、ページ単位で別々のベストフレーム選択、より高度な2D/3D曲面推定、
+改善余地: optical flow併用、より高度な2D/3D曲面推定、
 追跡によるROI移動、複数動画の統合、画像追加、ドラッグ並べ替え、ジョブ再開。
 
 ## 4. アルゴリズム
@@ -67,7 +68,16 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 
 区間を最大7つの時間ビンへ分割し、各ビンで `log1p(sharpness) - 30*motion` 最大を選ぶ。
 最初の鋭い候補だけに偏らず、後半に手が引かれたフレームを調べる。
-候補時刻を元動画から縮小再取得しMediaPipeを実行、最高スコアの1枚だけ元解像度で取得。
+候補時刻を元動画から縮小再取得しMediaPipeを実行する。`candidate_selection_mode="spread"` は従来どおり
+見開き全体の合成スコア最大を採用する。`"per_page"` では各候補のROI射影画像を左右に分割し、
+左/右それぞれについて鮮鋭度・hand overlap・clipping・exposureを再計算する。motionとROI幾何ペナルティは
+同じ候補時刻/ROI由来の値を共有し、左右ごとに合成スコア最大の候補IDを独立して選ぶ。
+
+元解像度の再取得は実際に採用された候補IDだけに限定し、左右が同じ候補なら1回、異なる候補なら最大2回。
+manifestには後方互換用の `selected` に加えて `selected_pages.left/right` を保存し、各pageにも
+`candidate_id` / `candidate_time` を記録する。レビューUIでは左右片側だけ候補を差し替えられる。
+`perspective_mode="per_page"` も同時に有効な場合は、採用された各候補フレームごとにページ輪郭検出と
+左右別射影変換を行う。左右が別候補なら輪郭・fallback状態も `*_by_side` としてmanifestへ保持する。
 
 レビューUIの動画タイムラインは各見開きの区間と採用候補時刻を動画全体へ配置する。
 欠落候補の判定には候補選択位置の揺れを使わず、重複除外済み見開きの安定区間開始時刻 `spread.start` を使う。
@@ -134,7 +144,8 @@ white targetへ緩やかに寄せる。補正重みはwhite levelの約45階調�
 
 ### 重複
 
-直近3つの採用見開きとdHash + SSIM + 左右それぞれのSSIMを比較。
+直近3つの採用見開きとdHash + SSIM + 左右それぞれのSSIMを比較。per-page選択で左右の候補時刻が異なる場合は、
+採用した左ページと右ページの低解像度previewを合成した見開きを重複判定に使う。
 閾値全てを満たすと両ページを除外。コントラストが低い画像（白紙等）は自動除外しない。
 近似候補は `duplicate_suspected` として残す。既存の読書順と絵の反復を尊重し、
 全巻全ページを総当たりで消さない。左右別の白紙や繰り返し絵の重複は意図的に除外しない。

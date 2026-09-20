@@ -5,6 +5,7 @@ Macで撮影した漫画の動画から、**机などの背景を除いた左右
 - Python / OpenCV / FFmpeg / MediaPipeで画像処理
 - React + ViteのローカルWeb UI
 - ページめくり中を避け、静止した候補からベストフレームを選択
+- 任意で左右ページを別々に採点し、それぞれ別時刻のベストフレームを採用
 - 任意で左右ページの外周を自動検出し、各ページを別々に台形補正
 - 任意で低周波の照明ムラ・緩い影をページ単位に補正
 - 手の重なり、ブレ、重複候補などを「要確認」として表示
@@ -111,6 +112,7 @@ manga-scan ui --config config.toml --projects projects
    - 日本漫画なら通常は「右 → 左」。
    - PNGは画質優先、JPEGは容量優先です。
    - 補正は「原画優先 / 標準補正 / スキャン風」のプリセットから選べます。
+   - 「候補フレーム選択」を「左右ページ別」にすると、同じ見開き内でも左・右を別候補から選べます。
    - 「補正の詳細設定」を開くと、左右別台形、見開き外周、分割位置、湾曲、照明ムラ、白背景を個別に設定できます。
 3. **表紙を追加する（任意）**
    - 表紙が映っている時刻を `±0.1秒 / ±1秒` で選びます。
@@ -330,6 +332,7 @@ dewarp_strength = 0.15
 | 別ページが1区間になる | `turn_threshold` を下げる |
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
+| 左右でベストな瞬間が違う | `candidate_selection_mode="per_page"`。レビュー画面で左/右だけ候補変更も可能 |
 | 左右ページで台形の向きが違う | `perspective_mode="per_page"`。輪郭検出に自信がない見開きは自動で従来方式へfallback |
 | 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げるとfallbackしやすくなる。従来方式へ固定するなら `perspective_mode="spread"` |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
@@ -338,6 +341,8 @@ dewarp_strength = 0.15
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
+
+候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
 
 ページ別台形補正はデフォルトでは従来互換の `perspective_mode="spread"` です。
 `"per_page"` にすると元フレーム上で左右ページの外周を自動検出し、左右を別々の射影変換で補正します。

@@ -5,6 +5,7 @@ const FALLBACK_CONFIG = {
   image_format: 'png',
   jpeg_quality: 92,
   hand_backend: 'mediapipe',
+  candidate_selection_mode: 'spread',
   grayscale: false,
   refine_quad: false,
   perspective_mode: 'spread',
@@ -142,6 +143,7 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
         <label>ページ画像<select value={config.image_format} onChange={event => change('image_format', event.target.value)}><option value="png">PNG / 可逆圧縮</option><option value="jpeg">JPEG / 小さいサイズ</option></select></label>
         <label>JPEG品質<input type="number" min="1" max="100" required value={config.jpeg_quality} onChange={event => change('jpeg_quality', Number(event.target.value))} /></label>
         <label>手の検出<select value={config.hand_backend} onChange={event => change('hand_backend', event.target.value)}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
+        <label>候補フレーム選択<select value={config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位 / 従来</option><option value="per_page">左右ページ別</option></select></label>
       </div>
       <label className="checkbox"><input type="checkbox" checked={config.grayscale} onChange={event => change('grayscale', event.target.checked)} /> グレースケールで保存</label>
 
