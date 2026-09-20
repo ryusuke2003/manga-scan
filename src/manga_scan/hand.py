@@ -5,7 +5,6 @@ import numpy as np
 
 from .perspective import pixel_quad
 
-
 _TEMPORAL_MAX_ALIGNMENT_SIDE = 640
 _TEMPORAL_MIN_PEERS = 3
 _TEMPORAL_MIN_ALIGNMENT_SCORE = 0.70
