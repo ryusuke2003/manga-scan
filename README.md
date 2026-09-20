@@ -82,7 +82,7 @@ python scripts/download_hand_model.py
 cp config.example.toml config.toml
 ```
 
-`download_hand_model.py` はMediaPipe公式モデルを取得し、スクリプト内に固定したSHA-256と照合します。
+`download_hand_model.py` はMediaPipe公式モデルを取得し、スクリプト内に固定したSHA-256と照合します。`config.toml` は端末ごとのローカル設定としてGit管理しません。共有するデフォルト値を変更する場合は `config.example.toml` を更新してください。
 
 ### 6. 起動
 
