@@ -5,8 +5,12 @@ export function didJobFinish(wasBusy, job) {
   return Boolean(wasBusy && !job.busy);
 }
 
-export function shouldReportPollError(error, aborted, mutating) {
-  return error.name !== 'AbortError' && !aborted && !mutating;
+export function shouldReportPollError(error, aborted, mutating, staleProject = false) {
+  return error.name !== 'AbortError' && !aborted && !mutating && !staleProject;
+}
+
+export function isStaleProjectPoll(polledProject, selectedProject) {
+  return polledProject !== selectedProject;
 }
 
 export default function useScanner() {
@@ -20,15 +24,28 @@ export default function useScanner() {
   const manifestJSON = useRef('');
   const mutation = useRef(false);
   const jobBusy = useRef(false);
+  const selectedProject = useRef(null);
 
   useEffect(() => {
     const controller = new AbortController();
     let timer;
+    const polledProject = project;
     async function poll() {
       try {
         const next = await request('/api/state', { signal: controller.signal });
-        const data = project ? await request(`/api/projects/${encodeURIComponent(project)}`, { signal: controller.signal }) : null;
-        if (controller.signal.aborted || mutation.current) return;
+        if (
+          controller.signal.aborted
+          || mutation.current
+          || isStaleProjectPoll(polledProject, selectedProject.current)
+        ) return;
+        const data = polledProject
+          ? await request(`/api/projects/${encodeURIComponent(polledProject)}`, { signal: controller.signal })
+          : null;
+        if (
+          controller.signal.aborted
+          || mutation.current
+          || isStaleProjectPoll(polledProject, selectedProject.current)
+        ) return;
         const finished = didJobFinish(jobBusy.current, next.job);
         jobBusy.current = next.job.busy;
         setServer(next);
@@ -38,11 +55,17 @@ export default function useScanner() {
           setManifest(data);
         }
         if (finished) setRevision(value => value + 1);
-        if (next.job.error && next.job.project === project) setError(next.job.error);
+        if (next.job.error && next.job.project === polledProject) setError(next.job.error);
       } catch (err) {
-        if (shouldReportPollError(err, controller.signal.aborted, mutation.current)) setError(err.message);
+        const staleProject = isStaleProjectPoll(polledProject, selectedProject.current);
+        if (shouldReportPollError(err, controller.signal.aborted, mutation.current, staleProject)) {
+          setError(err.message);
+        }
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
+        if (
+          !controller.signal.aborted
+          && !isStaleProjectPoll(polledProject, selectedProject.current)
+        ) timer = setTimeout(poll, 1500);
       }
     }
     poll();
@@ -50,6 +73,7 @@ export default function useScanner() {
   }, [project, refresh]);
 
   function selectProject(id) {
+    selectedProject.current = id;
     setProject(id);
     setManifest(null);
     manifestJSON.current = '';
@@ -63,7 +87,7 @@ export default function useScanner() {
     setRevision(value => value + 1);
   }
 
-  async function perform(path, body, onSuccess) {
+  async function perform(path, body, onSuccess, formatError = error => error.message) {
     if (mutation.current || server.job.busy || !server.token) return;
     mutation.current = true;
     setPending(true);
@@ -77,7 +101,7 @@ export default function useScanner() {
       onSuccess?.(result);
       return result;
     } catch (err) {
-      setError(err.message);
+      setError(formatError(err));
     } finally {
       mutation.current = false;
       setPending(false);
@@ -97,9 +121,20 @@ export default function useScanner() {
     selectProject,
     create: (video, config) => perform('/api/projects', { video, config }, result => selectProject(result.id)),
     choose: onSuccess => perform('/api/choose', {}, result => onSuccess(result.path)),
-    deleteProject: id => perform(`/api/projects/${encodeURIComponent(id)}/delete`, {}, () => {
-      if (id === project) selectProject(null);
-    }),
+    deleteProject: id => perform(
+      `/api/projects/${encodeURIComponent(id)}/delete`,
+      {},
+      () => {
+        setServer(value => ({
+          ...value,
+          projects: value.projects.filter(item => item.id !== id),
+        }));
+        if (id === selectedProject.current) selectProject(null);
+      },
+      error => error.status === 404
+        ? '削除APIが見つかりません。MangaScanを再起動してからもう一度削除してください。'
+        : error.message,
+    ),
     coverFrame: (time, confirm = false) => setup('cover_frame', { time, confirm }),
     skipCover: () => setup('skip_cover'),
     coverRoi: roi => setup('cover_roi', { roi }),
