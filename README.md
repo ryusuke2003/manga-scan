@@ -13,17 +13,19 @@ Python / OpenCV / FFmpeg / MediaPipe。OCR、クラウドAPI、有料API、生�
 macOSのarm64 Python 3.11以降。推奨はPython 3.12〜3.14です。Rosetta環境を混ぜないでください。
 
 ```bash
-brew install python@3.14 ffmpeg
+brew install python@3.14 ffmpeg node
 python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[hands,dev]'
+npm --prefix frontend install
+npm --prefix frontend run build
 python scripts/download_hand_model.py \
   --sha256 fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1
 cp config.example.toml config.toml
 ```
 
 Homebrewが未導入の場合は[公式手順](https://brew.sh/)で導入してください。
-`ffmpeg -version` と `ffprobe -version` で確認できます。
+`ffmpeg -version` と `ffprobe -version`、`node --version`（22.12以上）で確認できます。
 
 依存とモデルの**インストール時だけ**ネット接続が必要です。その後はネットを切って処理できます。
 別のオンラインPCで必要なwheelとモデルを用意して持ち込むこともできます。
@@ -47,6 +49,9 @@ MediaPipeと共通の `opencv-contrib-python` に統一しています。
 ライセンスとモデルの出所は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。
 
 ## Web UIで実行
+
+Web UIはReact + Viteです。初回セットアップ後やフロントエンド変更後は
+`npm --prefix frontend run build` で `src/manga_scan/static/` を生成します。
 
 ```bash
 source .venv/bin/activate
@@ -185,6 +190,8 @@ flatnessは3D湾曲ではなく四辺形の辺比を使う代理指標です。
 ## テスト・サンプル
 
 ```bash
+npm --prefix frontend test
+npm --prefix frontend run build
 python -m pytest -q
 ruff check src tests scripts
 python scripts/make_demo.py projects/demo-input.mp4 --fps 30
