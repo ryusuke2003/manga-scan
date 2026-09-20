@@ -22,6 +22,7 @@ export default function FrameSelector({
   rotationDetection,
   onRotation,
   notice,
+  candidates = [],
 }) {
   const [value, setValue] = useState(String(time));
   const [loadedImageUrl, setLoadedImageUrl] = useState(null);
@@ -58,6 +59,31 @@ export default function FrameSelector({
         onLoad={() => setLoadedImageUrl(imageUrl)}
       />
     </div>
+    {candidates.length > 0 && <div className="reference-suggestions">
+      <div className="reference-suggestions-head">
+        <div><strong>候補フレーム</strong><span>見開きらしさ・静止度・鮮明さから自動で選びました。</span></div>
+        <small>クリックすると上のプレビューへ反映</small>
+      </div>
+      <div className="reference-suggestion-grid">
+        {candidates.map((candidate, index) => {
+          const active = Math.abs(Number(candidate.time) - previewed) < 0.0005;
+          return <button
+            type="button"
+            key={candidate.preview ?? candidate.time}
+            className={active ? 'reference-suggestion active' : 'reference-suggestion'}
+            aria-pressed={active}
+            disabled={busy}
+            onClick={() => preview(candidate.time)}
+          >
+            <img src={candidate.imageUrl} alt={`見開き候補 ${Number(candidate.time).toFixed(1)}秒`} />
+            <span className="reference-suggestion-meta">
+              <strong>{index === 0 ? 'おすすめ' : `${Number(candidate.time).toFixed(1)}秒`}</strong>
+              <small>{Number(candidate.time).toFixed(1)}秒 · 見開き {Math.round((candidate.confidence ?? 0) * 100)}%</small>
+            </span>
+          </button>;
+        })}
+      </div>
+    </div>}
     {onRotation && <div className="rotation-confirm">
       <div>
         <strong>画像の向き</strong>
