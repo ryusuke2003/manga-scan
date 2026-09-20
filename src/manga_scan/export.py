@@ -30,6 +30,8 @@ def normalize_book_metadata(metadata):
         if not isinstance(value, str):
             raise ValueError(f"book metadata {field} must be a string")
         value = " ".join(value.split())
+        if any(ord(char) < 32 for char in value):
+            raise ValueError(f"book metadata {field} contains control characters")
         if not value:
             continue
         limit = 32 if field == "language" else (64 if field == "volume" else 200)
@@ -45,7 +47,12 @@ def metadata_output_stem(metadata):
     stem = metadata.get("title") or metadata.get("series") or "manga"
     stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem)
     stem = re.sub(r"\s+", " ", stem).strip(" .")
-    stem = stem[:120].rstrip(" .")
+    # Keep room for ".next.cbz" and filesystem bookkeeping. macOS filenames
+    # are byte-limited, so truncating by Unicode code points is not sufficient
+    # for Japanese titles or emoji.
+    encoded = stem.encode("utf-8")
+    if len(encoded) > 180:
+        stem = encoded[:180].decode("utf-8", errors="ignore").rstrip(" .")
     return stem or "manga"
 
 
