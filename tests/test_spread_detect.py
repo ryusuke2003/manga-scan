@@ -44,6 +44,38 @@ def test_detect_reference_spread_rejects_blank_frame():
     assert result["stage"] == "outline"
 
 
+def _occluded_mixed_color_spread():
+    image = np.full((600, 1000, 3), (55, 95, 135), dtype=np.uint8)
+    left = np.asarray([[105, 45], [495, 70], [480, 555], [90, 535]], dtype=np.int32)
+    right = np.asarray([[515, 70], [900, 42], [930, 540], [520, 558]], dtype=np.int32)
+    cv2.fillConvexPoly(image, left, (238, 238, 232))
+    cv2.fillConvexPoly(image, right, (55, 75, 170))
+    cv2.polylines(image, [left, right], True, (20, 20, 20), 5, cv2.LINE_AA)
+    cv2.rectangle(image, (585, 150), (820, 330), (210, 210, 205), 4)
+    # Hands obscure parts of the lower outer boundary, like a real page turn.
+    cv2.ellipse(image, (125, 500), (95, 70), -20, 0, 360, (150, 175, 215), -1)
+    cv2.ellipse(image, (875, 490), (100, 85), 20, 0, 360, (145, 170, 210), -1)
+    return image
+
+
+def test_detect_reference_spread_uses_page_fallback_when_outer_outline_is_obscured(monkeypatch):
+    monkeypatch.setattr(
+        "manga_scan.spread_detect.detect_cover_quad",
+        lambda *_args, **_kwargs: {"detected": False, "confidence": 0.24, "roi": None},
+    )
+
+    result = detect_reference_spread(_occluded_mixed_color_spread(), min_confidence=0.5)
+
+    assert result["detected"]
+    assert result["stage"] == "complete"
+    assert result["source"] == "coarse_pages"
+    assert result["pages"]["left"]["detected"]
+    assert result["pages"]["right"]["detected"]
+    roi = np.asarray(result["roi"])
+    assert roi[0, 0] < 0.2
+    assert roi[1, 0] > 0.8
+
+
 def _setup_manifest(rotation):
     cfg = Config(
         hand_backend="none",
