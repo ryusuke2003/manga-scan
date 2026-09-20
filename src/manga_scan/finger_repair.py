@@ -273,7 +273,11 @@ def _validate_local_candidate(
         float(dx),
         float(dy),
     )
-    clean = _safe_clean_mask(aligned_mask, target.shape)
+    # A local warp must never turn pixels that were hand-masked in the
+    # globally aligned donor into eligible manga pixels merely by moving the
+    # mask away. Require clean pixels in both coordinate systems.
+    source_clean = _safe_clean_mask(donor_mask, target.shape)
+    clean = _safe_clean_mask(aligned_mask, target.shape) & source_clean
     context_data = _component_context(
         component,
         target_mask.astype(bool),
