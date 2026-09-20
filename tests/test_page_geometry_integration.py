@@ -184,7 +184,7 @@ def test_low_confidence_contours_fall_back_to_legacy_spread_split(tmp_path):
     assert (tmp_path / spread["page_contour_debug"]).is_file()
 
 
-def test_default_spread_mode_is_pixel_compatible_and_skips_detection(tmp_path):
+def test_explicit_spread_mode_is_pixel_compatible_and_skips_detection(tmp_path):
     image = synthetic_spread()
     rectified = warp_roi(image, REFERENCE)
     spread = {"id": "spread_0003", "extra_suspect": []}
