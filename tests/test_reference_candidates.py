@@ -35,7 +35,9 @@ def test_scan_reference_candidates_ranks_likely_still_spreads(monkeypatch):
     def fake_sample_frames(*_args, **_kwargs):
         yield from frames
 
-    def fake_detect(image, min_confidence):
+    def fake_detect(images, min_confidence, anchor_index, max_candidates):
+        assert max_candidates == 5
+        image = images[anchor_index]
         confidence = float(image[0, 0, 0]) / 100
         return {
             "detected": confidence >= min_confidence,
@@ -44,7 +46,7 @@ def test_scan_reference_candidates_ranks_likely_still_spreads(monkeypatch):
         }
 
     monkeypatch.setattr(candidates_module, "sample_frames", fake_sample_frames)
-    monkeypatch.setattr(candidates_module, "detect_reference_spread", fake_detect)
+    monkeypatch.setattr(candidates_module, "detect_reference_spread_consensus", fake_detect)
     monkeypatch.setattr(candidates_module, "sharpness", lambda _image: 250.0)
 
     cfg = Config(hand_backend="none", finger_repair=False, auto_rotation=False)

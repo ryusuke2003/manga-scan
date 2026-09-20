@@ -28,7 +28,7 @@ def _metadata(duration=10.0):
     }
 
 
-def test_rotation_detection_trusts_ffmpeg_display_metadata(monkeypatch):
+def test_rotation_detection_keeps_metadata_but_checks_page_geometry(monkeypatch):
     metadata = {
         "duration": 10.0,
         "raw": {
@@ -40,15 +40,16 @@ def test_rotation_detection_trusts_ffmpeg_display_metadata(monkeypatch):
     monkeypatch.setattr(
         rotation_module,
         "extract_frame",
-        lambda *_args, **_kwargs: pytest.fail("metadata path should not seek extra frames"),
+        lambda *_args, **_kwargs: _spread_like_image(),
     )
 
     result = detect_video_rotation("unused.mov", metadata, _spread_like_image())
 
     assert result["rotation"] == 0
-    assert result["source"] == "video_metadata"
-    assert result["confidence"] == 1.0
+    assert result["source"] == "page_geometry"
+    assert result["confidence"] < 1.0
     assert result["display_rotation"] == 90
+    assert result["metadata_applied"] is True
 
 
 @pytest.mark.parametrize(
@@ -66,11 +67,16 @@ def test_rotation_detection_recovers_landscape_axis(monkeypatch, source_rotate_c
 
     result = detect_video_rotation("unused.mov", _metadata(), sideways)
 
-    assert result["rotation"] in (90, 270)
+    assert result["rotation"] == 0
+    assert result["suggested_rotation"] in (90, 270)
     assert result["source"] == "page_geometry"
     assert len(result["sample_times"]) == 3
     scores = result["scores"]
     assert max(scores["90"], scores["270"]) > max(scores["0"], scores["180"])
+    assert result["direction_ambiguous"]
+    assert result["requires_confirmation"]
+    assert result["confidence"] < 1.0
+    assert result["rotation_options"] == [0, 90, 270]
 
 
 def test_rotation_detection_warns_when_extra_samples_fail(monkeypatch):

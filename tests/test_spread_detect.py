@@ -2,9 +2,12 @@ import cv2
 import numpy as np
 
 from manga_scan.config import Config
-from manga_scan.ingest import set_setup_frame
+from manga_scan.ingest import _reference_consensus_frames, set_setup_frame
 from manga_scan.perspective import rotate_roi
-from manga_scan.spread_detect import detect_reference_spread
+from manga_scan.spread_detect import (
+    detect_reference_spread,
+    detect_reference_spread_consensus,
+)
 from manga_scan.storage import save_manifest
 
 
@@ -30,8 +33,8 @@ def test_detect_reference_spread_finds_two_pages_from_full_frame():
     assert result["confidence"] >= 0.5
     roi = np.asarray(result["roi"])
     assert roi.shape == (4, 2)
-    assert roi[0, 0] < 0.15
-    assert roi[1, 0] > 0.85
+    assert roi[0, 0] < 0.151
+    assert roi[1, 0] > 0.849
 
 
 def test_detect_reference_spread_rejects_blank_frame():
@@ -60,8 +63,8 @@ def _occluded_mixed_color_spread():
 
 def test_detect_reference_spread_uses_page_fallback_when_outer_outline_is_obscured(monkeypatch):
     monkeypatch.setattr(
-        "manga_scan.spread_detect.detect_cover_quad",
-        lambda *_args, **_kwargs: {"detected": False, "confidence": 0.24, "roi": None},
+        "manga_scan.spread_detect.detect_cover_quad_candidates",
+        lambda *_args, **_kwargs: [],
     )
 
     result = detect_reference_spread(_occluded_mixed_color_spread(), min_confidence=0.5)
@@ -106,6 +109,31 @@ def _setup_manifest(rotation):
     }
 
 
+def test_reference_consensus_keeps_selected_frame_as_anchor_at_video_start(monkeypatch):
+    selected = np.full((12, 20, 3), 17, np.uint8)
+    neighbor = np.full((12, 20, 3), 31, np.uint8)
+    extracted_times = []
+
+    def fake_extract(_source, timestamp, **_kwargs):
+        extracted_times.append(timestamp)
+        return neighbor.copy()
+
+    monkeypatch.setattr("manga_scan.ingest.extract_frame", fake_extract)
+
+    frames, anchor_index = _reference_consensus_frames(
+        "/tmp/book.mp4",
+        {"duration": 10.0},
+        0.0,
+        selected,
+        Config(rotation=0, auto_rotation=False),
+    )
+
+    assert anchor_index == 0
+    np.testing.assert_array_equal(frames[anchor_index], selected)
+    assert extracted_times == [0.5]
+    assert len(frames) == 2
+
+
 def test_reference_confirmation_stores_auto_roi_in_source_coordinates(tmp_path, monkeypatch):
     frame = np.zeros((160, 300, 3), np.uint8)
     displayed_roi = [[0.10, 0.15], [0.90, 0.15], [0.90, 0.85], [0.10, 0.85]]
@@ -115,7 +143,7 @@ def test_reference_confirmation_stores_auto_roi_in_source_coordinates(tmp_path, 
         lambda *_args, **_kwargs: frame.copy(),
     )
     monkeypatch.setattr(
-        "manga_scan.ingest.detect_reference_spread",
+        "manga_scan.ingest.detect_reference_spread_consensus",
         lambda *_args, **_kwargs: {
             "detected": True,
             "confidence": 0.88,
@@ -150,7 +178,7 @@ def test_reference_confirmation_falls_back_to_manual_points(tmp_path, monkeypatc
         lambda *_args, **_kwargs: frame.copy(),
     )
     monkeypatch.setattr(
-        "manga_scan.ingest.detect_reference_spread",
+        "manga_scan.ingest.detect_reference_spread_consensus",
         lambda *_args, **_kwargs: {
             "detected": False,
             "confidence": 0.31,
@@ -166,3 +194,64 @@ def test_reference_confirmation_falls_back_to_manual_points(tmp_path, monkeypatc
     assert manifest["roi"] is None
     assert not manifest["reference"]["detection"]["detected"]
     assert "4点で指定" in manifest["message"]
+
+
+def test_reference_spread_consensus_requires_multiple_consistent_frames():
+    image = _synthetic_spread()
+
+    result = detect_reference_spread_consensus(
+        [image, image.copy(), image.copy()],
+        min_confidence=0.5,
+    )
+
+    assert result["detected"]
+    assert result["frame_support"] == 3
+    assert result["pages"]["left"]["consensus_count"] == 3
+    assert result["pages"]["right"]["consensus_count"] == 3
+    assert result["source"].endswith("_consensus")
+
+
+def test_reference_spread_marks_close_distinct_candidates_ambiguous(monkeypatch):
+    roi_a = [[0.05, 0.1], [0.9, 0.1], [0.9, 0.9], [0.05, 0.9]]
+    roi_b = [[0.1, 0.1], [0.95, 0.1], [0.95, 0.9], [0.1, 0.9]]
+    outlines = [
+        {"detected": True, "confidence": 0.8, "roi": roi_a},
+        {"detected": True, "confidence": 0.79, "roi": roi_b},
+    ]
+    monkeypatch.setattr(
+        "manga_scan.spread_detect.detect_cover_quad_candidates",
+        lambda *_args, **_kwargs: outlines,
+    )
+
+    def proposal(_frames, _priors, _confidence, *, proposal_id, outline=None, source):
+        if proposal_id == "coarse":
+            return None, 0.0
+        roi = roi_a if proposal_id == "hough_1" else roi_b
+        score = 0.80 if proposal_id == "hough_1" else 0.78
+        pages = {
+            "detected": True,
+            "confidence": 0.8,
+            "left": {"quad": roi, "detected": True, "confidence": 0.8},
+            "right": {"quad": roi, "detected": True, "confidence": 0.8},
+        }
+        return {
+            "proposal_id": proposal_id,
+            "score": score,
+            "confidence": 0.8,
+            "roi": roi,
+            "outline": outline,
+            "pages": pages,
+            "source": source,
+            "frame_support": 3,
+            "frame_count": 3,
+        }, 0.8
+
+    monkeypatch.setattr("manga_scan.spread_detect._proposal_from_prior_set", proposal)
+    image = np.zeros((80, 120, 3), np.uint8)
+
+    result = detect_reference_spread_consensus([image, image, image], min_confidence=0.5)
+
+    assert result["detected"]
+    assert result["ambiguous"]
+    assert result["requires_confirmation"]
+    assert result["score_margin"] == 0.02

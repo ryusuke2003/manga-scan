@@ -9,12 +9,13 @@ import numpy as np
 from .motion import motion_score
 from .score import sharpness
 from .split import rotate_image
-from .spread_detect import detect_reference_spread
+from .spread_detect import detect_reference_spread_consensus
 from .video import sample_frames
 
 REFERENCE_CANDIDATE_SAMPLE_FPS = 2.0
 REFERENCE_CANDIDATE_SEARCH_SECONDS = 30.0
 REFERENCE_CANDIDATE_MIN_SEPARATION = 1.0
+REFERENCE_CANDIDATE_DETECTION_LIMIT = 15
 
 
 def _candidate_score(confidence, motion, sharpness_value, elapsed, window, turn_threshold):
@@ -72,7 +73,7 @@ def scan_reference_candidates(source, metadata, cfg, *, start_time=0.0, limit=5)
     threshold = max(0.4, min(0.65, float(cfg.page_contour_min_confidence) - 0.1))
     fallback_confidence = max(0.35, threshold - 0.08)
     previous = None
-    records = []
+    sampled = []
     stream = sample_frames(source, fps, (width, height), cfg.hwaccel, start_time=start)
     try:
         for _index, timestamp, frame in stream:
@@ -81,34 +82,67 @@ def scan_reference_candidates(source, metadata, cfg, *, start_time=0.0, limit=5)
             displayed = rotate_image(frame, cfg.rotation)
             motion = motion_score(previous, displayed) if previous is not None else 1.0
             previous = displayed
-            if motion > max(float(cfg.turn_threshold) * 1.5, 0.04):
-                continue
-            detection = detect_reference_spread(displayed, min_confidence=threshold)
-            confidence = float(detection["confidence"])
-            if not detection["detected"] and confidence < fallback_confidence:
-                continue
-            sharpness_value = sharpness(displayed)
-            score = _candidate_score(
-                confidence,
-                motion,
-                sharpness_value,
-                timestamp - start,
-                end - start,
-                cfg.turn_threshold,
-            )
-            records.append(
-                {
-                    "time": round(float(timestamp), 3),
-                    "score": round(float(score), 4),
-                    "confidence": round(confidence, 4),
-                    "motion": round(float(motion), 6),
-                    "sharpness": round(float(sharpness_value), 3),
-                    "detected": bool(detection["detected"]),
-                    "stage": detection.get("stage"),
-                    "_frame": displayed.copy(),
-                }
-            )
+            sampled.append((float(timestamp), displayed.copy(), float(motion)))
     finally:
         stream.close()
+
+    records = []
+    prefiltered = []
+    for index, (timestamp, displayed, motion) in enumerate(sampled):
+        if motion > max(float(cfg.turn_threshold) * 1.5, 0.04):
+            continue
+        sharpness_value = sharpness(displayed)
+        stillness = float(
+            np.clip(1.0 - motion / max(float(cfg.turn_threshold), 1e-6), 0.0, 1.0)
+        )
+        sharpness_score = float(
+            np.clip(math.log1p(max(0.0, sharpness_value)) / 8.0, 0.0, 1.0)
+        )
+        early = float(np.clip(1.0 - (timestamp - start) / max(end - start, 1e-6), 0, 1))
+        prefiltered.append(
+            (0.55 * stillness + 0.30 * sharpness_score + 0.15 * early, index, sharpness_value)
+        )
+
+    # Full top-N Hough/page consensus is deliberately reserved for the most
+    # stable, sharp frames. Running it on every 2-fps sample would make setup
+    # latency grow linearly with the whole 30-second search window.
+    for _preliminary, index, sharpness_value in sorted(prefiltered, reverse=True)[
+        :REFERENCE_CANDIDATE_DETECTION_LIMIT
+    ]:
+        timestamp, displayed, motion = sampled[index]
+        first = max(0, index - 1)
+        last = min(len(sampled), index + 2)
+        neighboring_frames = [item[1] for item in sampled[first:last]]
+        detection = detect_reference_spread_consensus(
+            neighboring_frames,
+            min_confidence=threshold,
+            anchor_index=index - first,
+            max_candidates=5,
+        )
+        confidence = float(detection["confidence"])
+        if not detection["detected"] and confidence < fallback_confidence:
+            continue
+        score = _candidate_score(
+            confidence,
+            motion,
+            sharpness_value,
+            timestamp - start,
+            end - start,
+            cfg.turn_threshold,
+        )
+        records.append(
+            {
+                "time": round(float(timestamp), 3),
+                "score": round(float(score), 4),
+                "confidence": round(confidence, 4),
+                "motion": round(float(motion), 6),
+                "sharpness": round(float(sharpness_value), 3),
+                "detected": bool(detection["detected"]),
+                "stage": detection.get("stage"),
+                "ambiguous": bool(detection.get("ambiguous")),
+                "frame_support": int(detection.get("frame_support", 0)),
+                "_frame": displayed.copy(),
+            }
+        )
 
     return select_reference_candidates(records, limit=limit)

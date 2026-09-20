@@ -52,8 +52,16 @@ This evaluates:
 1. automatic video rotation
 2. reference-spread detection, including the cover false-positive case
 3. left/right page-contour detection from a manually annotated coarse spread ROI
-4. polygon IoU against the manually annotated real page boundary
-5. sharpness as a reported diagnostic value
+4. page-contour consensus across the center frame and frames 0.5 seconds before/after
+5. top-8 Hough reference candidates verified by left/right page consensus across the same frames
+6. polygon IoU against the manually annotated real page boundary
+7. sharpness as a reported diagnostic value
+
+The default consensus window is `[-0.5, 0.0, 0.5]` seconds. A positive sample
+can override it with `consensus_offsets`; the list must contain at least three
+unique offsets including `0`, and every resulting timestamp must stay inside
+the video. This mirrors the production behavior of combining page boundaries
+from multiple candidate frames while keeping the single-frame metric visible.
 
 Results are written to:
 
@@ -67,6 +75,8 @@ Debug images overlay:
 - `expected`: hand annotation
 - `reference`: `detect_reference_spread()` result
 - `pages`: outer spread reconstructed from `detect_page_quads()`
+- `consensus`: outer spread reconstructed from neighboring page detections
+- `reference consensus`: top Hough/coarse candidate selected from neighboring frames
 
 Use `--strict` when you intentionally want benchmark failures to return a non-zero exit code. The real-media benchmark is not part of normal CI because the source videos are private/local-only.
 

@@ -397,6 +397,38 @@ describe('frontend helpers', () => {
     expect(onRotation).toHaveBeenCalledWith(90);
   });
 
+  it('blocks frame confirmation until an ambiguous 90/270 rotation is confirmed', () => {
+    const onRotation = vi.fn();
+    render(React.createElement(FrameSelector, {
+      step: '04 / 見開き基準フレーム',
+      title: '基準フレーム',
+      description: 'desc',
+      imageUrl: '/ambiguous-preview.png',
+      time: 3,
+      duration: 20,
+      busy: false,
+      confirmLabel: 'このフレームを基準にする →',
+      onPreview: vi.fn(),
+      onConfirm: vi.fn(),
+      rotation: 90,
+      rotationDetection: {
+        source: 'page_geometry',
+        confidence: 0.55,
+        direction_ambiguous: true,
+        requires_confirmation: true,
+        confirmed: false,
+      },
+      onRotation,
+    }));
+
+    fireEvent.load(screen.getByAltText('選択中の動画フレーム'));
+    expect(screen.getByText(/そのまま・右90°・左90°を確実に判別できません/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'このフレームを基準にする →' }).disabled)
+      .toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'この向きでOK' }));
+    expect(onRotation).toHaveBeenCalledWith(90);
+  });
+
   it('submits the selected correction preset from the setup form', () => {
     const onCreate = vi.fn();
     render(React.createElement(Setup, { busy: false, defaults: buildInitialConfig(), onChoose: vi.fn(), onCreate }));

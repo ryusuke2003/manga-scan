@@ -44,6 +44,9 @@ export default function FrameSelector({
   const previewIsCurrent = inputInRange
     && Math.abs(numericValue - previewed) < 0.0005
     && loadedImageUrl === imageUrl;
+  const rotationNeedsConfirmation = Boolean(
+    rotationDetection?.requires_confirmation && !rotationDetection?.confirmed,
+  );
 
   return <section className="panel">
     <p className="step">{step}</p>
@@ -87,7 +90,9 @@ export default function FrameSelector({
     {onRotation && <div className="rotation-confirm">
       <div>
         <strong>画像の向き</strong>
-        {rotationDetection?.source === 'page_geometry' && <p className="muted">自動判定: {rotation}° · 信頼度 {Math.round((rotationDetection.confidence ?? 0) * 100)}%。違って見える場合だけ変更してください。</p>}
+        {rotationDetection?.direction_ambiguous
+          ? <p className="muted">そのまま・右90°・左90°を確実に判別できませんでした。プレビューを見て正しい向きを選び、「この向きでOK」を押してください。</p>
+          : rotationDetection?.source === 'page_geometry' && <p className="muted">自動判定: {rotation}° · 信頼度 {Math.round((rotationDetection.confidence ?? 0) * 100)}%。違って見える場合だけ変更してください。</p>}
         {rotationDetection?.source === 'video_metadata' && <p className="muted">動画の回転メタデータをFFmpegが反映済みです。プレビューが正しければそのままでOKです。</p>}
         {rotationDetection?.source === 'manual' && <p className="muted">手動で向きを指定しています。</p>}
       </div>
@@ -99,6 +104,11 @@ export default function FrameSelector({
           <option value="270">左へ90°</option>
         </select>
       </label>
+      {rotationNeedsConfirmation && <button
+        type="button"
+        disabled={busy}
+        onClick={() => onRotation(Number(rotation ?? 0))}
+      >この向きでOK</button>}
     </div>}
     <div className="frame-controls">
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 1)}>−1秒</button>
@@ -114,7 +124,7 @@ export default function FrameSelector({
     {!previewIsCurrent && <p className="muted">時刻を変更した場合は「プレビュー更新」で画像を確認してから確定してください。</p>}
     <div className="row frame-actions">
       {onSkip && <button type="button" disabled={busy} onClick={onSkip}>表紙なしで進む</button>}
-      <button type="button" className="primary" disabled={busy || !previewIsCurrent}
+      <button type="button" className="primary" disabled={busy || !previewIsCurrent || rotationNeedsConfirmation}
         onClick={() => onConfirm(previewed)}>{confirmLabel}</button>
     </div>
   </section>;

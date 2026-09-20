@@ -81,19 +81,20 @@ def _boundary_line_count(quad, width, height):
     )
 
 
-def detect_cover_quad(
+def detect_cover_quad_candidates(
     image,
     min_confidence=0.62,
     *,
     area_range=(0.06, 0.78),
     aspect_range=(0.35, 1.25),
     target_aspect=0.72,
+    limit=8,
 ):
-    """Find an upright book-cover outline as normalized TL/TR/BR/BL points.
+    """Rank Hough outline candidates as normalized TL/TR/BR/BL points.
 
-    The setup preview has already applied the selected video rotation, so the
-    cover is expected to be broadly upright. Low-confidence images deliberately
-    fall back to the existing four-point editor instead of guessing a crop.
+    Keeping several geometrically distinct candidates lets callers verify them
+    against stronger page evidence instead of committing to the strongest desk
+    or background rectangle too early.
     """
 
     if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
@@ -109,6 +110,8 @@ def detect_cover_quad(
         raise ValueError("area_range must satisfy 0 < min < max <= 1")
     if not 0 < aspect_min < aspect_max or target_aspect <= 0:
         raise ValueError("aspect range/target must be positive")
+    if int(limit) < 1:
+        raise ValueError("limit must be at least 1")
 
     scale = min(1.0, 1000 / max(image.shape[:2]))
     working = (
@@ -131,10 +134,10 @@ def detect_cover_quad(
     threshold = max(45, round(min(width, height) * 0.12))
     detected_lines = cv2.HoughLines(edges, 1, np.pi / 360, threshold)
     if detected_lines is None:
-        return {"detected": False, "confidence": 0.0, "roi": None}
+        return []
     horizontal, vertical = _axis_lines(detected_lines[:, 0], width, height)
     if len(horizontal) < 2 or len(vertical) < 2:
-        return {"detected": False, "confidence": 0.0, "roi": None}
+        return []
 
     distance = cv2.distanceTransform((edges == 0).astype(np.uint8), cv2.DIST_L2, 3)
     candidates = []
@@ -180,20 +183,67 @@ def detect_cover_quad(
             candidates.append((preliminary, quad))
 
     if not candidates:
-        return {"detected": False, "confidence": 0.0, "roi": None}
+        return []
     scored = []
     for preliminary, quad in sorted(candidates, key=lambda candidate: candidate[0], reverse=True)[:120]:
         support = _edge_support(distance, quad)
         scored.append((preliminary + 0.28 * support, support, quad))
-    confidence, support, quad = max(scored, key=lambda candidate: candidate[0])
-    confidence = max(0.0, min(1.0, float(confidence)))
-    detected = confidence >= min_confidence and support >= 0.28
-    if not detected:
-        return {"detected": False, "confidence": round(confidence, 4), "roi": None}
-    normalized = quad / np.asarray([max(width - 1, 1), max(height - 1, 1)], dtype=np.float32)
-    normalized = np.clip(normalized, 0, 1)
-    try:
-        roi = validate_roi(normalized).tolist()
-    except ValueError:
-        return {"detected": False, "confidence": round(confidence, 4), "roi": None}
-    return {"detected": True, "confidence": round(confidence, 4), "roi": roi}
+    results = []
+    scale_vector = np.asarray([max(width - 1, 1), max(height - 1, 1)], dtype=np.float32)
+    for confidence, support, quad in sorted(scored, key=lambda item: item[0], reverse=True):
+        normalized = np.clip(quad / scale_vector, 0, 1)
+        try:
+            roi = validate_roi(normalized).tolist()
+        except ValueError:
+            continue
+        # Hough emits many near-identical line combinations. Do not let those
+        # crowd genuinely different outline hypotheses out of the top-N set.
+        if any(
+            float(np.mean(np.linalg.norm(normalized - np.asarray(item["roi"]), axis=1)))
+            < 0.025
+            for item in results
+        ):
+            continue
+        confidence = max(0.0, min(1.0, float(confidence)))
+        results.append(
+            {
+                "detected": bool(confidence >= min_confidence and support >= 0.28),
+                "confidence": round(confidence, 4),
+                "support": round(float(support), 4),
+                "roi": roi,
+            }
+        )
+        if len(results) >= int(limit):
+            break
+    return results
+
+
+def detect_cover_quad(
+    image,
+    min_confidence=0.62,
+    *,
+    area_range=(0.06, 0.78),
+    aspect_range=(0.35, 1.25),
+    target_aspect=0.72,
+):
+    """Find the strongest upright book-cover outline.
+
+    This compatibility wrapper preserves the original single-result API. New
+    spread detection uses :func:`detect_cover_quad_candidates` and verifies
+    several hypotheses against the left/right page contours.
+    """
+
+    candidates = detect_cover_quad_candidates(
+        image,
+        min_confidence=min_confidence,
+        area_range=area_range,
+        aspect_range=aspect_range,
+        target_aspect=target_aspect,
+        limit=1,
+    )
+    if not candidates:
+        return {"detected": False, "confidence": 0.0, "roi": None}
+    best = candidates[0]
+    if not best["detected"]:
+        return {"detected": False, "confidence": best["confidence"], "roi": None}
+    return best

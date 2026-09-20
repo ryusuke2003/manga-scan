@@ -348,9 +348,10 @@ def test_rotation_metadata_shared_by_preview_and_analysis(video, tmp_path):
     manifest = create_project(output, project, Config(hand_backend="none", finger_repair=False))
     assert manifest["metadata"]["display_width"] == 320
     assert manifest["metadata"]["display_height"] == 480
-    assert manifest["config"]["rotation"] == 0
-    assert manifest["rotation_detection"]["source"] == "video_metadata"
-    assert manifest["rotation_detection"]["confidence"] == 1.0
+    assert manifest["rotation_detection"]["source"] == "page_geometry"
+    assert manifest["rotation_detection"]["confidence"] < 1.0
+    assert manifest["rotation_detection"]["display_rotation"] == 90
+    assert manifest["rotation_detection"]["metadata_applied"] is True
     preview = cv2.imread(str(project / manifest["reference"]["preview"]))
     assert preview.shape == frame.shape
     samples = sample_frames(output, 10, (160, 240))

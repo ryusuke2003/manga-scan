@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.run_real_benchmark import (
     _repair_result_isolated,
     polygon_iou,
@@ -21,6 +23,14 @@ def test_polygon_iou_identical_and_disjoint():
     b = [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]
     assert polygon_iou(a, a) == 1.0
     assert polygon_iou(a, b) == 0.0
+
+
+def test_real_benchmark_consensus_offsets_must_include_center_frame():
+    data = json.loads(Path("benchmarks/real/cases.json").read_text())
+    data["videos"][0]["samples"][0]["consensus_offsets"] = [-0.5, 0.5, 1.0]
+
+    with pytest.raises(ValueError, match="must include 0"):
+        validate_manifest(data)
 
 
 def test_repair_worker_reports_python_errors_without_aborting(tmp_path):

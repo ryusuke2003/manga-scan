@@ -104,9 +104,15 @@ export default function App() {
       busy={busy}
       onStart={scanner.start}
       step={`${coverHadManualCrop ? '05' : '04'} / 見開き外周`}
-      title={referenceDetected ? '自動検出した見開き外周を確認' : '見開きの外周を4点で指定'}
+      title={referenceDetected
+        ? reference.detection?.ambiguous
+          ? '候補が拮抗しています。見開き外周を確認'
+          : '見開き外周を自動検出しました'
+        : '見開きの外周を4点で指定'}
       description={referenceDetected
-        ? `左右ページから外周を自動検出しました · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。合っていればそのまま抽出を開始してください。ずれている場合だけ「やり直す」から4点を指定し直せます。`
+        ? reference.detection?.ambiguous
+          ? `複数の外周候補が拮抗しています · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。黄色い外周を確認し、違う場合は「やり直す」から4点を指定してください。`
+          : `前後0.5秒を含む左右ページの整合性から外周を自動検出しました · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。ずれている場合だけ「やり直す」から4点を指定し直せます。`
         : '外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。'}
       actionLabel={manifest.status === 'cancelled'
         ? (resumeReady ? '続きから再開 →' : '抽出を再開 →')

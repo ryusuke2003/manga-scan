@@ -12,7 +12,7 @@ from .quality_safety import normalize_expected_page_count
 from .reference_candidates import scan_reference_candidates
 from .rotation_detection import detect_video_rotation
 from .split import rotate_image
-from .spread_detect import detect_reference_spread, draw_reference_spread
+from .spread_detect import detect_reference_spread_consensus, draw_reference_spread
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, local_video, probe
 
@@ -83,7 +83,10 @@ def create_project(
             "sample_times": [0.0],
         }
     config.validate()
-    rotation_detection["confirmed"] = not config.auto_rotation
+    rotation_detection["confirmed"] = (
+        not config.auto_rotation
+        or not rotation_detection.get("requires_confirmation", False)
+    )
     for folder in ("source", "frames_lowres", "candidates", "selected", "pages", "debug", "output"):
         (project / folder).mkdir(exist_ok=True)
     config.hand_model = str(Path(config.hand_model).expanduser().resolve())
@@ -99,7 +102,10 @@ def create_project(
     )
     if len(source_files) > 1:
         warnings.append(f"{len(source_files)}本の動画を撮影順に連結して解析します")
-    if config.auto_rotation and rotation_detection["confidence"] < 0.65:
+    if config.auto_rotation and (
+        rotation_detection["confidence"] < 0.65
+        or rotation_detection.get("requires_confirmation")
+    ):
         warnings.append(
             "画像向きの自動判定に自信がありません。プレビューを確認し、必要なら向きを変更してください"
         )
@@ -193,6 +199,28 @@ def _detect_cover_for_rotation(image, rotation):
     return detection, None, "frame_selected"
 
 
+def _reference_consensus_frames(source, metadata, timestamp, image, cfg):
+    """Load the selected frame and its ±0.5s neighbors in display orientation."""
+
+    duration = float(metadata["duration"])
+    samples = [rotate_image(image, cfg.rotation)]
+    sample_times = [float(timestamp)]
+    for offset in (-0.5, 0.5):
+        sample_time = min(
+            max(float(timestamp + offset), 0.0),
+            max(0.0, duration - 0.001),
+        )
+        if any(abs(sample_time - existing) < 0.001 for existing in sample_times):
+            continue
+        try:
+            sample = extract_frame(source, sample_time, hwaccel=cfg.hwaccel)
+        except (OSError, RuntimeError):
+            continue
+        samples.append(rotate_image(sample, cfg.rotation))
+        sample_times.append(sample_time)
+    return samples, 0
+
+
 def set_setup_frame(project, kind, time, confirm=False):
     if kind not in ("cover", "reference"):
         raise ValueError("Unknown setup frame kind")
@@ -239,12 +267,20 @@ def set_setup_frame(project, kind, time, confirm=False):
             raw_roi = None
             debug_path = None
             if confirm:
-                displayed = rotate_image(image, cfg.rotation)
-                reference_detection = detect_reference_spread(
-                    displayed,
-                    min_confidence=cfg.page_contour_min_confidence,
+                consensus_frames, anchor_index = _reference_consensus_frames(
+                    manifest["source"],
+                    manifest["metadata"],
+                    timestamp,
+                    image,
+                    cfg,
                 )
-                reference_detection["source"] = "auto_pages"
+                displayed = consensus_frames[anchor_index]
+                reference_detection = detect_reference_spread_consensus(
+                    consensus_frames,
+                    min_confidence=cfg.page_contour_min_confidence,
+                    anchor_index=anchor_index,
+                )
+                reference_detection["method"] = "auto_pages"
                 if reference_detection["detected"]:
                     raw_roi = rotate_roi(
                         reference_detection["roi"],
@@ -266,13 +302,15 @@ def set_setup_frame(project, kind, time, confirm=False):
             )
             if confirm:
                 rotation_detection = manifest.get("rotation_detection") or {}
-                rotation_detection["confirmed"] = True
+                if not rotation_detection.get("requires_confirmation"):
+                    rotation_detection["confirmed"] = True
                 manifest["rotation_detection"] = rotation_detection
-                manifest["warnings"] = [
-                    warning
-                    for warning in manifest.get("warnings", [])
-                    if not warning.startswith("画像向きの自動判定に自信がありません")
-                ]
+                if rotation_detection.get("confirmed"):
+                    manifest["warnings"] = [
+                        warning
+                        for warning in manifest.get("warnings", [])
+                        if not warning.startswith("画像向きの自動判定に自信がありません")
+                    ]
             manifest["roi"] = raw_roi
             manifest["message"] = (
                 (
@@ -351,6 +389,9 @@ def set_rotation(project, rotation):
             confidence=1.0,
             source="manual",
             confirmed=True,
+            direction_ambiguous=False,
+            requires_confirmation=False,
+            rotation_options=[rotation],
         )
         manifest["warnings"] = [
             warning

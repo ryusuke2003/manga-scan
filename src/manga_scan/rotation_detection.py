@@ -99,16 +99,6 @@ def _confidence(scores, best_rotation):
 def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
     """Return a best-effort extra rotation for frames already autorotated by FFmpeg."""
     display_rotation = _metadata_rotation(metadata)
-    if display_rotation is not None:
-        return {
-            "rotation": 0,
-            "confidence": 1.0,
-            "source": "video_metadata",
-            "display_rotation": display_rotation,
-            "scores": {"0": 1.0},
-            "sample_times": [0.0],
-        }
-
     duration = float(metadata["duration"])
     frames = [first_frame]
     times = [0.0]
@@ -147,7 +137,19 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
     # pretending the page-shape heuristic can always determine "up".
     priority = (0, 90, 270, 180)
     best_rotation = next(rotation for rotation in priority if rotation in near_ties)
-    confidence = _confidence(scores, best_rotation)
+    suggested_rotation = best_rotation
+    confidence = _confidence(scores, suggested_rotation)
+    sideways_axis = suggested_rotation in (90, 270)
+    direction_margin = abs(float(scores[90]) - float(scores[270]))
+    direction_ambiguous = sideways_axis and direction_margin < 0.025
+    if direction_ambiguous:
+        confidence = min(confidence, 0.55)
+        # A portrait display frame may either contain an upright book or a
+        # sideways book. Page geometry identifies the axis but cannot decide
+        # that semantic distinction or 90° versus 270°. Keep the non-destructive
+        # preview unchanged until the user confirms it.
+        if first_frame.shape[0] > first_frame.shape[1]:
+            best_rotation = 0
     # The geometry path is designed around three independent observations.
     # If one or both extra seeks fail, do not let a single cover/transition
     # frame suppress the setup warning with an overconfident score.
@@ -155,11 +157,25 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
         confidence = min(confidence, 0.62)
     elif len(frames) == 1:
         confidence = min(confidence, 0.55)
-    return {
+    result = {
         "rotation": best_rotation,
         "confidence": confidence,
         "source": "page_geometry",
         "scores": {str(rotation): scores[rotation] for rotation in _ROTATIONS},
         "sample_times": times,
         "sample_count": len(frames),
+        "direction_ambiguous": direction_ambiguous,
+        "requires_confirmation": direction_ambiguous,
+        "rotation_options": (
+            [0, 90, 270]
+            if direction_ambiguous and first_frame.shape[0] > first_frame.shape[1]
+            else [90, 270]
+            if direction_ambiguous
+            else [best_rotation]
+        ),
+        "suggested_rotation": suggested_rotation,
     }
+    if display_rotation is not None:
+        result["display_rotation"] = display_rotation
+        result["metadata_applied"] = True
+    return result

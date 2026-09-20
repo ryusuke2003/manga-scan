@@ -94,8 +94,8 @@ it('previews an automatically detected reference spread with four ready points',
 
   render(<App />);
 
-  expect(screen.getByText('自動検出した見開き外周を確認')).toBeTruthy();
-  expect(screen.getByText(/左右ページから外周を自動検出しました · 信頼度 88%/)).toBeTruthy();
+  expect(screen.getByRole('heading', { name: '見開き外周を自動検出しました' })).toBeTruthy();
+  expect(screen.getByText(/前後0.5秒を含む左右ページの整合性から外周を自動検出しました · 信頼度 88%/)).toBeTruthy();
   expect(screen.getByText('4 / 4 点')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'この範囲で抽出開始 →' })).toBeTruthy();
 });

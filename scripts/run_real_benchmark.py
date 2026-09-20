@@ -17,6 +17,8 @@ import cv2
 import numpy as np
 
 _ROTATIONS = {0, 90, 180, 270}
+_DEFAULT_CONSENSUS_OFFSETS = (-0.5, 0.0, 0.5)
+_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
 
 
 def sha256_file(path: Path) -> str:
@@ -96,6 +98,29 @@ def validate_manifest(data: dict) -> None:
                     value = float(sample.get(key, 0))
                     if not 0 <= value <= 1:
                         raise ValueError(f"{video_id}/{sample_id}: {key} must be 0..1")
+                offsets = sample.get("consensus_offsets", _DEFAULT_CONSENSUS_OFFSETS)
+                if not isinstance(offsets, (list, tuple)) or len(offsets) < 3:
+                    raise ValueError(
+                        f"{video_id}/{sample_id}: consensus_offsets needs at least 3 values"
+                    )
+                try:
+                    offsets = [float(value) for value in offsets]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"{video_id}/{sample_id}: consensus_offsets must be numeric"
+                    ) from exc
+                if not np.isfinite(offsets).all() or len(set(offsets)) != len(offsets):
+                    raise ValueError(
+                        f"{video_id}/{sample_id}: consensus_offsets must be finite and unique"
+                    )
+                if not any(abs(value) <= 1e-9 for value in offsets):
+                    raise ValueError(
+                        f"{video_id}/{sample_id}: consensus_offsets must include 0"
+                    )
+                if any(not 0 <= timestamp + value < duration for value in offsets):
+                    raise ValueError(
+                        f"{video_id}/{sample_id}: consensus frame must be within the video"
+                    )
         repair_ids = set()
         for pair in video.get("repair_pairs", []):
             pair_id = pair.get("id")
@@ -209,6 +234,116 @@ def _sample_result(video_id, sample, displayed):
         "passed": bool(page["detected"] and page_iou >= sample["min_page_iou"]),
     }
     return result, reference.get("roi"), page_quad
+
+
+def _page_consensus_result(video_spec, sample, path):
+    from manga_scan.page_contour import (
+        consensus_page_quads,
+        detect_page_quads,
+        spread_quad_from_page_quads,
+    )
+    from manga_scan.split import rotate_image
+    from manga_scan.video import extract_frame
+
+    offsets = [
+        float(value)
+        for value in sample.get("consensus_offsets", _DEFAULT_CONSENSUS_OFFSETS)
+    ]
+    detections = []
+    times = []
+    anchor_id = None
+    for candidate_id, offset in enumerate(offsets):
+        timestamp = float(sample["time"]) + offset
+        source = extract_frame(path, timestamp)
+        displayed = rotate_image(source, video_spec["expected_rotation"])
+        detection = detect_page_quads(
+            displayed,
+            sample["spread_quad"],
+            spine_ratio=0.5,
+            min_confidence=0.55,
+        )
+        detection["candidate_id"] = candidate_id
+        detections.append(detection)
+        times.append(round(timestamp, 3))
+        if abs(offset) <= 1e-9:
+            anchor_id = candidate_id
+
+    consensus = consensus_page_quads(
+        detections,
+        min_confidence=0.55,
+        max_corner_deviation=_CONSENSUS_MAX_CORNER_DEVIATION,
+        anchor_ids={"left": anchor_id, "right": anchor_id},
+    )
+    consensus_quad = None
+    if consensus["detected"]:
+        try:
+            consensus_quad = spread_quad_from_page_quads(consensus)
+        except ValueError:
+            consensus_quad = None
+    consensus_iou = (
+        polygon_iou(consensus_quad, sample["spread_quad"])
+        if consensus_quad is not None
+        else 0.0
+    )
+    check = {
+        "detected": bool(consensus["detected"]),
+        "confidence": consensus["confidence"],
+        "left_confidence": consensus["left"]["confidence"],
+        "right_confidence": consensus["right"]["confidence"],
+        "left_consensus_count": consensus["left"]["consensus_count"],
+        "right_consensus_count": consensus["right"]["consensus_count"],
+        "offsets": offsets,
+        "times": times,
+        "iou": round(consensus_iou, 4),
+        "min_iou": sample["min_page_iou"],
+        "passed": bool(
+            consensus["detected"] and consensus_iou >= sample["min_page_iou"]
+        ),
+    }
+    return check, consensus_quad
+
+
+def _reference_consensus_result(video_spec, sample, path):
+    from manga_scan.split import rotate_image
+    from manga_scan.spread_detect import detect_reference_spread_consensus
+    from manga_scan.video import extract_frame
+
+    offsets = [
+        float(value)
+        for value in sample.get("consensus_offsets", _DEFAULT_CONSENSUS_OFFSETS)
+    ]
+    displayed_frames = [
+        rotate_image(
+            extract_frame(path, float(sample["time"]) + offset),
+            video_spec["expected_rotation"],
+        )
+        for offset in offsets
+    ]
+    anchor_index = next(
+        index for index, offset in enumerate(offsets) if abs(offset) <= 1e-9
+    )
+    detection = detect_reference_spread_consensus(
+        displayed_frames,
+        min_confidence=0.55,
+        anchor_index=anchor_index,
+    )
+    quad = detection.get("roi")
+    iou = polygon_iou(quad, sample["spread_quad"]) if quad is not None else 0.0
+    return {
+        "detected": bool(detection["detected"]),
+        "confidence": detection["confidence"],
+        "source": detection.get("source"),
+        "candidate_count": detection.get("candidate_count", 0),
+        "frame_support": detection.get("frame_support", 0),
+        "ambiguous": bool(detection.get("ambiguous")),
+        "score_margin": detection.get("score_margin"),
+        "offsets": offsets,
+        "iou": round(iou, 4),
+        "min_iou": sample["min_reference_iou"],
+        "passed": bool(
+            detection["detected"] and iou >= sample["min_reference_iou"]
+        ),
+    }, quad
 
 
 def _repair_result(video_spec, pair, path, model_path):
@@ -434,7 +569,15 @@ def run(
                 "confidence": rotation["confidence"],
                 "source": rotation["source"],
                 "scores": rotation.get("scores"),
-                "passed": rotation["rotation"] == spec["expected_rotation"],
+                "requires_confirmation": bool(rotation.get("requires_confirmation")),
+                "rotation_options": rotation.get("rotation_options"),
+                "passed": bool(
+                    rotation["rotation"] == spec["expected_rotation"]
+                    or (
+                        rotation.get("requires_confirmation")
+                        and spec["expected_rotation"] in rotation.get("rotation_options", [])
+                    )
+                ),
             }
         )
 
@@ -442,12 +585,30 @@ def run(
             source = extract_frame(path, sample["time"])
             displayed = rotate_image(source, spec["expected_rotation"])
             sample_result, reference_quad, page_quad = _sample_result(spec["id"], sample, displayed)
+            consensus_quad = None
+            reference_consensus_quad = None
+            if sample["expect_spread"]:
+                consensus_check, consensus_quad = _page_consensus_result(spec, sample, path)
+                sample_result["checks"]["page_contour_consensus"] = consensus_check
+                reference_consensus_check, reference_consensus_quad = (
+                    _reference_consensus_result(spec, sample, path)
+                )
+                sample_result["checks"]["reference_spread_consensus"] = (
+                    reference_consensus_check
+                )
             report["samples"].append(sample_result)
             canvas = displayed.copy()
             if sample.get("spread_quad") is not None:
                 _draw_quad(canvas, sample["spread_quad"], (70, 210, 70), "expected")
             _draw_quad(canvas, reference_quad, (255, 170, 0), "reference")
             _draw_quad(canvas, page_quad, (60, 80, 255), "pages")
+            _draw_quad(canvas, consensus_quad, (210, 80, 210), "consensus")
+            _draw_quad(
+                canvas,
+                reference_consensus_quad,
+                (220, 220, 40),
+                "reference consensus",
+            )
             name = f"{spec['id']}__{sample['id']}.jpg"
             cv2.imwrite(str(debug_dir / name), canvas, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
@@ -468,10 +629,11 @@ def _print_summary(report):
     for name, result in report["summary"].items():
         if name == "all_required_passed":
             continue
-        print(f"  {name:18s} {result['passed']:>2}/{result['total']:<2} passed")
+        print(f"  {name:24s} {result['passed']:>2}/{result['total']:<2} passed")
     if not report["repairs"]:
-        print("  finger_repair      skipped (use --with-hands)")
-    print(f"  overall            {'PASS' if report['summary']['all_required_passed'] else 'FAIL'}")
+        print("  finger_repair            skipped (use --with-hands)")
+    overall = "PASS" if report["summary"]["all_required_passed"] else "FAIL"
+    print(f"  {'overall':24s} {overall}")
 
 
 def main(argv=None):
