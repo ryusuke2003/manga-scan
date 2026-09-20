@@ -142,6 +142,15 @@ def set_setup_frame(project, kind, time, confirm=False):
                 preview=preview_path,
                 confirmed=bool(confirm),
             )
+            if confirm:
+                detection = manifest.get("rotation_detection") or {}
+                detection["confirmed"] = True
+                manifest["rotation_detection"] = detection
+                manifest["warnings"] = [
+                    warning
+                    for warning in manifest.get("warnings", [])
+                    if not warning.startswith("画像向きの自動判定に自信がありません")
+                ]
             manifest["roi"] = None
             manifest["message"] = (
                 "見開きの外周を4点で指定してください"
@@ -187,6 +196,11 @@ def set_rotation(project, rotation):
             source="manual",
             confirmed=True,
         )
+        manifest["warnings"] = [
+            warning
+            for warning in manifest.get("warnings", [])
+            if not warning.startswith("画像向きの自動判定に自信がありません")
+        ]
         _refresh_setup_previews(project, manifest, rotation)
         write_json(project / "config.resolved.json", cfg.to_dict())
         save_manifest(project, manifest)
