@@ -20,6 +20,7 @@ export default function FrameSelector({
   onSkip,
 }) {
   const [value, setValue] = useState(String(time));
+  const [loadedImageUrl, setLoadedImageUrl] = useState(null);
 
   useEffect(() => setValue(String(time)), [time]);
 
@@ -32,21 +33,29 @@ export default function FrameSelector({
   const hasInput = String(value).trim() !== '' && Number.isFinite(Number(value));
   const selected = hasInput ? clampTime(value, duration) : null;
   const previewed = clampTime(time, duration);
-  const previewIsCurrent = selected !== null && Math.abs(selected - previewed) < 0.0005;
+  const previewIsCurrent = selected !== null
+    && Math.abs(selected - previewed) < 0.0005
+    && loadedImageUrl === imageUrl;
 
   return <section className="panel">
     <p className="step">{step}</p>
     <h2>{title}</h2>
     <p className="muted">{description}</p>
     <div className="frame-wrap">
-      <img className="frame-preview" src={imageUrl} alt="選択中の動画フレーム" />
+      <img
+        key={imageUrl}
+        className="frame-preview"
+        src={imageUrl}
+        alt="選択中の動画フレーム"
+        onLoad={() => setLoadedImageUrl(imageUrl)}
+      />
     </div>
     <div className="frame-controls">
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 1)}>−1秒</button>
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected - 0.1)}>−0.1秒</button>
       <label>動画の秒数
         <input type="number" min="0" max={Math.max(0, duration - 0.001)} step="0.1"
-          value={value} onChange={event => setValue(event.target.value)} />
+          value={value} disabled={busy} onChange={event => setValue(event.target.value)} />
       </label>
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected)}>プレビュー更新</button>
       <button type="button" disabled={busy || selected === null} onClick={() => preview(selected + 0.1)}>＋0.1秒</button>
