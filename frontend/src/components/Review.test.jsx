@@ -353,3 +353,130 @@ it('renders final output QA summary and adjacent duplicate detail', () => {
     && node.textContent.includes('前ページとほぼ同一'))).toBeTruthy();
   expect(screen.getByText(/前ページ previous_page と類似 · SSIM 97.1%/)).toBeTruthy();
 });
+
+
+it('supports per-page correction overrides and before/after comparison', () => {
+  const onEdit = vi.fn();
+  const split = {
+    ...manifest,
+    config: {
+      ...manifest.config,
+      output_layout: 'split',
+      candidate_selection_mode: 'spread',
+      dewarp_mode: 'auto',
+      illumination_correction: true,
+      white_normalization: true,
+      rotation: 0,
+    },
+    pages: [{
+      id: 's_right',
+      spread_id: 's',
+      side: 'right',
+      enabled: true,
+      suspect: [],
+      path: 'right.png',
+      preview: 'right-thumb.jpg',
+      source: 'right-source.png',
+      candidate_id: 0,
+      candidate_time: 1,
+      dewarp: { mode: 'auto', status: 'applied', applied: true },
+      render_settings: {
+        dewarp: true,
+        dewarp_mode: 'auto',
+        illumination_correction: true,
+        white_normalization: true,
+        page_quad_mode: 'auto',
+        manual_quad: null,
+      },
+      page_contour: {
+        mode: 'auto',
+        quad: [[.52, .1], [.92, .1], [.92, .9], [.52, .9]],
+        confidence: .9,
+        detected: true,
+      },
+    }],
+    spreads: [{
+      ...manifest.spreads[0],
+      output_layout: 'split',
+      selected_pages: { left: 0, right: 0 },
+    }],
+  };
+
+  render(<Review manifest={split} file={path => path} busy={false} onEdit={onEdit} />);
+
+  expect(screen.getByText('元画像')).toBeTruthy();
+  expect(screen.getByText('補正後')).toBeTruthy();
+
+  fireEvent.click(screen.getByLabelText('s_right 湾曲補正 OFF'));
+  expect(onEdit).toHaveBeenCalledWith('page_settings', {
+    page_id: 's_right',
+    settings: { dewarp: false },
+  });
+
+  fireEvent.click(screen.getByLabelText('s_right 照明補正 OFF'));
+  expect(onEdit).toHaveBeenCalledWith('page_settings', {
+    page_id: 's_right',
+    settings: { illumination_correction: false },
+  });
+
+  fireEvent.click(screen.getByLabelText('s_right 白背景補正 OFF'));
+  expect(onEdit).toHaveBeenCalledWith('page_settings', {
+    page_id: 's_right',
+    settings: { white_normalization: false },
+  });
+
+  fireEvent.click(screen.getByLabelText('s_right ページ輪郭 manual'));
+  expect(screen.getByText('右ページの外周を手動指定')).toBeTruthy();
+  expect(screen.getByText('この外周で再レンダリング')).toBeTruthy();
+});
+
+
+it('can return a page contour override to auto mode', () => {
+  const onEdit = vi.fn();
+  const manualPage = {
+    ...manifest,
+    config: {
+      ...manifest.config,
+      output_layout: 'split',
+      candidate_selection_mode: 'spread',
+      rotation: 0,
+    },
+    pages: [{
+      id: 's_left',
+      spread_id: 's',
+      side: 'left',
+      enabled: true,
+      suspect: [],
+      path: 'left.png',
+      source: 'left-source.png',
+      candidate_id: 0,
+      candidate_time: 1,
+      render_settings: {
+        dewarp: false,
+        illumination_correction: false,
+        white_normalization: false,
+        page_quad_mode: 'manual',
+        manual_quad: [[.08, .1], [.48, .1], [.48, .9], [.08, .9]],
+      },
+      page_contour: {
+        mode: 'manual',
+        manual: true,
+        quad: [[.08, .1], [.48, .1], [.48, .9], [.08, .9]],
+      },
+      dewarp: { mode: 'off', status: 'disabled', applied: false },
+    }],
+    spreads: [{
+      ...manifest.spreads[0],
+      output_layout: 'split',
+      selected_pages: { left: 0, right: 0 },
+    }],
+  };
+
+  render(<Review manifest={manualPage} file={path => path} busy={false} onEdit={onEdit} />);
+  fireEvent.click(screen.getByLabelText('s_left ページ輪郭 auto'));
+
+  expect(onEdit).toHaveBeenCalledWith('page_settings', {
+    page_id: 's_left',
+    settings: { page_quad_mode: 'auto' },
+  });
+});

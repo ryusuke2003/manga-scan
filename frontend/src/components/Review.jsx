@@ -181,6 +181,125 @@ function ImageLink({ path, preview, file }) {
   return <a href={file(path)} target="_blank" rel="noopener"><img src={file(preview || path)} alt="抽出ページ" loading="lazy" /></a>;
 }
 
+function PageReviewControls({ page, manifest, file, busy, onEdit }) {
+  const [editingContour, setEditingContour] = useState(false);
+  const spread = manifest.spreads.find(item => item.id === page.spread_id);
+  const candidate = spread?.candidates?.find(item => item.id === page.candidate_id);
+  const settings = page.render_settings ?? {};
+  const splitPage = page.side === 'left' || page.side === 'right';
+  const dewarpEnabled = splitPage
+    ? (settings.dewarp ?? (page.dewarp?.status !== 'disabled'))
+    : false;
+  const illuminationEnabled = settings.illumination_correction
+    ?? manifest.config.illumination_correction
+    ?? false;
+  const whiteEnabled = settings.white_normalization
+    ?? manifest.config.white_normalization
+    ?? false;
+  const contourMode = page.page_contour?.mode ?? settings.page_quad_mode ?? 'auto';
+
+  const update = next => onEdit('page_settings', {
+    page_id: page.id,
+    settings: next,
+  });
+
+  return <div className="page-review-controls">
+    <div className="page-compare">
+      <a href={file(page.source || page.path)} target="_blank" rel="noopener">
+        <span>元画像</span>
+        <img src={file(page.source || page.path)} alt={page.id + ' 元画像'} loading="lazy" />
+      </a>
+      <a href={file(page.path)} target="_blank" rel="noopener">
+        <span>補正後</span>
+        <img src={file(page.preview || page.path)} alt={page.id + ' 補正後'} loading="lazy" />
+      </a>
+    </div>
+    <div className="page-setting-grid">
+      {splitPage && <div className="page-setting-row">
+        <span>湾曲補正</span>
+        <button
+          className={dewarpEnabled ? 'active' : ''}
+          aria-label={page.id + ' 湾曲補正 ON'}
+          disabled={busy}
+          onClick={() => update({ dewarp: true })}
+        >ON</button>
+        <button
+          className={!dewarpEnabled ? 'active' : ''}
+          aria-label={page.id + ' 湾曲補正 OFF'}
+          disabled={busy}
+          onClick={() => update({ dewarp: false })}
+        >OFF</button>
+      </div>}
+      <div className="page-setting-row">
+        <span>照明補正</span>
+        <button
+          className={illuminationEnabled ? 'active' : ''}
+          aria-label={page.id + ' 照明補正 ON'}
+          disabled={busy}
+          onClick={() => update({ illumination_correction: true })}
+        >ON</button>
+        <button
+          className={!illuminationEnabled ? 'active' : ''}
+          aria-label={page.id + ' 照明補正 OFF'}
+          disabled={busy}
+          onClick={() => update({ illumination_correction: false })}
+        >OFF</button>
+      </div>
+      <div className="page-setting-row">
+        <span>白背景補正</span>
+        <button
+          className={whiteEnabled ? 'active' : ''}
+          aria-label={page.id + ' 白背景補正 ON'}
+          disabled={busy}
+          onClick={() => update({ white_normalization: true })}
+        >ON</button>
+        <button
+          className={!whiteEnabled ? 'active' : ''}
+          aria-label={page.id + ' 白背景補正 OFF'}
+          disabled={busy}
+          onClick={() => update({ white_normalization: false })}
+        >OFF</button>
+      </div>
+      {splitPage && <div className="page-setting-row">
+        <span>ページ輪郭</span>
+        <button
+          className={contourMode === 'auto' ? 'active' : ''}
+          aria-label={page.id + ' ページ輪郭 auto'}
+          disabled={busy}
+          onClick={() => {
+            if (contourMode !== 'auto') update({ page_quad_mode: 'auto' });
+          }}
+        >auto</button>
+        <button
+          className={contourMode === 'manual' ? 'active' : ''}
+          aria-label={page.id + ' ページ輪郭 manual'}
+          disabled={busy || !candidate}
+          onClick={() => setEditingContour(true)}
+        >manual</button>
+      </div>}
+    </div>
+    <p className="page-rerender-note">変更はこのページを含む見開きだけ再レンダリングします。</p>
+    {editingContour && candidate && <div className="page-contour-editor">
+      <RoiSelector
+        key={page.id + '-' + contourMode}
+        imageUrl={file(candidate.path)}
+        initialPoints={page.page_contour?.quad || []}
+        rotation={manifest.config.rotation || 0}
+        busy={busy}
+        step="ページ単位の外周補正"
+        title={pageSideLabel(page.side) + 'の外周を手動指定'}
+        description="左上 → 右上 → 右下 → 左下の順で4点を指定します。このページだけmanual輪郭として保存します。"
+        actionLabel="この外周で再レンダリング"
+        onStart={points => {
+          update({ page_quad_mode: 'manual', manual_quad: points });
+          setEditingContour(false);
+        }}
+      />
+      <button disabled={busy} onClick={() => setEditingContour(false)}>閉じる</button>
+    </div>}
+  </div>;
+}
+
 function Spread({ spread, config, file, busy, onEdit }) {
   const [ratio, setRatio] = useState(spread.spine_ratio ?? config.spine_ratio);
   const [cropCandidate, setCropCandidate] = useState(null);
@@ -300,6 +419,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
+      {page.side !== 'cover' && <PageReviewControls page={page} manifest={manifest} file={file} busy={busy} onEdit={onEdit} />}
       {page.final_quality?.reasons?.length > 0 && <div className="dewarp-meta">
         <span>完成画像QA: {reasons(page.final_quality.reasons)}</span>
         {page.final_quality.adjacent_duplicate && <p className="muted">前ページ {page.final_quality.adjacent_duplicate.other_page_id} と類似 · SSIM {(page.final_quality.adjacent_duplicate.ssim * 100).toFixed(1)}%</p>}
@@ -319,8 +439,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       {page.dewarp?.mode === 'auto' && <div className="dewarp-meta">
         <span>湾曲補正: {page.dewarp.status === 'applied' ? `適用 最大 ${(page.dewarp.strength * 100).toFixed(1)}%${page.dewarp.profile_variation ? ` · 高さ方向差 ${(page.dewarp.profile_variation * 100).toFixed(1)}%` : ''}` : page.dewarp.status === 'disabled' ? 'ページ単位でOFF' : page.dewarp.status === 'not_needed' ? '補正不要' : '見送り'}{page.dewarp.confidence !== undefined ? ` · 信頼度 ${Math.round(page.dewarp.confidence * 100)}%` : ''}</span>
         <div className="row">{page.dewarp.before && <a href={file(page.dewarp.before)} target="_blank" rel="noopener">補正前 ↗</a>}
-          {page.dewarp.debug_grid && <a href={file(page.dewarp.debug_grid)} target="_blank" rel="noopener">remap ↗</a>}
-          <button disabled={busy} onClick={() => onEdit('toggle_dewarp', { spread_id: page.spread_id, side: page.side })}>{page.dewarp.status === 'disabled' ? '自動補正ON' : '自動補正OFF'}</button></div>
+          {page.dewarp.debug_grid && <a href={file(page.dewarp.debug_grid)} target="_blank" rel="noopener">remap ↗</a>}</div>
       </div>}
       <div className="row"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
         <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
