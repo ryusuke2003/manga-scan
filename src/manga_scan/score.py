@@ -83,15 +83,12 @@ def glare_fraction(image):
     return float(np.mean(cleaned > 0))
 
 
-def _sharpness_score(metrics):
-    if "sharpness_uniformity" in metrics:
-        return float(metrics["sharpness_uniformity"])
-    return math.log1p(metrics["sharpness"]) / 8
-
 
 def composite_score(metrics, config):
+    # Keep the original absolute score stable. Candidate scoring v2 adds local
+    # focus/glare through within-spread relative ranking in selection.py.
     return float(
-        config.sharpness_weight * _sharpness_score(metrics)
+        config.sharpness_weight * math.log1p(metrics["sharpness"]) / 8
         - config.motion_weight * min(1, metrics["motion"] / config.turn_threshold)
         - config.hand_overlap_weight * (metrics["hand_overlap"] or 0)
         - config.distortion_weight * metrics["distortion"]
