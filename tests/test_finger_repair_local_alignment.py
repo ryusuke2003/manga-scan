@@ -86,7 +86,7 @@ def test_local_alignment_repairs_residual_component_shift():
 
 def test_global_shifted_donor_mask_uses_aligned_coordinates():
     clean = _textured_page()
-    target_mask = _mask(clean.shape, [(170, 82, 176, 148)])
+    target_mask = _mask(clean.shape, [(175, 82, 179, 148)])
     target = clean.copy()
     target[target_mask > 0] = (25, 95, 195)
 
@@ -96,12 +96,12 @@ def test_global_shifted_donor_mask_uses_aligned_coordinates():
     # donor mask rather than comparing the raw mask in target coordinates.
     donor = cv2.warpAffine(
         clean,
-        np.asarray([[1, 0, 10], [0, 1, 0]], np.float32),
+        np.asarray([[1, 0, 7], [0, 1, 0]], np.float32),
         (clean.shape[1], clean.shape[0]),
         flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_REFLECT,
     )
-    donor_mask = _mask(clean.shape, [(170, 82, 176, 148)])
+    donor_mask = _mask(clean.shape, [(175, 82, 179, 148)])
     donor[donor_mask > 0] = (30, 105, 205)
 
     aligned = align_donor_page(target, donor, donor_mask, target_mask)
