@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { fileUrl } from './api.js';
 import { normalizedPoint } from './components/RoiSelector.jsx';
-import { didJobFinish } from './useScanner.js';
+import { didJobFinish, shouldReportPollError } from './useScanner.js';
 
 describe('frontend helpers', () => {
   it('builds encoded local file URLs', () => {
@@ -21,5 +21,13 @@ describe('frontend helpers', () => {
     expect(didJobFinish(false, { busy: true })).toBe(false);
     expect(didJobFinish(true, { busy: true })).toBe(false);
     expect(didJobFinish(true, { busy: false })).toBe(true);
+  });
+
+  it('ignores stale polling errors while a mutation is changing project state', () => {
+    const error = new Error('404');
+    expect(shouldReportPollError(error, false, false)).toBe(true);
+    expect(shouldReportPollError(error, false, true)).toBe(false);
+    expect(shouldReportPollError(error, true, false)).toBe(false);
+    expect(shouldReportPollError(Object.assign(new Error('aborted'), { name: 'AbortError' }), false, false)).toBe(false);
   });
 });
