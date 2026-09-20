@@ -14,7 +14,7 @@ from flask import Flask, abort, jsonify, request, send_file
 from .config import Config
 from .ingest import create_project
 from .pipeline import edit, run
-from .storage import read_manifest
+from .storage import project_lock, read_manifest
 
 
 def create_app(projects, config=None):
@@ -133,8 +133,15 @@ def create_app(projects, config=None):
         if not guard.acquire(blocking=False):
             return jsonify(error="処理中です。完了後に削除してください"), 409
         try:
+            entry = root / name
+            if entry.is_symlink():
+                raise ValueError("Symlinked projects cannot be deleted")
             project = project_path(name)
-            shutil.rmtree(project)
+            try:
+                with project_lock(project):
+                    shutil.rmtree(project)
+            except ValueError as exc:
+                return jsonify(error=str(exc)), 409
             if job["project"] == name:
                 job.update(project=None, error=None)
             return jsonify(deleted=name)
