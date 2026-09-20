@@ -122,3 +122,36 @@ def test_skip_cover_generates_reference_suggestion_previews(tmp_path, monkeypatc
     assert "_frame" not in candidate
     assert candidate["preview"] == "source/reference_candidates/candidate_01.jpg"
     assert (tmp_path / candidate["preview"]).is_file()
+
+
+def test_reference_suggestion_failure_does_not_block_manual_setup(tmp_path, monkeypatch):
+    cfg = Config(hand_backend="none", finger_repair=False, auto_rotation=False)
+    manifest = {
+        "version": 2,
+        "source": "/tmp/book.mp4",
+        "metadata": {"duration": 10.0, "fps": 30.0, "display_width": 300, "display_height": 180},
+        "config": cfg.to_dict(),
+        "rotation_detection": {"rotation": 0, "confidence": 1.0, "source": "manual", "confirmed": True},
+        "roi": None,
+        "cover": {"status": "pending", "time": 0.0, "roi": None},
+        "reference": {"time": 0.0, "confirmed": False},
+        "status": "ready",
+        "warnings": [],
+        "spreads": [],
+        "pages": [],
+        "pdf_stale": True,
+        "progress": 0,
+        "message": "",
+    }
+    save_manifest(tmp_path, manifest)
+    monkeypatch.setattr(
+        "manga_scan.ingest.scan_reference_candidates",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("scan failed")),
+    )
+
+    updated = skip_cover(tmp_path)
+
+    assert updated["cover"]["status"] == "skipped"
+    assert updated["reference"]["candidates"] == []
+    assert updated["reference"]["candidate_search_error"] == "scan failed"
+    assert "基準にする見開き" in updated["message"]
