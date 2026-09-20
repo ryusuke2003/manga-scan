@@ -2,6 +2,7 @@ import re
 from contextlib import contextmanager
 
 import manga_scan.ui as ui_module
+from manga_scan.config import Config
 from manga_scan.ui import create_app
 
 
@@ -31,6 +32,30 @@ def test_local_ui_token_origin_host_and_static_assets(tmp_path):
     assert (
         client.post("/api/projects", json={}, headers={"X-Manga-Token": token}).status_code == 400
     )
+
+
+def test_state_exposes_effective_ui_defaults(tmp_path):
+    config = Config(
+        refine_quad=True,
+        perspective_mode="per_page",
+        page_contour_min_confidence=0.7,
+        split_mode="auto",
+        dewarp_mode="auto",
+        illumination_correction=True,
+        illumination_strength=0.45,
+        white_normalization=True,
+        white_target=250,
+    )
+    state = create_app(tmp_path, config).test_client().get("/api/state").json
+    assert state["defaults"]["refine_quad"] is True
+    assert state["defaults"]["perspective_mode"] == "per_page"
+    assert state["defaults"]["page_contour_min_confidence"] == 0.7
+    assert state["defaults"]["split_mode"] == "auto"
+    assert state["defaults"]["dewarp_mode"] == "auto"
+    assert state["defaults"]["illumination_correction"] is True
+    assert state["defaults"]["illumination_strength"] == 0.45
+    assert state["defaults"]["white_normalization"] is True
+    assert state["defaults"]["white_target"] == 250
 
 
 def test_missing_file_in_existing_project_returns_404(tmp_path):
