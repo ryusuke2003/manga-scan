@@ -13,7 +13,7 @@ from .background_fill import detected_spread_mask, fill_page_background
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
-from .finger_repair import repair_occluded_regions
+from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
@@ -394,6 +394,7 @@ def candidate_page_hand_mask(project, data, side, cfg):
 
 
 def _union_occlusion_masks(*masks):
+    """Return a 0/255 union mask while preserving the existing mask contract."""
     available = [mask for mask in masks if mask is not None]
     if not available:
         return None
@@ -411,6 +412,7 @@ def _union_occlusion_masks(*masks):
 
 
 def candidate_page_glare_mask(data, side, cfg):
+    """Detect glare in final page coordinates used by repair alignment."""
     if not cfg.glare_repair:
         return None
     return detect_glare_mask(data["sides"][side])
@@ -420,11 +422,11 @@ def _finger_donor_candidates(spread, side, selected_id):
     def rank(candidate):
         metrics = candidate.get("page_metrics", {}).get(side, candidate.get("metrics", {}))
         overlap = metrics.get("hand_overlap")
-        glare_overlap = float(metrics.get("glare_overlap", 0.0) or 0.0)
+        glare_overlap = float(metrics.get("glare_overlap", metrics.get("glare", 0.0)) or 0.0)
         return (
             1.0 if overlap is None else float(overlap),
             glare_overlap,
-            -float(metrics.get("score", 0.0)),
+            -float(metrics.get("selection_score", metrics.get("score", 0.0))),
         )
 
     return sorted(
@@ -634,10 +636,18 @@ def _render_whole_spread(project, manifest, spread, cfg):
             repair = {"status": "unavailable", "coverage": 0.0, "donors": []}
         else:
 
-            def donors():
-                records = sorted(
-                    spread["candidates"], key=lambda c: -c.get("metrics", {}).get("score", 0)
+            def donor_rank(record):
+                metrics = record.get("metrics", {})
+                overlap = metrics.get("hand_overlap")
+                glare = float(metrics.get("glare_overlap", metrics.get("glare", 0.0)) or 0.0)
+                return (
+                    1.0 if overlap is None else float(overlap),
+                    glare,
+                    -float(metrics.get("selection_score", metrics.get("score", 0.0))),
                 )
+
+            def donors():
+                records = sorted(spread["candidates"], key=donor_rank)
                 for record in records:
                     if record["id"] == chosen["id"]:
                         continue
@@ -649,7 +659,9 @@ def _render_whole_spread(project, manifest, spread, cfg):
                             "mask": donor["mask"],
                         }
 
-            page, repair, unresolved = repair_occluded_regions(
+            # repair_finger_regions is retained as the public compatibility name;
+            # internally it now delegates to the generalized occlusion engine.
+            page, repair, unresolved = repair_finger_regions(
                 page,
                 mask,
                 donors(),
@@ -979,7 +991,7 @@ def render_spread(project, manifest, spread):
                             "mask": donor_mask,
                         }
 
-                source_page, finger_repair, unresolved = repair_occluded_regions(
+                source_page, finger_repair, unresolved = repair_finger_regions(
                     source_page,
                     target_mask,
                     donor_pages(),
@@ -1257,10 +1269,60 @@ def run(project, roi=None):
                             "right_sharpness": records[-1]["page_metrics"]["right"]["sharpness"],
                             "left_hand_overlap": records[-1]["page_metrics"]["left"]["hand_overlap"],
                             "right_hand_overlap": records[-1]["page_metrics"]["right"]["hand_overlap"],
+                            "left_glare_overlap": records[-1]["page_metrics"]["left"].get(
+                                "glare_overlap", 0.0
+                            ),
+                            "right_glare_overlap": records[-1]["page_metrics"]["right"].get(
+                                "glare_overlap", 0.0
+                            ),
                         }
                     )
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
+
+                # Candidate scoring v2 is relative to this spread, so the values
+                # only exist after all candidates have been collected. Persist
+                # them back into candidate JSON and the debug CSV for inspection.
+                recent_rows = score_rows[-len(records):]
+                for record, row in zip(records, recent_rows):
+                    relative = record["metrics"].get("relative_quality", {})
+                    row.update(
+                        {
+                            "selection_score": record["metrics"].get("selection_score"),
+                            "relative_sharpness": relative.get("sharpness"),
+                            "relative_motion": relative.get("motion"),
+                            "relative_hand_overlap": relative.get("hand_overlap"),
+                            "relative_glare": relative.get("glare"),
+                            "relative_base_score": relative.get("base_score"),
+                            "glare": record["metrics"].get("glare"),
+                            "glare_overlap": record["metrics"].get("glare_overlap", 0.0),
+                            "sharpness_median": record["metrics"].get("sharpness_median"),
+                            "sharpness_p10": record["metrics"].get("sharpness_p10"),
+                            "sharpness_worst": record["metrics"].get("sharpness_worst"),
+                            "left_selection_score": record["page_metrics"]["left"].get(
+                                "selection_score"
+                            ),
+                            "right_selection_score": record["page_metrics"]["right"].get(
+                                "selection_score"
+                            ),
+                            "left_glare": record["page_metrics"]["left"].get("glare"),
+                            "right_glare": record["page_metrics"]["right"].get("glare"),
+                            "left_glare_overlap": record["page_metrics"]["left"].get(
+                                "glare_overlap", 0.0
+                            ),
+                            "right_glare_overlap": record["page_metrics"]["right"].get(
+                                "glare_overlap", 0.0
+                            ),
+                            "left_sharpness_p10": record["page_metrics"]["left"].get(
+                                "sharpness_p10"
+                            ),
+                            "right_sharpness_p10": record["page_metrics"]["right"].get(
+                                "sharpness_p10"
+                            ),
+                        }
+                    )
+                    write_json(project / Path(record["path"]).with_suffix(".json"), record)
+
                 spread = {
                     "id": spread_id,
                     "start": segment[0].time,
