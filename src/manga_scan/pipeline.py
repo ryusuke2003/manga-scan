@@ -1771,6 +1771,73 @@ def edit(project, action, **params):
             index = next(i for i, p in enumerate(manifest["pages"]) if p["id"] == params["page_id"])
             destination = max(0, min(len(manifest["pages"]) - 1, index + int(params["delta"])))
             manifest["pages"].insert(destination, manifest["pages"].pop(index))
+        elif action == "page_settings":
+            page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])
+            if page["side"] == "cover":
+                raise ValueError("Cover page overrides are not supported")
+            spread = next(s for s in manifest["spreads"] if s["id"] == page["spread_id"])
+            side = page["side"]
+            patch = params.get("settings")
+            if not isinstance(patch, dict) or not patch:
+                raise ValueError("Page settings must be a non-empty object")
+
+            allowed = {
+                "dewarp",
+                "illumination_correction",
+                "white_normalization",
+                "page_quad_mode",
+                "manual_quad",
+            }
+            unknown = set(patch) - allowed
+            if unknown:
+                raise ValueError(f"Unknown page settings: {sorted(unknown)}")
+
+            override = dict(_page_override(spread, side))
+            for name in ("dewarp", "illumination_correction", "white_normalization"):
+                if name not in patch:
+                    continue
+                if type(patch[name]) is not bool:
+                    raise ValueError(f"{name} must be a boolean")
+                if side == "spread" and name == "dewarp":
+                    raise ValueError("Dewarp is only available for split pages")
+                override[name] = patch[name]
+
+            if "manual_quad" in patch:
+                if side not in ("left", "right"):
+                    raise ValueError("Manual page contour is only available for split pages")
+                override["manual_quad"] = validate_roi(patch["manual_quad"]).tolist()
+
+            if "page_quad_mode" in patch:
+                mode = patch["page_quad_mode"]
+                if mode not in ("auto", "manual"):
+                    raise ValueError("page_quad_mode must be auto or manual")
+                if side not in ("left", "right"):
+                    raise ValueError("Page contour mode is only available for split pages")
+                if mode == "manual":
+                    quad = patch.get("manual_quad", override.get("manual_quad"))
+                    if quad is None:
+                        raise ValueError("manual page contour requires manual_quad")
+                    override["manual_quad"] = validate_roi(quad).tolist()
+                    override["page_quad_mode"] = "manual"
+                else:
+                    override.pop("manual_quad", None)
+                    override["page_quad_mode"] = "auto"
+
+            spread.setdefault("page_overrides", {})[side] = override
+            indices = [
+                i
+                for i, existing in enumerate(manifest["pages"])
+                if existing["spread_id"] == spread["id"]
+            ]
+            replacements = {
+                rendered["id"]: rendered
+                for rendered in render_spread(project, manifest, spread)
+            }
+            for index in indices:
+                old = manifest["pages"][index]
+                new = replacements[old["id"]]
+                new["enabled"] = old["enabled"]
+                manifest["pages"][index] = new
         elif action == "output_layout":
             layout = params["layout"]
             if layout not in ("spread", "split"):
