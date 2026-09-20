@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "description": "Initial real-camera manga benchmark. Media is intentionally local-only; Git stores only hashes and annotations.",
+  "videos": [
+    {
+      "id": "desk-landscape-6481",
+      "filename": "IMG_6481.mp4",
+      "sha256": "0fe83323cb0f49e9e4706176e36ad81a11d6e682c8d843396afdcf600e54a185",
+      "width": 910,
+      "height": 512,
+      "duration": 135.266667,
+      "expected_rotation": 0,
+      "samples": [
+        {
+          "id": "stable-right-hand",
+          "time": 46.2,
+          "expect_spread": true,
+          "spread_quad": [[0.322, 0.141], [0.811, 0.150], [0.939, 0.876], [0.226, 0.824]],
+          "min_reference_iou": 0.58,
+          "min_page_iou": 0.62,
+          "tags": ["landscape", "desk", "hand-right", "curved-gutter"]
+        },
+        {
+          "id": "stable-curved-gutter",
+          "time": 72.4,
+          "expect_spread": true,
+          "spread_quad": [[0.338, 0.133], [0.843, 0.117], [0.949, 0.867], [0.246, 0.836]],
+          "min_reference_iou": 0.58,
+          "min_page_iou": 0.62,
+          "tags": ["landscape", "desk", "hand-right", "curved-gutter"]
+        },
+        {
+          "id": "right-edge-clipped",
+          "time": 107.4,
+          "expect_spread": true,
+          "spread_quad": [[0.379, 0.108], [0.886, 0.198], [0.999, 0.892], [0.286, 0.822]],
+          "min_reference_iou": 0.52,
+          "min_page_iou": 0.55,
+          "tags": ["landscape", "desk", "hand-right", "touches-frame", "strong-curvature"]
+        }
+      ],
+      "repair_pairs": [
+        {
+          "id": "bottom-finger-vs-clean-donor",
+          "target_time": 48.5,
+          "donor_times": [45.0],
+          "spread_quad": [[0.322, 0.141], [0.811, 0.150], [0.939, 0.876], [0.226, 0.824]],
+          "min_target_mask_fraction": 0.001,
+          "min_donor_coverage": 0.20,
+          "tags": ["finger-repair", "moving-hand", "same-spread"]
+        }
+      ]
+    },
+    {
+      "id": "handheld-rotated-6474",
+      "filename": "IMG_6474.mp4",
+      "sha256": "577c4849958f33ca66308c533303f67f1426e56c13b0ccc1e46af1e5eec2de6e",
+      "width": 512,
+      "height": 910,
+      "duration": 62.2,
+      "expected_rotation": 270,
+      "samples": [
+        {
+          "id": "hands-both-tight",
+          "time": 19.8,
+          "expect_spread": true,
+          "spread_quad": [[0.142, 0.053], [0.814, 0.023], [0.820, 0.947], [0.187, 0.982]],
+          "min_reference_iou": 0.50,
+          "min_page_iou": 0.55,
+          "tags": ["rotation-270", "handheld", "hands-both", "tight-crop", "curvature"]
+        },
+        {
+          "id": "strong-gutter-curve",
+          "time": 44.4,
+          "expect_spread": true,
+          "spread_quad": [[0.145, 0.008], [0.786, 0.010], [0.802, 0.958], [0.155, 0.967]],
+          "min_reference_iou": 0.48,
+          "min_page_iou": 0.52,
+          "tags": ["rotation-270", "handheld", "hands-both", "tight-crop", "strong-curvature"]
+        },
+        {
+          "id": "stable-full-spread",
+          "time": 60.6,
+          "expect_spread": true,
+          "spread_quad": [[0.216, 0.029], [0.849, 0.027], [0.855, 0.955], [0.216, 0.971]],
+          "min_reference_iou": 0.55,
+          "min_page_iou": 0.60,
+          "tags": ["rotation-270", "handheld", "hands-both", "tight-crop"]
+        }
+      ]
+    },
+    {
+      "id": "desk-portrait-6479",
+      "filename": "IMG_6479.mp4",
+      "sha256": "561ca857b219df60fb14f86c41595195fd38cde4c85de86ca84feb2a729933b1",
+      "width": 512,
+      "height": 910,
+      "duration": 60.366667,
+      "expected_rotation": 0,
+      "samples": [
+        {
+          "id": "cover-negative",
+          "time": 1.6,
+          "expect_spread": false,
+          "tags": ["cover", "negative-reference"]
+        },
+        {
+          "id": "desk-stable-spread",
+          "time": 33.4,
+          "expect_spread": true,
+          "spread_quad": [[0.151, 0.355], [0.889, 0.359], [0.896, 0.755], [0.033, 0.728]],
+          "min_reference_iou": 0.58,
+          "min_page_iou": 0.62,
+          "tags": ["portrait", "desk", "hand-right", "mild-curvature"]
+        },
+        {
+          "id": "heavy-hand-occlusion",
+          "time": 42.0,
+          "expect_spread": true,
+          "spread_quad": [[0.158, 0.344], [0.916, 0.355], [0.924, 0.753], [0.068, 0.720]],
+          "min_reference_iou": 0.50,
+          "min_page_iou": 0.55,
+          "tags": ["portrait", "desk", "heavy-hand-occlusion", "curved-gutter"]
+        },
+        {
+          "id": "hands-both-curved",
+          "time": 57.0,
+          "expect_spread": true,
+          "spread_quad": [[0.184, 0.342], [0.942, 0.353], [0.932, 0.747], [0.084, 0.713]],
+          "min_reference_iou": 0.52,
+          "min_page_iou": 0.56,
+          "tags": ["portrait", "desk", "hands-both", "curvature"]
+        }
+      ],
+      "repair_pairs": [
+        {
+          "id": "large-center-hand-vs-clean-donor",
+          "target_time": 42.0,
+          "donor_times": [43.0],
+          "spread_quad": [[0.158, 0.344], [0.916, 0.355], [0.924, 0.753], [0.068, 0.720]],
+          "min_target_mask_fraction": 0.003,
+          "min_donor_coverage": 0.20,
+          "tags": ["finger-repair", "heavy-hand-occlusion", "same-spread"]
+        }
+      ]
+    }
+  ]
+}
