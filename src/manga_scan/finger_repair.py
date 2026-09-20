@@ -35,6 +35,22 @@ def _alignment_scale(shape):
     return min(1.0, _MAX_ALIGNMENT_SIDE / max(height, width))
 
 
+def _global_alignment_residual(target_gray, donor_gray, target_mask, donor_mask):
+    blocked = (
+        _binary_mask(target_mask, target_gray.shape)
+        | _binary_mask(donor_mask, target_gray.shape)
+    ).astype(np.uint8)
+    kernel = np.ones((5, 5), np.uint8)
+    clean = cv2.dilate(blocked, kernel, iterations=1) == 0
+    if np.count_nonzero(clean) < clean.size * 0.2:
+        return None
+    delta = np.abs(
+        target_gray[clean].astype(np.float32)
+        - donor_gray[clean].astype(np.float32)
+    )
+    return float(np.mean(delta) / 255.0)
+
+
 def align_donor_page(target, donor, donor_mask, target_mask):
     """Align a donor page to the selected page using only existing image content."""
     if not isinstance(target, np.ndarray) or not isinstance(donor, np.ndarray):
@@ -151,6 +167,33 @@ def align_donor_page(target, donor, donor_mask, target_mask):
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=255,
     )
+
+    # ECC can occasionally find a small but unnecessary warp when masked
+    # regions differ. Prefer the unwarped donor unless the proposed global
+    # transform actually improves clean-pixel agreement. This lets a genuine
+    # page shift move the donor mask with the page without using a raw mask in
+    # target coordinates as a safety backstop.
+    identity_residual = _global_alignment_residual(
+        target_gray,
+        donor_gray,
+        target_mask,
+        donor_mask,
+    )
+    aligned_residual = _global_alignment_residual(
+        target_gray,
+        _gray(aligned),
+        target_mask,
+        aligned_mask,
+    )
+    if (
+        identity_residual is not None
+        and (
+            aligned_residual is None
+            or identity_residual <= aligned_residual + 0.002
+        )
+    ):
+        return donor, (donor_mask * 255).astype(np.uint8), float(score)
+
     return aligned, aligned_mask, float(score)
 
 
