@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from manga_scan.cover_detect import detect_cover_quad
+from manga_scan.cover_detect import _boundary_line_count, detect_cover_quad
 
 
 def test_detect_cover_quad_finds_book_outline():
@@ -30,3 +30,18 @@ def test_detect_cover_quad_rejects_blank_frame():
         "confidence": 0.0,
         "roi": None,
     }
+
+
+def test_cover_boundary_penalty_counts_candidate_sides_not_all_corners():
+    width, height = 1000, 800
+    frame = np.asarray(
+        [[0, 0], [999, 0], [999, 799], [0, 799]],
+        dtype=np.float32,
+    )
+    inset = np.asarray(
+        [[100, 80], [900, 80], [900, 720], [100, 720]],
+        dtype=np.float32,
+    )
+
+    assert _boundary_line_count(frame, width, height) == 4
+    assert _boundary_line_count(inset, width, height) == 0
