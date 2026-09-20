@@ -16,6 +16,7 @@ def composite_score(metrics, config):
         config.sharpness_weight * math.log1p(metrics["sharpness"]) / 8
         - config.motion_weight * min(1, metrics["motion"] / config.turn_threshold)
         - config.hand_overlap_weight * (metrics["hand_overlap"] or 0)
+        - config.glare_overlap_weight * float(metrics.get("glare_overlap", 0.0) or 0.0)
         - config.distortion_weight * metrics["distortion"]
         - config.flatness_weight * metrics["flatness_proxy"]
         - config.clipping_weight * metrics["clipping"]
@@ -23,7 +24,7 @@ def composite_score(metrics, config):
     )
 
 
-def score_frame(image, roi, motion, hand_overlap, config):
+def score_frame(image, roi, motion, hand_overlap, config, glare_overlap=0.0):
     cropped = warp_roi(image, roi)
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
     distortion, flatness = geometry_penalties(roi, image.shape)
@@ -34,6 +35,7 @@ def score_frame(image, roi, motion, hand_overlap, config):
         "sharpness": sharpness(cropped),
         "motion": float(motion),
         "hand_overlap": hand_overlap,
+        "glare_overlap": float(glare_overlap),
         "distortion": distortion,
         "flatness_proxy": flatness,
         "clipping": clipping,
@@ -51,6 +53,8 @@ def suspect_reasons(metrics, config, quad_ok=True):
         reasons.append("hand_detection_disabled")
     elif metrics["hand_overlap"] > config.suspect_hand_overlap:
         reasons.append("hand_overlap")
+    if float(metrics.get("glare_overlap", 0.0) or 0.0) > config.suspect_glare_overlap:
+        reasons.append("glare_overlap")
     if metrics["motion"] > config.motion_threshold:
         reasons.append("high_motion")
     if metrics["distortion"] > 0.25 or not quad_ok:
