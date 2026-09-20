@@ -125,6 +125,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     disabled = Config.from_dict({"hand_backend": "none"})
     assert disabled.hand_backend == "none"
     assert disabled.finger_repair is False
+    assert disabled.page_background_fill == "preserve"
 
 
 def test_dedupe_identical_changed_and_blank():
