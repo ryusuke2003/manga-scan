@@ -14,6 +14,7 @@ from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
 from .finger_repair import repair_finger_regions
+from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_quality_checks
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
@@ -324,6 +325,16 @@ def render_cover(project, manifest):
         illumination_correction=cfg.illumination_correction,
         illumination_strength=cfg.illumination_strength,
     )
+    final_quality = final_quality_checks(
+        page_image,
+        before_enhance=rotate_image(rectified, cfg.rotation),
+        dewarp={
+            "mode": "manual" if manual_dewarp else "off",
+            "applied": bool(manual_dewarp),
+            "strength": manual_dewarp,
+        },
+        white_normalization=cfg.white_normalization,
+    )
     ext = "png" if cfg.image_format == "png" else "jpg"
     path = f"pages/cover.{ext}"
     save_image(project / path, page_image, cfg.jpeg_quality)
@@ -340,7 +351,8 @@ def render_cover(project, manifest):
         "path": path,
         "preview": preview,
         "enabled": True,
-        "suspect": [],
+        "suspect": final_quality["reasons"],
+        "final_quality": final_quality,
     }
 
 
@@ -847,6 +859,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
         save_image(project / background_fill["mask"], background_mask)
 
     # Single-page spine dewarping would distort the middle of a full spread.
+    qa_before_enhance = page.copy()
     page = enhance_page(
         page,
         grayscale=cfg.grayscale,
@@ -856,6 +869,16 @@ def _render_whole_spread(project, manifest, spread, cfg):
         white_normalization=cfg.white_normalization,
         white_target=cfg.white_target,
         white_strength=cfg.white_strength,
+    )
+    background_fill_area = None
+    if background_fill.get("applied") and background_mask is not None:
+        background_fill_area = float(np.mean(background_mask <= 127))
+    final_quality = final_quality_checks(
+        page,
+        before_enhance=qa_before_enhance,
+        finger_repair=repair,
+        background_fill_fraction=background_fill_area,
+        white_normalization=cfg.white_normalization,
     )
     ext = "png" if cfg.image_format == "png" else "jpg"
     path = f"pages/{spread['id']}_whole.{ext}"
@@ -899,7 +922,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
         suspect.append("occlusion_repair_incomplete")
         if cfg.finger_repair:
             suspect.append("finger_repair_incomplete")
-    suspect = list(dict.fromkeys(suspect))
+    suspect = list(dict.fromkeys(suspect + final_quality["reasons"]))
     spread["suspect"] = suspect
     manifest["pdf_stale"] = True
     return [
@@ -916,6 +939,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
             "suspect": suspect,
             "finger_repair": repair,
             "background_fill": background_fill,
+            "final_quality": final_quality,
             "crop": spread["whole_spread_crop"],
             "dewarp": {"mode": "off", "status": "off", "applied": False},
         }
@@ -1168,6 +1192,7 @@ def render_spread(project, manifest, spread):
 
         dewarp = {"mode": cfg.dewarp_mode, "applied": False, "status": "off"}
         manual_dewarp = 0.0
+        qa_before_dewarp = None
         if cfg.dewarp_mode == "manual":
             manual_dewarp = cfg.dewarp_strength
             dewarp.update(
@@ -1175,6 +1200,19 @@ def render_spread(project, manifest, spread):
                 status="applied" if manual_dewarp else "off",
                 strength=manual_dewarp,
             )
+            if manual_dewarp:
+                qa_before_dewarp = enhance_page(
+                    source_page,
+                    grayscale=cfg.grayscale,
+                    contrast=cfg.contrast,
+                    rotation=0,
+                    dewarp_strength=0.0,
+                    white_normalization=cfg.white_normalization,
+                    white_target=cfg.white_target,
+                    white_strength=cfg.white_strength,
+                    illumination_correction=cfg.illumination_correction,
+                    illumination_strength=cfg.illumination_strength,
+                )
         elif cfg.dewarp_mode == "auto":
             if side in disabled_sides:
                 dewarp.update(status="disabled")
@@ -1193,6 +1231,7 @@ def render_spread(project, manifest, spread):
                     illumination_strength=cfg.illumination_strength,
                 )
                 save_image(project / before, before_image)
+                qa_before_dewarp = before_image
                 corrected, estimate = auto_dewarp_page(
                     source_page,
                     side,
@@ -1215,6 +1254,7 @@ def render_spread(project, manifest, spread):
                     )
                     dewarp["debug_grid"] = grid
 
+        qa_before_enhance = source_page.copy()
         page_image = enhance_page(
             source_page,
             grayscale=cfg.grayscale,
@@ -1226,6 +1266,14 @@ def render_spread(project, manifest, spread):
             white_strength=cfg.white_strength,
             illumination_correction=cfg.illumination_correction,
             illumination_strength=cfg.illumination_strength,
+        )
+        final_quality = final_quality_checks(
+            page_image,
+            before_enhance=qa_before_enhance,
+            before_dewarp=qa_before_dewarp,
+            dewarp=dewarp,
+            finger_repair=finger_repair,
+            white_normalization=cfg.white_normalization,
         )
         name = f"pages/{spread['id']}_{side}.{ext}"
         save_image(project / name, page_image, cfg.jpeg_quality)
@@ -1255,6 +1303,7 @@ def render_spread(project, manifest, spread):
             page_suspect.append("occlusion_repair_incomplete")
             if cfg.finger_repair:
                 page_suspect.append("finger_repair_incomplete")
+        page_suspect.extend(final_quality["reasons"])
         pages.append(
             {
                 "id": f"{spread['id']}_{side}",
@@ -1269,6 +1318,7 @@ def render_spread(project, manifest, spread):
                 "suspect": list(dict.fromkeys(page_suspect)),
                 "finger_repair": finger_repair,
                 "dewarp": dewarp,
+                "final_quality": final_quality,
             }
         )
     if cfg.finger_repair:
@@ -1288,8 +1338,53 @@ def render_spread(project, manifest, spread):
     return pages
 
 
+def _refresh_adjacent_final_quality(project, manifest, cfg):
+    """Refresh review-only duplicate warnings for the current enabled page order."""
+    reason = "final_duplicate_suspected"
+    if reason not in FINAL_QUALITY_REASONS:
+        raise RuntimeError("final quality reason registry is incomplete")
+
+    for page in manifest.get("pages", []):
+        page["suspect"] = [item for item in page.get("suspect", []) if item != reason]
+        quality = page.get("final_quality")
+        if quality:
+            quality["reasons"] = [
+                item for item in quality.get("reasons", []) if item != reason
+            ]
+            quality.pop("adjacent_duplicate", None)
+
+    previous = None
+    previous_image = None
+    for page in (item for item in manifest.get("pages", []) if item.get("enabled")):
+        image = cv2.imread(str(project / page["path"]), cv2.IMREAD_COLOR)
+        if image is None:
+            previous = None
+            previous_image = None
+            continue
+        if previous is not None and previous_image is not None:
+            result = adjacent_quality_check(previous_image, image, cfg)
+            if result["suspect"]:
+                quality = page.setdefault(
+                    "final_quality",
+                    {"reasons": [], "metrics": {}},
+                )
+                quality["reasons"] = list(
+                    dict.fromkeys(quality.get("reasons", []) + [reason])
+                )
+                quality["adjacent_duplicate"] = {
+                    **result,
+                    "other_page_id": previous["id"],
+                }
+                page["suspect"] = list(
+                    dict.fromkeys(page.get("suspect", []) + [reason])
+                )
+        previous = page
+        previous_image = image
+
+
 def build_pdf(project, manifest):
     cfg = Config.from_dict(manifest["config"])
+    _refresh_adjacent_final_quality(project, manifest, cfg)
     paths = [project / p["path"] for p in manifest["pages"] if p["enabled"]]
     export_pdf(paths, project / "output/manga.pdf", cfg.pdf_dpi, cfg.image_format, cfg.jpeg_quality)
     manifest["pdf_stale"] = False
@@ -1693,5 +1788,6 @@ def edit(project, action, **params):
         else:
             raise ValueError("Unknown review action")
         manifest["pdf_stale"] = True
+        _refresh_adjacent_final_quality(project, manifest, cfg)
         save_manifest(project, manifest)
         return manifest
