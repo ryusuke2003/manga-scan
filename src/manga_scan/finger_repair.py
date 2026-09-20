@@ -218,9 +218,17 @@ def conceal_unresolved_fingers(image, unresolved_mask, mode="paper"):
 
         component = labels == label
         component_u8 = component.astype(np.uint8) * 255
-        ring = cv2.dilate(component_u8, kernel, iterations=1) > 0
-        ring &= ~component
-        ring &= ~unresolved
+        outer = cv2.dilate(component_u8, kernel, iterations=1) > 0
+        # Ignore the immediate mask boundary. Canny naturally sees the
+        # finger/paper transition there, but that edge says nothing about
+        # whether the surrounding page itself contains artwork or text.
+        inner_radius = max(2, radius // 3)
+        inner_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (inner_radius * 2 + 1, inner_radius * 2 + 1),
+        )
+        near_mask = cv2.dilate(component_u8, inner_kernel, iterations=1) > 0
+        ring = outer & ~near_mask & ~unresolved
         ring_pixels = int(np.count_nonzero(ring))
         if ring_pixels < max(24, round(area * 0.12)):
             continue
