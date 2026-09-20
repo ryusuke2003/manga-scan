@@ -18,6 +18,7 @@ export default function App() {
   const editingCoverCrop = coverStatus === 'frame_selected' && Boolean(cover?.roi);
   // Version 1 projects did not have setup stages; keep their original first-frame flow.
   const referenceConfirmed = reference?.confirmed ?? true;
+  const referenceDetected = Boolean(reference?.detection?.detected && manifest?.roi);
   const canConfigure = manifest && manifest.status !== 'complete'
     && !(manifest.status === 'processing' && busy);
 
@@ -82,10 +83,12 @@ export default function App() {
       metadata={manifest.metadata}
       busy={busy}
       onStart={scanner.start}
-      step={`${coverHadManualCrop ? '05' : '04'} / 見開きを囲む`}
-      title="見開きの外周を4点で指定"
-      description="左上 → 右上 → 右下 → 左下 の順にクリック。ここで指定した見開きサイズを以後の解析基準にします。"
-      actionLabel="抽出を開始 →"
+      step={`${coverHadManualCrop ? '05' : '04'} / 見開き外周`}
+      title={referenceDetected ? '自動検出した見開き外周を確認' : '見開きの外周を4点で指定'}
+      description={referenceDetected
+        ? `左右ページから外周を自動検出しました · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。合っていればそのまま抽出を開始してください。ずれている場合だけ「やり直す」から4点を指定し直せます。`
+        : '外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。'}
+      actionLabel={referenceDetected ? 'この範囲で抽出開始 →' : '抽出を開始 →'}
     />;
   }
   return <>
