@@ -121,3 +121,29 @@ def test_dewarp_regression_warns_when_straight_structure_is_destroyed():
     )
 
     assert "final_dewarp_line_regression" in quality["reasons"]
+
+
+
+def test_glare_only_incomplete_repair_is_not_labeled_as_finger():
+    image = manga_page()
+    repair = {
+        "status": "incomplete",
+        "unresolved_mask": "debug/unresolved.png",
+        "occlusion_kinds": ["glare"],
+        "components": [
+            {
+                "component_id": 1,
+                "donors": [
+                    {
+                        "candidate_id": 2,
+                        "context_residual": 0.16,
+                    }
+                ],
+            }
+        ],
+    }
+
+    quality = final_quality_checks(image, finger_repair=repair)
+
+    assert "final_unresolved_finger" not in quality["reasons"]
+    assert "final_finger_repair_residual" not in quality["reasons"]
