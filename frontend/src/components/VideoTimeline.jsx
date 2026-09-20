@@ -1,6 +1,7 @@
 import {
   detectMissingPageCandidates,
   formatTimelineTime,
+  pageTurnMissingCandidates,
   spreadTime,
   timelinePercent,
 } from '../timeline.js';
@@ -10,7 +11,9 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
   const spreads = [...(manifest.spreads || [])]
     .filter(spread => Number.isFinite(spread.start))
     .sort((a, b) => a.start - b.start);
-  const missing = detectMissingPageCandidates(spreads);
+  const pageTurnMissing = pageTurnMissingCandidates(manifest.page_turn_analysis);
+  const missing = pageTurnMissing ?? detectMissingPageCandidates(spreads);
+  const usingPageTurns = pageTurnMissing !== null;
 
   return <section className="panel timeline-panel">
     <div className="timeline-head">
@@ -23,7 +26,9 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
       </span>
     </div>
     <p className="muted">
-      見開きの検出間隔が普段より長い箇所を候補として表示します。ページ番号を認識しているわけではないため、追加前に元動画を確認してください。
+      {usingPageTurns
+        ? 'ページめくりイベントの間に採用可能な安定区間が無かった箇所を候補として表示します。候補時刻は、その区間で最も動きが小さかった瞬間です。追加前に元動画を確認してください。'
+        : '見開きの検出間隔が普段より長い箇所を候補として表示します。ページ番号を認識しているわけではないため、追加前に元動画を確認してください。'}
     </p>
 
     <div className="video-timeline" aria-label="動画タイムライン">
@@ -64,7 +69,9 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
         <div>
           <strong>{candidate.time.toFixed(2)}s</strong>
           <span>
-            {candidate.before} → {candidate.after} の間が通常の約 {candidate.gapRatio.toFixed(1)} 倍
+            {candidate.source === 'page_turn_v2'
+              ? `${candidate.leftTurn || 'ページめくり'} → ${candidate.rightTurn || 'ページめくり'} の間に安定区間なし`
+              : `${candidate.before} → ${candidate.after} の間が通常の約 ${candidate.gapRatio.toFixed(1)} 倍`}
           </span>
         </div>
         <button
@@ -75,6 +82,8 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
           この時刻を追加欄へ
         </button>
       </div>)}
-    </div> : <p className="timeline-empty">大きな時間間隔の欠落候補は見つかりませんでした。</p>}
+    </div> : <p className="timeline-empty">{usingPageTurns
+      ? 'ページめくりイベントから欠落候補は見つかりませんでした。'
+      : '大きな時間間隔の欠落候補は見つかりませんでした。'}</p>}
   </section>;
 }
