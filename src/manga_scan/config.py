@@ -38,6 +38,8 @@ class Config:
     contrast: float = 1.0
     rotation: int = 0
     dewarp_strength: float = 0.0
+    illumination_correction: bool = False
+    illumination_strength: float = 0.7
     pdf_dpi: int = 300
     hwaccel: str = "none"
     save_lowres: bool = False
@@ -84,6 +86,7 @@ class Config:
             "quad_max_shift": (0, 0.1),
             "hand_padding": (0, 0.1),
             "dewarp_strength": (0, 0.6),
+            "illumination_strength": (0, 1),
             "contrast": (0.5, 2),
             "suspect_sharpness": (0, 100000),
             "suspect_hand_overlap": (0, 1),
