@@ -139,6 +139,9 @@ class Config:
 
     @classmethod
     def from_dict(cls, data):
+        data = dict(data)
+        if data.get("hand_backend") == "none" and "finger_repair" not in data:
+            data["finger_repair"] = False
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown settings: {sorted(unknown)}")
