@@ -135,6 +135,8 @@ def create_app(projects, config=None):
         try:
             project = project_path(name)
             shutil.rmtree(project)
+            if job["project"] == name:
+                job.update(project=None, error=None)
             return jsonify(deleted=name)
         finally:
             guard.release()
