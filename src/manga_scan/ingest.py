@@ -109,6 +109,16 @@ def _setup_time(manifest, value):
     return timestamp
 
 
+def _detect_cover_for_rotation(image, rotation):
+    displayed = rotate_image(image, rotation)
+    detection = detect_cover_quad(displayed)
+    detection["source"] = "auto"
+    if detection["detected"]:
+        roi = rotate_roi(detection["roi"], (-rotation) % 360).tolist()
+        return detection, roi, "ready"
+    return detection, None, "frame_selected"
+
+
 def set_setup_frame(project, kind, time, confirm=False):
     if kind not in ("cover", "reference"):
         raise ValueError("Unknown setup frame kind")
@@ -131,14 +141,7 @@ def set_setup_frame(project, kind, time, confirm=False):
             roi = None
             status = "pending"
             if confirm:
-                displayed = rotate_image(image, cfg.rotation)
-                detection = detect_cover_quad(displayed)
-                detection["source"] = "auto"
-                if detection["detected"]:
-                    roi = rotate_roi(detection["roi"], (-cfg.rotation) % 360).tolist()
-                    status = "ready"
-                else:
-                    status = "frame_selected"
+                detection, roi, status = _detect_cover_for_rotation(image, cfg.rotation)
             cover.update(
                 status=status,
                 time=timestamp,
@@ -214,20 +217,15 @@ def _refresh_auto_cover_detection(project, manifest, cfg):
     if frame is None:
         return
 
-    detected = detect_cover_quad(rotate_image(frame, cfg.rotation))
-    detected["source"] = "auto"
+    detected, roi, status = _detect_cover_for_rotation(frame, cfg.rotation)
     cover["detection"] = detected
-    if detected["detected"]:
-        cover["roi"] = rotate_roi(
-            detected["roi"],
-            (-cfg.rotation) % 360,
-        ).tolist()
-        cover["status"] = "ready"
-        manifest["message"] = "基準にする見開きフレームを選んでください"
-    else:
-        cover["roi"] = None
-        cover["status"] = "frame_selected"
-        manifest["message"] = "表紙の外周を自動検出できませんでした。4点で指定してください"
+    cover["roi"] = roi
+    cover["status"] = status
+    manifest["message"] = (
+        "基準にする見開きフレームを選んでください"
+        if status == "ready"
+        else "表紙の外周を自動検出できませんでした。4点で指定してください"
+    )
 
 
 def set_rotation(project, rotation):
