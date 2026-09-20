@@ -5,7 +5,17 @@ export function normalizedPoint(clientX, clientY, bounds) {
   return [clamp((clientX - bounds.left) / bounds.width), clamp((clientY - bounds.top) / bounds.height)];
 }
 
-export default function RoiSelector({ imageUrl, initialPoints, metadata, busy, onStart }) {
+export default function RoiSelector({
+  imageUrl,
+  initialPoints,
+  metadata,
+  busy,
+  onStart,
+  step = '02 / 見開きを囲む',
+  title = '漫画の外周を4点で指定',
+  description = '左上 → 右上 → 右下 → 左下 の順にクリック。机が入らないよう、紙の外周に合わせてください。',
+  actionLabel = '抽出を開始 →',
+}) {
   const [points, setPoints] = useState(() => initialPoints || []);
   const [image, setImage] = useState(null);
   const [imageError, setImageError] = useState(false);
@@ -40,8 +50,8 @@ export default function RoiSelector({ imageUrl, initialPoints, metadata, busy, o
   }, [image, points]);
 
   return <section className="panel">
-    <p className="step">02 / 見開きを囲む</p><h2>漫画の外周を4点で指定</h2>
-    <p className="muted">左上 → 右上 → 右下 → 左下 の順にクリック。机が入らないよう、紙の外周に合わせてください。</p>
+    <p className="step">{step}</p><h2>{title}</h2>
+    <p className="muted">{description}</p>
     {imageError && <p role="alert">最初のフレームを読み込めませんでした。プロジェクトを開き直してください。</p>}
     <div className="canvas-wrap"><canvas ref={canvas} aria-label="見開きの四隅を指定" onClick={event => {
       if (busy || !image || points.length >= 4) return;
@@ -50,7 +60,7 @@ export default function RoiSelector({ imageUrl, initialPoints, metadata, busy, o
     }} /></div>
     <div className="row"><p id="roi-count">{points.length} / 4 点</p>
       <button disabled={busy} onClick={() => setPoints([])}>やり直す</button>
-      <button className="primary" disabled={busy || points.length !== 4 || !image || imageError} onClick={() => onStart(points)}>抽出を開始 →</button></div>
+      <button className="primary" disabled={busy || points.length !== 4 || !image || imageError} onClick={() => onStart(points)}>{actionLabel}</button></div>
     <p className="muted">{metadata.display_width} × {metadata.display_height} · {metadata.fps.toFixed(2)} fps · {metadata.duration.toFixed(1)} 秒 · {metadata.codec}</p>
   </section>;
 }
