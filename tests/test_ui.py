@@ -40,3 +40,26 @@ def test_missing_file_in_existing_project_returns_404(tmp_path):
 
     client = create_app(tmp_path).test_client()
     assert client.get("/files/scan-test/pages/missing.png").status_code == 404
+
+
+def test_delete_project_requires_token_and_removes_project(tmp_path):
+    project = tmp_path / "scan-delete"
+    (project / "pages").mkdir(parents=True)
+    (project / "manifest.json").write_text(
+        '{"source": "/tmp/book.mp4", "status": "complete", "pages": []}\n'
+    )
+    (project / "pages/page.png").write_bytes(b"page")
+
+    client = create_app(tmp_path).test_client()
+    assert client.post("/api/projects/scan-delete/delete", json={}).status_code == 403
+
+    token = client.get("/api/state").json["token"]
+    response = client.post(
+        "/api/projects/scan-delete/delete",
+        json={},
+        headers={"X-Manga-Token": token},
+    )
+    assert response.status_code == 200
+    assert response.json == {"deleted": "scan-delete"}
+    assert not project.exists()
+    assert client.get("/api/projects/scan-delete").status_code == 404
