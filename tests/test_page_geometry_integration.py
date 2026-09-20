@@ -3,9 +3,9 @@ import numpy as np
 import pytest
 
 from manga_scan.config import Config
-from manga_scan.perspective import warp_roi
-from manga_scan.pipeline import rectify_spread_pages
-from manga_scan.split import split_spread
+from manga_scan.perspective import rotate_roi, warp_roi
+from manga_scan.pipeline import rectify_spread_pages, render_spread
+from manga_scan.split import rotate_image, split_spread
 
 REFERENCE = [[0.05, 0.07], [0.96, 0.07], [0.96, 0.94], [0.05, 0.94]]
 LEFT = np.asarray([[90, 70], [490, 90], [470, 540], [70, 520]], dtype=np.float32)
@@ -42,6 +42,67 @@ def test_per_page_mode_connects_contour_detection_to_independent_warp(tmp_path):
     assert min(sides["left"].shape[:2]) > 100
     assert min(sides["right"].shape[:2]) > 100
     assert (tmp_path / spread["page_contour_debug"]).is_file()
+
+
+@pytest.mark.parametrize("rotation", [180, 270])
+def test_render_spread_rotated_per_page_integration(tmp_path, monkeypatch, rotation):
+    upright = synthetic_spread()
+    inverse_rotation = (360 - rotation) % 360
+    source = rotate_image(upright, inverse_rotation)
+    source_roi = rotate_roi(REFERENCE, inverse_rotation).tolist()
+    cfg = Config(
+        hand_backend="none",
+        perspective_mode="per_page",
+        page_contour_min_confidence=0.5,
+        rotation=rotation,
+        reading_order="ltr",
+        image_format="png",
+    )
+    manifest = {
+        "source": "unused.mp4",
+        "config": cfg.to_dict(),
+        "pdf_stale": False,
+    }
+    spread = {
+        "id": f"spread_rot_{rotation}",
+        "candidates": [
+            {
+                "id": 0,
+                "time": 1.0,
+                "roi": source_roi,
+                "metrics": {"score": 1.0},
+                "page_suspect": {"left": [], "right": []},
+                "suspect": [],
+            }
+        ],
+        "selected": 0,
+        "selected_pages": {"left": 0, "right": 0},
+        "extra_suspect": [],
+    }
+
+    monkeypatch.setattr(
+        "manga_scan.pipeline.extract_frame",
+        lambda *_args, **_kwargs: source.copy(),
+    )
+
+    pages = render_spread(tmp_path, manifest, spread)
+
+    assert spread["perspective_mode_used"] == "per_page"
+    assert spread["page_contours"]["detected"]
+    assert spread["page_contours"]["left"]["detected"]
+    assert spread["page_contours"]["right"]["detected"]
+    assert "page_contour_low_confidence" not in spread["extra_suspect"]
+
+    by_side = {page["side"]: page for page in pages}
+    assert set(by_side) == {"left", "right"}
+    for side in ("left", "right"):
+        output = cv2.imread(str(tmp_path / by_side[side]["path"]))
+        assert output is not None
+        assert min(output.shape[:2]) > 100
+        assert by_side[side]["candidate_id"] == 0
+
+    assert (tmp_path / spread["page_contour_debug"]).is_file()
+    assert manifest["pdf_stale"]
 
 
 def test_low_confidence_contours_fall_back_to_legacy_spread_split(tmp_path):
