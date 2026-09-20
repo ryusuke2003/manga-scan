@@ -13,6 +13,7 @@ def _coarse_spread_priors():
     """Conservative full-frame priors for open books whose outer edge is obscured."""
     return [
         np.asarray([[0.04, 0.03], [0.86, 0.03], [0.86, 0.97], [0.04, 0.97]], np.float32),
+        np.asarray([[0.04, 0.03], [0.96, 0.03], [0.96, 0.97], [0.04, 0.97]], np.float32),
         np.asarray([[0.09, 0.03], [0.91, 0.03], [0.91, 0.97], [0.09, 0.97]], np.float32),
         np.asarray([[0.14, 0.03], [0.96, 0.03], [0.96, 0.97], [0.14, 0.97]], np.float32),
         np.asarray([[0.15, 0.06], [0.85, 0.06], [0.85, 0.94], [0.15, 0.94]], np.float32),
@@ -118,7 +119,6 @@ def detect_reference_spread(image, min_confidence=0.55):
         working,
         _coarse_spread_priors(),
         min_confidence,
-        confidence_scale=0.94,
     )
     if coarse_success is not None:
         confidence, roi, pages = coarse_success
@@ -134,13 +134,14 @@ def detect_reference_spread(image, min_confidence=0.55):
 
     failures = [failure for failure in (best_failure, coarse_failure) if failure is not None]
     confidence, pages = max(failures, key=lambda item: item[0]) if failures else (0.0, None)
+    coarse_evidence = coarse_failure is not None and coarse_failure[0] > 0
     return {
         "detected": False,
         "confidence": round(max(float(outline.get("confidence", 0.0)), float(confidence)), 4),
         "roi": None,
         "outline": outline,
         "pages": pages,
-        "stage": "pages" if pages is not None else "outline",
+        "stage": "pages" if outline["detected"] or coarse_evidence else "outline",
         "source": None,
     }
 
