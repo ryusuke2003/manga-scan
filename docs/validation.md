@@ -24,7 +24,8 @@ OpenCV 4.14.0、MediaPipe 0.10.35。依存の全バージョンは
 - localhost UIのHost制限、Origin検査、変更操作のtoken、静的配信。
 
 `ruff check src tests scripts`、Python compileall、JavaScript `node --check` も成功。
-GitHub Actions設定は追加済みですが、GitHubへのpush・CI実行はまだ行っていません。
+React/Viteは `npm --prefix frontend test` と `npm --prefix frontend run build` をCIで検証しています。
+GitHub Actionsのmain run #26では、macOS / Ubuntu × Python 3.12 / 3.14 の4ジョブがすべて成功しました。
 
 ## M5上のローカル実行
 
