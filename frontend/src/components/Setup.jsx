@@ -8,6 +8,7 @@ const FALLBACK_CONFIG = {
   hand_backend: 'mediapipe',
   finger_repair: true,
   finger_repair_fallback: 'paper',
+  page_background_fill: 'paper',
   candidate_selection_mode: 'spread',
   grayscale: false,
   rotation: 0,
@@ -38,6 +39,7 @@ export const CORRECTION_PRESETS = {
       dewarp_mode: 'off',
       illumination_correction: false,
       white_normalization: false,
+      page_background_fill: 'preserve',
     },
   },
   standard: {
@@ -54,6 +56,7 @@ export const CORRECTION_PRESETS = {
       illumination_correction: true,
       illumination_strength: 0.6,
       white_normalization: false,
+      page_background_fill: 'preserve',
     },
   },
   scan: {
@@ -72,6 +75,7 @@ export const CORRECTION_PRESETS = {
       white_normalization: true,
       white_target: 245,
       white_strength: 0.6,
+      page_background_fill: 'paper',
     },
   },
 };
@@ -196,6 +200,7 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
           </>}
           <label className="setting-check"><input type="checkbox" checked={config.illumination_correction} onChange={event => change('illumination_correction', event.target.checked)} /><span><strong>照明ムラ・影を補正</strong><small>低周波の明るさムラだけを均します。</small></span></label>
           {config.illumination_correction && <label>照明補正の強度<input type="number" min="0" max="1" step="0.05" value={config.illumination_strength} onChange={event => change('illumination_strength', Number(event.target.value))} /></label>}
+          <label>ページ外の背景<select value={config.page_background_fill} onChange={event => change('page_background_fill', event.target.value)}><option value="preserve">そのまま残す</option><option value="paper">紙色で隠す / おすすめ</option><option value="white">白で隠す</option></select><small>見開き出力で左右ページ輪郭を高confidenceで検出できたときだけ、机などページ外側を隠します。</small></label>
           <label className="setting-check"><input type="checkbox" checked={config.white_normalization} onChange={event => change('white_normalization', event.target.checked)} /><span><strong>白背景を正規化</strong><small>明るい紙面候補だけを白へ寄せます。</small></span></label>
           {config.white_normalization && <>
             <label>白背景の強度<input type="number" min="0" max="1" step="0.05" value={config.white_strength} onChange={event => change('white_strength', Number(event.target.value))} /></label>
