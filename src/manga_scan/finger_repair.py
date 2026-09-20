@@ -5,9 +5,21 @@ from .finger_alignment import (
     _align_local_component,
     _binary_mask,
     _component_records,
+    _estimate_photometric_alignment,
     _gray,
+    _validate_local_candidate,
     align_donor_page,
 )
+
+__all__ = [
+    "align_donor_page",
+    "repair_finger_regions",
+    "repair_occluded_regions",
+    "conceal_unresolved_fingers",
+    "_component_records",
+    "_estimate_photometric_alignment",
+    "_validate_local_candidate",
+]
 
 
 def _blend_inside_mask(base, donor, mask):
