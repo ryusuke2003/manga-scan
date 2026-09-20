@@ -1,9 +1,9 @@
 import math
 import re
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from xml.etree import ElementTree as ET
 
 from PIL import Image, ImageDraw
 from reportlab.pdfgen.canvas import Canvas
