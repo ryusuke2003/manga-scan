@@ -160,10 +160,136 @@ def _blend_inside_mask(base, donor, mask):
     return np.clip(mixed, 0, 255).astype(np.uint8)
 
 
-def repair_finger_regions(target, target_mask, donors, min_coverage=0.9):
+def conceal_unresolved_fingers(image, unresolved_mask, mode="paper"):
+    """Conceal unresolved finger pixels without inventing manga content.
+
+    paper: fill only connected regions whose surrounding ring looks like plain paper.
+    white: explicitly fill every unresolved pixel with white.
+    preserve: leave unresolved pixels untouched.
+    """
+    if mode not in ("preserve", "paper", "white"):
+        raise ValueError("finger repair fallback must be preserve, paper, or white")
+
+    unresolved = _binary_mask(unresolved_mask, image.shape).astype(bool)
+    total = int(np.count_nonzero(unresolved))
+    info = {
+        "mode": mode,
+        "applied": False,
+        "filled_pixels": 0,
+        "filled_fraction": 0.0,
+        "components_filled": 0,
+        "components_total": 0,
+    }
+    if total == 0 or mode == "preserve":
+        return image.copy(), (unresolved.astype(np.uint8) * 255), info
+
+    if mode == "white":
+        fill = np.full_like(image, 255)
+        concealed = _blend_inside_mask(image, fill, unresolved)
+        info.update(
+            applied=True,
+            filled_pixels=total,
+            filled_fraction=1.0,
+            components_filled=1,
+            components_total=1,
+        )
+        return concealed, np.zeros(image.shape[:2], np.uint8), info
+
+    height, width = image.shape[:2]
+    labels_input = unresolved.astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(labels_input, connectivity=8)
+    info["components_total"] = max(0, count - 1)
+
+    gray = _gray(image)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 120)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV) if image.ndim == 3 else None
+    radius = max(5, round(min(height, width) * 0.015))
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (radius * 2 + 1, radius * 2 + 1),
+    )
+
+    result = image.copy()
+    filled = np.zeros((height, width), bool)
+    for label in range(1, count):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < 4 or area > height * width * 0.18:
+            continue
+
+        component = labels == label
+        component_u8 = component.astype(np.uint8) * 255
+        outer = cv2.dilate(component_u8, kernel, iterations=1) > 0
+        # Ignore the immediate mask boundary. Canny naturally sees the
+        # finger/paper transition there, but that edge says nothing about
+        # whether the surrounding page itself contains artwork or text.
+        inner_radius = max(2, radius // 3)
+        inner_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (inner_radius * 2 + 1, inner_radius * 2 + 1),
+        )
+        near_mask = cv2.dilate(component_u8, inner_kernel, iterations=1) > 0
+        ring = outer & ~near_mask & ~unresolved
+        ring_pixels = int(np.count_nonzero(ring))
+        if ring_pixels < max(24, round(area * 0.12)):
+            continue
+
+        ring_gray = gray[ring]
+        brightness = float(np.median(ring_gray))
+        spread = float(np.std(ring_gray))
+        edge_density = float(np.mean(edges[ring] > 0))
+        bright_fraction = float(np.mean(ring_gray >= 170))
+        if hsv is not None:
+            saturation = float(np.median(hsv[:, :, 1][ring]))
+            low_saturation_fraction = float(np.mean(hsv[:, :, 1][ring] <= 90))
+        else:
+            saturation = 0.0
+            low_saturation_fraction = 1.0
+
+        paper_like = (
+            brightness >= 180
+            and spread <= 30
+            and edge_density <= 0.08
+            and bright_fraction >= 0.75
+            and saturation <= 80
+            and low_saturation_fraction >= 0.70
+        )
+        if not paper_like:
+            continue
+
+        if image.ndim == 3:
+            fill_color = np.median(image[ring], axis=0).astype(np.uint8)
+            donor = np.empty_like(image)
+            donor[...] = fill_color
+        else:
+            fill_value = np.uint8(round(float(np.median(ring_gray))))
+            donor = np.full_like(image, fill_value)
+
+        result = _blend_inside_mask(result, donor, component)
+        filled |= component
+        info["components_filled"] += 1
+
+    filled_pixels = int(np.count_nonzero(filled))
+    remaining = unresolved & ~filled
+    info.update(
+        applied=filled_pixels > 0,
+        filled_pixels=filled_pixels,
+        filled_fraction=round(filled_pixels / total, 4),
+    )
+    return result, (remaining.astype(np.uint8) * 255), info
+
+
+def repair_finger_regions(
+    target,
+    target_mask,
+    donors,
+    min_coverage=0.9,
+    fallback="preserve",
+):
     """Fill detected finger pixels only from clean pixels in alternate frames."""
     if not 0 <= min_coverage <= 1:
         raise ValueError("min_coverage must be between 0 and 1")
+    if fallback not in ("preserve", "paper", "white"):
+        raise ValueError("finger repair fallback must be preserve, paper, or white")
 
     target_mask = _binary_mask(target_mask, target.shape)
     total = int(np.count_nonzero(target_mask))
@@ -171,8 +297,17 @@ def repair_finger_regions(target, target_mask, donors, min_coverage=0.9):
         return target.copy(), {
             "status": "clean",
             "coverage": 1.0,
+            "donor_coverage": 1.0,
             "donors": [],
             "alignment_scores": [],
+            "fallback": {
+                "mode": fallback,
+                "applied": False,
+                "filled_pixels": 0,
+                "filled_fraction": 0.0,
+                "components_filled": 0,
+                "components_total": 0,
+            },
         }, np.zeros(target.shape[:2], np.uint8)
 
     result = target.copy()
@@ -207,12 +342,20 @@ def repair_finger_regions(target, target_mask, donors, min_coverage=0.9):
         if not np.any(remaining):
             break
 
+    donor_coverage = 1.0 - float(np.count_nonzero(remaining) / total)
     unresolved = remaining.astype(np.uint8) * 255
-    coverage = 1.0 - float(np.count_nonzero(remaining) / total)
+    result, unresolved, fallback_info = conceal_unresolved_fingers(
+        result,
+        unresolved,
+        mode=fallback,
+    )
+    coverage = 1.0 - float(np.count_nonzero(unresolved) / total)
     status = "complete" if coverage >= min_coverage else "incomplete"
     return result, {
         "status": status,
         "coverage": round(coverage, 4),
+        "donor_coverage": round(donor_coverage, 4),
         "donors": donors_used,
         "alignment_scores": alignment_scores,
+        "fallback": fallback_info,
     }, unresolved

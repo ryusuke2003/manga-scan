@@ -26,6 +26,7 @@ class Config:
     hand_padding: float = 0.015
     finger_repair: bool = True
     finger_repair_min_coverage: float = 0.9
+    finger_repair_fallback: str = "paper"
     duplicate_hash_distance: int = 4
     duplicate_ssim: float = 0.985
     duplicate_suspect_ssim: float = 0.94
@@ -127,6 +128,7 @@ class Config:
             "perspective_mode": ("spread", "per_page"),
             "dewarp_mode": ("off", "manual", "auto"),
             "reading_order": ("rtl", "ltr"),
+            "finger_repair_fallback": ("preserve", "paper", "white"),
             "hwaccel": ("none", "videotoolbox"),
             "rotation": (0, 90, 180, 270),
         }.items():

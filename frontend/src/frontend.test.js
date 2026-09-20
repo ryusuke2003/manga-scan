@@ -269,6 +269,7 @@ describe('frontend helpers', () => {
   it('uses the scan-style setup defaults', () => {
     const config = buildInitialConfig();
     expect(config.finger_repair).toBe(true);
+    expect(config.finger_repair_fallback).toBe('paper');
     expect(config.grayscale).toBe(false);
     expect(config.candidate_selection_mode).toBe('spread');
     expect(config.perspective_mode).toBe('spread');
@@ -291,6 +292,28 @@ describe('frontend helpers', () => {
     expect(onCreate).toHaveBeenCalledWith(
       '/tmp/book.mp4',
       expect.objectContaining({ finger_repair: false }),
+    );
+  });
+
+  it('submits an explicit white fallback only when selected', () => {
+    const onCreate = vi.fn();
+    render(React.createElement(Setup, {
+      busy: false,
+      defaults: buildInitialConfig(),
+      onChoose: vi.fn(),
+      onCreate,
+    }));
+    fireEvent.change(screen.getByLabelText('動画のローカルパス'), {
+      target: { value: '/tmp/book.mp4' },
+    });
+    expect(screen.getByLabelText('補修できない指').value).toBe('paper');
+    fireEvent.change(screen.getByLabelText('補修できない指'), {
+      target: { value: 'white' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '動画を読み込む →' }));
+    expect(onCreate).toHaveBeenCalledWith(
+      '/tmp/book.mp4',
+      expect.objectContaining({ finger_repair_fallback: 'white' }),
     );
   });
 

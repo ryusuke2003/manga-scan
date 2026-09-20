@@ -7,6 +7,7 @@ const FALLBACK_CONFIG = {
   jpeg_quality: 92,
   hand_backend: 'mediapipe',
   finger_repair: true,
+  finger_repair_fallback: 'paper',
   candidate_selection_mode: 'spread',
   grayscale: false,
   rotation: 0,
@@ -159,6 +160,7 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
           if (backend === 'none') change('finger_repair', false);
         }}><option value="mediapipe">有効 / MediaPipe</option><option value="none">無効 / 全ページに警告</option></select></label>
         <label className="setting-check"><input type="checkbox" checked={config.finger_repair} disabled={config.hand_backend === 'none'} onChange={event => change('finger_repair', event.target.checked)} /><span><strong>別フレームから指を補修</strong><small>同じページの別時刻に写っている実画素だけで指領域を置き換えます。</small></span></label>
+        <label>補修できない指<select disabled={!config.finger_repair || config.hand_backend === 'none'} value={config.finger_repair_fallback} onChange={event => change('finger_repair_fallback', event.target.value)}><option value="paper">紙面だけ自然に補完 / おすすめ</option><option value="preserve">元の画像を残す</option><option value="white">未補修部分を白塗り</option></select></label>
         <label>候補フレーム選択<select disabled={config.output_layout === 'spread'} value={config.output_layout === 'spread' ? 'spread' : config.candidate_selection_mode} onChange={event => change('candidate_selection_mode', event.target.value)}><option value="spread">見開き単位</option><option value="per_page">左右ページ別</option></select></label>
       </div>
       <p className="muted">見開きは中央で切らず、1見開きをPDFの1ページに保存します。左右別の台形・分割位置・湾曲補正は、分割出力を選んだときに使います。</p>

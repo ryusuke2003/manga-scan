@@ -99,6 +99,70 @@ def test_repair_keeps_original_when_every_donor_is_occluded():
     np.testing.assert_array_equal(repaired, target)
 
 
+def test_paper_fallback_conceals_unresolved_finger_on_plain_paper():
+    paper = np.full((180, 260, 3), (225, 228, 232), np.uint8)
+    target = paper.copy()
+    target_mask = _mask(target.shape, [(100, 70, 150, 125)])
+    target[target_mask > 0] = (35, 95, 190)
+
+    repaired, metadata, unresolved = repair_finger_regions(
+        target,
+        target_mask,
+        [],
+        fallback="paper",
+    )
+
+    assert metadata["status"] == "complete"
+    assert metadata["donor_coverage"] == pytest.approx(0.0)
+    assert metadata["fallback"]["mode"] == "paper"
+    assert metadata["fallback"]["applied"]
+    assert metadata["fallback"]["filled_fraction"] == pytest.approx(1.0)
+    assert not np.any(unresolved)
+    np.testing.assert_allclose(repaired[95, 125], paper[95, 125], atol=2)
+    np.testing.assert_array_equal(repaired[target_mask == 0], target[target_mask == 0])
+
+
+def test_paper_fallback_preserves_unresolved_region_near_artwork():
+    target = np.full((180, 260, 3), 235, np.uint8)
+    target_mask = _mask(target.shape, [(100, 70, 150, 125)])
+    for x in range(70, 185, 8):
+        cv2.line(target, (x, 45), (x, 150), (25, 25, 25), 3)
+    target[target_mask > 0] = (35, 95, 190)
+    before = target.copy()
+
+    repaired, metadata, unresolved = repair_finger_regions(
+        target,
+        target_mask,
+        [],
+        fallback="paper",
+    )
+
+    assert metadata["status"] == "incomplete"
+    assert metadata["fallback"]["mode"] == "paper"
+    assert not metadata["fallback"]["applied"]
+    assert np.any(unresolved)
+    np.testing.assert_array_equal(repaired, before)
+
+
+def test_white_fallback_is_explicit_and_fills_all_unresolved_pixels():
+    target = _page()
+    target_mask = _mask(target.shape, [(95, 65, 145, 125)])
+    target[target_mask > 0] = (25, 90, 190)
+
+    repaired, metadata, unresolved = repair_finger_regions(
+        target,
+        target_mask,
+        [],
+        fallback="white",
+    )
+
+    assert metadata["status"] == "complete"
+    assert metadata["fallback"]["mode"] == "white"
+    assert metadata["fallback"]["applied"]
+    assert not np.any(unresolved)
+    np.testing.assert_array_equal(repaired[95, 120], np.array([255, 255, 255], np.uint8))
+
+
 def test_alignment_recovers_small_candidate_translation():
     target = _page()
     matrix = np.float32([[1, 0, 5], [0, 1, -4]])
@@ -214,3 +278,8 @@ def test_candidate_hand_mask_follows_pre_split_rotation(tmp_path, rotation):
 def test_finger_repair_requires_mediapipe():
     with pytest.raises(ValueError, match="finger_repair requires"):
         Config.from_dict({"finger_repair": True, "hand_backend": "none"})
+
+
+def test_finger_repair_fallback_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="finger_repair_fallback"):
+        Config.from_dict({"finger_repair_fallback": "paint"})

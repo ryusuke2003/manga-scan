@@ -20,7 +20,8 @@ hand_backend = "mediapipe" # "none" is explicit opt-out; all pages become suspec
 hand_model = "models/hand_landmarker.task"
 hand_padding = 0.015
 finger_repair = true # Requires hand_backend="mediapipe"; set false when hand detection is disabled
-finger_repair_min_coverage = 0.9 # Below this coverage, keep unresolved pixels and flag the page for review
+finger_repair_min_coverage = 0.9 # Final donor + fallback coverage required to clear the review warning
+finger_repair_fallback = "paper" # "paper": fill only safe plain-paper regions; "preserve": keep fingers; "white": force white fill
 
 duplicate_hash_distance = 4
 duplicate_ssim = 0.985
