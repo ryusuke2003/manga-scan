@@ -9,7 +9,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .background_fill import detected_spread_mask, fill_page_background
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_cbz, export_pdf
@@ -18,17 +17,9 @@ from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
 from .motion import Sample, StableDetector, choose_candidates, motion_score
-from .page_contour import (
-    consensus_page_quads,
-    detect_page_quads,
-    draw_page_quads,
-    spread_quad_from_page_quads,
-)
+from .page_contour import detect_page_quads
 from .page_detect import refine_quad
-from .page_warp import warp_detected_pages
 from .pipeline_render_helpers import (
-    PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION,
-    _apply_manual_page_quads,
     _finger_donor_candidates,
     _page_override,
     _page_render_settings,
@@ -48,7 +39,6 @@ from .split import (
     dewarp_debug_grid,
     enhance_page,
     rotate_image,
-    spine_position,
     split_spread,
 )
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
