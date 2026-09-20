@@ -709,7 +709,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
                 interpolation=cv2.INTER_NEAREST,
             )
         hand_mask = None
-        if cfg.finger_repair and cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
+        if cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
             saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
             if saved is not None:
                 saved = cv2.resize(
@@ -723,7 +723,8 @@ def _render_whole_spread(project, manifest, spread, cfg):
                     page, [[0, 0], [1, 0], [1, 1], [0, 1]], cfg.hand_padding
                 )
         glare_mask = detect_glare_mask(page) if cfg.glare_repair else None
-        occlusion_mask = _union_occlusion_masks(hand_mask, glare_mask)
+        repair_hand_mask = hand_mask if cfg.finger_repair else None
+        occlusion_mask = _union_occlusion_masks(repair_hand_mask, glare_mask)
         cache[candidate_id] = {
             "page": page,
             "mask": occlusion_mask,
@@ -802,7 +803,10 @@ def _render_whole_spread(project, manifest, spread, cfg):
             )
             repair["occlusion_kinds"] = [
                 kind
-                for kind, kind_mask in (("finger", hand_mask), ("glare", glare_mask))
+                for kind, kind_mask in (
+                    ("finger", hand_mask if cfg.finger_repair else None),
+                    ("glare", glare_mask),
+                )
                 if kind_mask is not None and np.any(kind_mask > 127)
             ]
             if np.any(mask):
