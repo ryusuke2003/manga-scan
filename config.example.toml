@@ -5,6 +5,7 @@ stable_frames = 5
 motion_threshold = 0.012
 turn_threshold = 0.025
 candidates_per_spread = 7
+candidate_selection_mode = "spread" # "spread" / "per_page"; per_page selects left/right independently
 
 sharpness_weight = 1.0
 motion_weight = 2.0
