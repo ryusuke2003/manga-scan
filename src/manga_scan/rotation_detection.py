@@ -138,7 +138,16 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
         rotation: round(totals[rotation] / len(frames), 4)
         for rotation in _ROTATIONS
     }
-    best_rotation = max(_ROTATIONS, key=lambda rotation: scores[rotation])
+    best_score = max(scores.values())
+    near_ties = [
+        rotation for rotation in _ROTATIONS
+        if best_score - scores[rotation] <= 0.015
+    ]
+    # Geometry is often invariant under 180-degree reversal. Use a stable
+    # tie-breaker and expose the ambiguity through confidence instead of
+    # pretending the page-shape heuristic can always determine "up".
+    priority = (0, 90, 270, 180)
+    best_rotation = next(rotation for rotation in priority if rotation in near_ties)
     return {
         "rotation": best_rotation,
         "confidence": _confidence(scores, best_rotation),
