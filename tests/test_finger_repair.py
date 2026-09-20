@@ -119,6 +119,31 @@ def test_alignment_recovers_small_candidate_translation():
     assert np.count_nonzero(aligned_mask[12:-12, 12:-12]) == 0
 
 
+def test_alignment_rejects_unrelated_page_content():
+    target = _page()
+    donor = np.full_like(target, 235)
+    cv2.line(donor, (10, 20), (250, 165), (20, 20, 20), 12)
+    cv2.line(donor, (250, 20), (10, 165), (20, 20, 20), 12)
+    zero = np.zeros(target.shape[:2], np.uint8)
+
+    assert align_donor_page(target, donor, zero, zero) is None
+
+
+def test_alignment_rejects_excessive_page_rotation():
+    target = _page()
+    center = (target.shape[1] / 2, target.shape[0] / 2)
+    matrix = cv2.getRotationMatrix2D(center, 12, 1.0)
+    donor = cv2.warpAffine(
+        target,
+        matrix,
+        (target.shape[1], target.shape[0]),
+        borderMode=cv2.BORDER_REFLECT,
+    )
+    zero = np.zeros(target.shape[:2], np.uint8)
+
+    assert align_donor_page(target, donor, zero, zero) is None
+
+
 def test_candidate_hand_mask_uses_same_spread_page_coordinates(tmp_path):
     frame = _page(height=100, width=200)
     hand_mask = _mask(frame.shape, [(10, 20, 70, 80)])
