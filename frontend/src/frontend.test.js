@@ -78,6 +78,29 @@ describe('frontend helpers', () => {
     expect(onConfirm).toHaveBeenCalledWith(10);
   });
 
+  it('does not treat an out-of-range timestamp as the current preview', () => {
+    render(React.createElement(FrameSelector, {
+      step: '02 / 表紙フレーム（任意）',
+      title: '表紙フレーム',
+      description: 'desc',
+      imageUrl: '/frame-0.png',
+      time: 0,
+      duration: 20,
+      busy: false,
+      confirmLabel: 'このフレームを表紙にする →',
+      onPreview: vi.fn(),
+      onConfirm: vi.fn(),
+    }));
+
+    fireEvent.load(screen.getByAltText('選択中の動画フレーム'));
+    const input = screen.getByLabelText('動画の秒数');
+    const confirm = screen.getByRole('button', { name: 'このフレームを表紙にする →' });
+    expect(confirm.disabled).toBe(false);
+
+    fireEvent.change(input, { target: { value: '-1' } });
+    expect(confirm.disabled).toBe(true);
+  });
+
   it('normalizes and clamps ROI pointer coordinates', () => {
     const bounds = { left: 100, top: 50, width: 400, height: 200 };
     expect(normalizedPoint(300, 150, bounds)).toEqual([0.5, 0.5]);
