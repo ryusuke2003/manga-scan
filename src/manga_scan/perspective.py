@@ -25,14 +25,14 @@ def pixel_quad(points, shape):
     return q * [w - 1, h - 1]
 
 
-def warp_roi(image, points):
+def warp_roi(image, points, interpolation=cv2.INTER_CUBIC):
     q = pixel_quad(points, image.shape).astype(np.float32)
     width = max(np.linalg.norm(q[1] - q[0]), np.linalg.norm(q[2] - q[3]))
     height = max(np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1]))
     w, h = max(2, round(float(width)) + 1), max(2, round(float(height)) + 1)
     dst = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
     transform = cv2.getPerspectiveTransform(q, dst)
-    return cv2.warpPerspective(image, transform, (w, h), flags=cv2.INTER_CUBIC)
+    return cv2.warpPerspective(image, transform, (w, h), flags=interpolation)
 
 
 def geometry_penalties(points, shape):
