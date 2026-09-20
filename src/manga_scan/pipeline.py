@@ -70,6 +70,9 @@ def render_cover(project, manifest):
         contrast=cfg.contrast,
         rotation=cfg.rotation,
         dewarp_strength=cfg.dewarp_strength,
+        white_normalization=cfg.white_normalization,
+        white_target=cfg.white_target,
+        white_strength=cfg.white_strength,
         illumination_correction=cfg.illumination_correction,
         illumination_strength=cfg.illumination_strength,
     )
@@ -116,6 +119,9 @@ def render_spread(project, manifest, spread):
             contrast=cfg.contrast,
             rotation=cfg.rotation,
             dewarp_strength=cfg.dewarp_strength,
+            white_normalization=cfg.white_normalization,
+            white_target=cfg.white_target,
+            white_strength=cfg.white_strength,
             illumination_correction=cfg.illumination_correction,
             illumination_strength=cfg.illumination_strength,
         )

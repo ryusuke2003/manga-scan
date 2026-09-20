@@ -33,10 +33,13 @@ image_format = "png" # Or "jpeg"
 jpeg_quality = 92
 grayscale = false
 contrast = 1.0
-rotation = 0 # Clockwise, after split: 0 / 90 / 180 / 270
-dewarp_strength = 0.0 # 0 = off; experimental symmetric cylindrical remap, 0..0.6
 illumination_correction = false # Opt-in low-frequency lighting/shadow normalization
 illumination_strength = 0.7 # 0 = no effect, 1 = full correction
+white_normalization = false # Opt-in: gently brighten only paper-like highlights
+white_target = 245 # 200..255; target for estimated paper white
+white_strength = 0.6 # 0..1; darker artwork is protected by a luminance mask
+rotation = 0 # Clockwise, after split: 0 / 90 / 180 / 270
+dewarp_strength = 0.0 # 0 = off; experimental symmetric cylindrical remap, 0..0.6
 pdf_dpi = 300 # Physical page size only; no pixel resampling
 hwaccel = "none" # Mac: "videotoolbox"; CPU fallback if hardware initialization fails
 save_lowres = false # true writes all sampled small frames; otherwise streamed

@@ -19,7 +19,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `page_detect.py` / `perspective.py`: 保守的な外周微調整、ROI検証、射影変換。
-- `split.py`: 背の推定、左右分割、グレースケール、コントラスト、回転、任意の円筒リマップ。
+- `split.py`: 背の推定、左右分割、保守的な白背景正規化、グレースケール、コントラスト、回転、任意の円筒リマップ。
 - `illumination.py`: ページ輝度の低周波マップ推定と、Lab輝度/グレースケールへの保守的な照明補正。
 - `dedupe.py`: dHashと局所SSIM。左右半分も比較。
 - `export.py`: 画像PDF、分割コンタクトシート。
@@ -97,9 +97,7 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 円筒dewarpは明示設定時だけ水平方向に既存画素をリサンプルする。文字行も生成AIも使わない。
 この単純モデルは実際の本の曲面を推定しない。既定無効。
 
-### 照明ムラ・影補正
-
-`illumination_correction=true` の場合だけ、左右分割/任意dewarp後、grayscale・contrast・rotation前に
+照明ムラ補正は既定無効。ON時は左右分割/任意dewarp後、白背景正規化・grayscale・contrast・rotation前に
 ページ単位で補正する。カラー画像はLabのL成分だけ、グレースケール画像はその輝度を直接扱う。
 照明マップの推定だけを最大512pxへ縮小し、大きめのmorphological closingで線画・網点などの
 暗い高周波成分を抑えた後、Gaussian blurで低周波成分へ限定する。元画像を二値化せず、
@@ -107,8 +105,13 @@ global thresholdや背景画素の分類は行わない。
 
 照明マップの90 percentileを基準に乗算ゲインを求め、0.9〜1.4倍へ制限した上で
 `illumination_strength` (0..1) で1倍との間を補間する。黒に近い画素は乗算なので大きく持ち上がりにくく、
-大きな黒ベタが照明マップを誤らせた場合もゲイン上限で影響を抑える。既定はOFFであり、
-OFFまたはstrength=0では従来の画素処理と互換。補正前の見開きは従来どおり `selected/` に残る。
+大きな黒ベタが照明マップを誤らせた場合もゲイン上限で影響を抑える。補正前の見開きは従来どおり
+`selected/` に残る。
+
+白背景正規化は既定無効。ON時は照明ムラ補正の後に、ページの明るい低彩度画素からrobustなwhite levelを推定し、
+white targetへ緩やかに寄せる。補正重みはwhite levelの約45階調下からsmoothstepで立ち上げるため、
+黒ベタや中間調は原則そのまま残す。カラー画像ではLab色空間を使い、低彩度の明部だけ色かぶりを
+弱める。十分な明るい紙面候補がない暗いページでは補正せずfallbackする。
 
 ### 重複
 

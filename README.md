@@ -290,9 +290,16 @@ PDFのページ順は `manifest.json` の `pages` 配列で管理します。画
 | 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
 | 背の位置がずれる | UIで分割位置を修正。必要なら `split_mode="auto"` |
 | ページの端/中央が緩く暗い | `illumination_correction=true`。強すぎる場合は `illumination_strength` を0.4〜0.7へ下げる |
-| 黒ベタや網点が変わる | `contrast=1.0`, `dewarp_strength=0.0`, `illumination_correction=false`, PNG |
+| 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
+| 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_strength=0.0`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
+
+照明ムラ補正はデフォルトOFFです。ON時はページ単位の低周波な明るさだけを均し、二値化や背景除去は行いません。
+黒ベタや網点への影響が気になる場合は `illumination_strength` を下げるかOFFにしてください。
+
+白背景正規化はデフォルトOFFです。ONでも暗部はほぼ触らず、明るい紙面候補だけを白へ寄せます。
+薄いトーンを残したい場合は `white_strength` を下げてください。
 
 詳しい判定式やアルゴリズムは [docs/architecture.md](docs/architecture.md) を参照してください。
 
