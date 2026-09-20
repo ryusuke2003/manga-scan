@@ -45,3 +45,12 @@ def test_cover_boundary_penalty_counts_candidate_sides_not_all_corners():
 
     assert _boundary_line_count(frame, width, height) == 4
     assert _boundary_line_count(inset, width, height) == 0
+
+
+def test_cover_detection_confidence_stays_in_probability_range():
+    image = np.full((480, 640, 3), 180, dtype=np.uint8)
+    cv2.rectangle(image, (0, 0), (639, 479), (20, 20, 20), 6)
+
+    result = detect_cover_quad(image)
+
+    assert 0.0 <= result["confidence"] <= 1.0
