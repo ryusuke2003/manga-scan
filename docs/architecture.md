@@ -9,7 +9,10 @@ React / Vite source (frontend/)
                                       │
 CLI / Flask loopback Web UI (127.0.0.1:8765)
   └─ ingest → video → motion → candidate sampling → hand + score
-       → dedupe → perspective → configured rotation → split → page enhancement → export
+       → candidate selection → dedupe → configured rotation
+       → page contour + per-page perspective OR spread perspective + split
+       → finger repair → dewarp → illumination → white normalization / enhancement
+       → review state → export
        └─ project manifest + per-stage inspectable artifacts
 ```
 
@@ -20,7 +23,10 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `finger_repair.py`: 別候補ページの保守的位置合わせ、手マスクで保護した実画素置換、境界feather。
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
-- `page_detect.py` / `perspective.py`: 保守的な外周微調整、ROI検証、射影変換。
+- `page_detect.py`: ユーザー指定の見開きROIを外側へ広げない保守的な外周微調整。
+- `page_contour.py`: 見開き内の左右ページ外周を個別検出し、confidence付きquadを返す。低confidence時は既存ROI分割へfallback。
+- `page_warp.py`: 左右ページquadを独立した `warpPerspective` で長方形化する。
+- `perspective.py`: ROI検証、見開き射影変換、90°単位のROI回転。
 - `split.py`: 設定回転、背の推定、左右分割、自動湾曲推定、左右別の保守的remap、白背景正規化、グレースケール、コントラスト。
 - `illumination.py`: ページ輝度の低周波マップ推定と、Lab輝度/グレースケールへの保守的な照明補正。
 - `dedupe.py`: dHashと局所SSIM。左右半分も比較。
@@ -53,8 +59,8 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 
 ### 時間・動き
 
-FFmpegの `setpts=PTS-STARTPTS,fps=10,scale=...` でプレゼンテーション時刻を基準に
-サンプルする。UIで見開き基準フレームを確定した場合は、その時刻からFFmpeg入力を開始し、
+FFmpegの `setpts=PTS-STARTPTS,fps=<sample_fps>,scale=...` でプレゼンテーション時刻を基準に
+サンプルする。通常は `video_sample_fps=10` が上限で、入力fpsがそれ未満なら入力側に合わせる。UIで見開き基準フレームを確定した場合は、その時刻からFFmpeg入力を開始し、
 それ以前の表紙区間は見開き解析へ入れない。サンプル時刻は
 `analysis_start + index / sample_fps` で、元動画のフレーム番号ではない。
 VFRでの候補seekはその時刻に対応する元フレームをFFmpegで取得するため、解析フレームと
@@ -67,7 +73,8 @@ ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
 冒頭は前フレームがないため候補から外し、末尾の確定済み静止区間は必ずflush。
 短すぎる区間は採用しない。ページを長く静止させても一つの区間として扱う。
 
-区間を最大7つの時間ビンへ分割し、各ビンで `log1p(sharpness) - 30*motion` 最大を選ぶ。
+区間を最大 `candidates_per_spread` 個（デフォルト7）の時間ビンへ分割し、各ビンで
+`log1p(sharpness) - 30*motion` 最大を選ぶ。
 最初の鋭い候補だけに偏らず、後半に手が引かれたフレームを調べる。
 候補時刻を元動画から縮小再取得しMediaPipeを実行する。`candidate_selection_mode="spread"` は従来どおり
 見開き全体の合成スコア最大を採用する。`"per_page"` では各候補のROI射影画像を左右に分割し、
@@ -82,8 +89,10 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
 
 レビューUIの動画タイムラインは各見開きの区間と採用候補時刻を動画全体へ配置する。
 欠落候補の判定には候補選択位置の揺れを使わず、重複除外済み見開きの安定区間開始時刻 `spread.start` を使う。
-隣接開始時刻差の中央値を通常のページ送り間隔とみなし、その約1.8倍以上の
-空白を「欠落ページ候補」として表示する。空白の長さから最大4件まで候補時刻を等間隔に推定する。
+隣接開始時刻差の中央値を通常のページ送り間隔とみなし、フロント側の既定ではその約1.8倍以上の
+空白を「欠落ページ候補」として表示する。これはUIの候補表示用閾値であり、pipeline側で
+`interval_gap` 警告を付ける `interval_gap_factor`（デフォルト3.0）とは別のヒューリスティックである。
+空白の長さから最大4件まで候補時刻を等間隔に推定する。
 これはOCRや実ページ番号による欠落判定ではなく時間間隔のヒューリスティックなので、自動追加はせず、
 ユーザーが元動画を確認した上で既存の手動追加へ渡す。手動追加後はspread時刻列へ入るため候補を再計算する。
 
@@ -129,7 +138,11 @@ target mask / unresolved maskはmanifestと `debug/finger_repair/` に残す。
 表紙は独立した時刻・ROIで1ページとして切り出し、見開きROIとは共有しない。
 見開きはユーザーが選んだ基準フレームのROIで透視補正して机を外す。`rotation` が指定されている場合は、左右を決める前に見開き全体・ROI・手マスクを同じ向きへ回転し、その表示向きで中央から左右分割する。これにより90°/270°の横向き撮影でも上/下ではなく見た目上の左/右ページを得る。auto splitは回転後画像の中央±4%の暗い縦谷を検索する実験機能。
 自動外周補正は元ROIより外へ広げず、各点最大2.5%の移動まで。検出失敗はROI fallbackと警告。
-デフォルトは手動ROI固定なので、漫画が動いた場合の背景混入を自動保証できない。
+`perspective_mode="per_page"` では、回転後の元フレーム上で左右ページの外周を別々に検出し、
+両方が `page_contour_min_confidence` を満たした場合だけ各ページを独立して射影変換する。
+片側でもconfidence不足なら、その見開きは従来の「見開き全体を射影変換 → 左右分割」へfallbackし、
+`page_contour_low_confidence` を要確認理由として残す。検出quadとdebug overlayはmanifest / `debug/page_contours/` に保存する。
+デフォルトは手動ROI固定 + spread方式なので、漫画が動いた場合の背景混入を自動保証できない。
 
 湾曲補正は `off / manual / auto` を選べる。manualは従来の対称cylindrical remapを維持する。
 autoは左右ページを分割した後、ページ高の9地点を中心にした複数scanline帯でSobel-x由来の
@@ -195,7 +208,8 @@ README参照。`manifest.json` の `pages` 配列がページ順の唯一の根�
 
 ## 7. 技術的リスク
 
-- 10fpsでサンプル間に完了するページは見えない。静止5フレームは約0.5秒必要。
+- デフォルト10fpsではサンプル間に完了するページは見えない。デフォルトの静止5フレームは約0.5秒必要。
+  `video_sample_fps` / `stable_frames` は設定可能だが、上げるほど解析量や誤検出とのトレードオフがある。
 - 手で全候補にわたって常に隠れる箇所は指補修でも復元不能。生成せず元画素を残し、要確認にする。
 - donor候補の位置合わせが誤ると別の線・文字を貼る危険があるため、ECC scoreを高めに取り、
   residual transformを小さな回転＋平行移動だけに限定する。条件を外れたdonorは補修せずfallbackする。
