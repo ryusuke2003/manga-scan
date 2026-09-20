@@ -55,8 +55,9 @@ def align_donor_page(target, donor, donor_mask, target_mask):
     )
     target_small = cv2.resize(target_gray, small_size, interpolation=cv2.INTER_AREA)
     donor_small = cv2.resize(donor_gray, small_size, interpolation=cv2.INTER_AREA)
+    clean = ((target_mask == 0) & (donor_mask == 0)).astype(np.uint8)
     clean_small = cv2.resize(
-        ((1 - target_mask) * 255).astype(np.uint8),
+        (clean * 255).astype(np.uint8),
         small_size,
         interpolation=cv2.INTER_NEAREST,
     )
