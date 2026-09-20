@@ -118,6 +118,9 @@ def _refresh_reference_candidates(project, manifest, cfg):
     cover = manifest.get("cover") or {}
     if cover.get("status") not in ("ready", "skipped"):
         return
+    if not manifest.get("source") or not manifest.get("metadata"):
+        reference["candidates"] = []
+        return
 
     start_time = float(cover.get("time", 0.0)) if cover.get("status") == "ready" else 0.0
     try:
