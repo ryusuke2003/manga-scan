@@ -133,7 +133,7 @@ export default function Setup({ busy, defaults, onChoose, onCreate }) {
   const changeRotation = value => {
     customized.current = true;
     setConfig(current => value === 'auto'
-      ? { ...current, auto_rotation: true }
+      ? { ...current, auto_rotation: true, rotation: 0 }
       : { ...current, auto_rotation: false, rotation: Number(value) });
   };
   const preset = correctionPresetForConfig(config);
