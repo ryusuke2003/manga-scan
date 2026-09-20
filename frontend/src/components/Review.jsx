@@ -419,7 +419,7 @@ function BookMetadataEditor({ metadata = {}, busy, onSave }) {
     </div>
     <div className="row">
       <button disabled={busy || !changed} onClick={() => onSave(normalized)}>メタデータを保存</button>
-      {metadata.title && <span className="muted">出力名: {metadata.title}.pdf / {metadata.title}.cbz</span>}
+      {metadata.title && <span className="muted">タイトルをPDF / CBZのファイル名に使用します。</span>}
     </div>
   </details>;
 }
