@@ -145,6 +145,7 @@ target mask / unresolved maskはmanifestと `debug/finger_repair/` に残す。
 `page_contour_min_confidence` を満たした場合は、左quadの左上・左下と右quadの右上・右下を
 見開き外周として1回だけ射影変換する。内側4点は使わないため、中央の綴じ目を分割・再結合しない。
 片側でもconfidence不足なら基準ROIへfallbackし、`page_contour_low_confidence` を残す。
+`page_background_fill` はこの `auto_pages` が成功した見開き出力だけを対象にする。左右ページquadと内側エッジ間のノドをunionした保護maskを同じ射影変換で出力座標へ写し、mask外だけを `paper / white` で埋める。ページ境界には小さな保護marginと外向きfeatherを設け、ページ画素や中央の綴じ目を変更しない。`paper` はページ内縁の明るい低彩度画素から紙色を推定し、十分な候補がなければ `white_target` を使う。輪郭fallback・手動crop・`preserve` では背景を変更しない。
 `perspective_mode="per_page"` では、回転後の元フレーム上で左右ページの外周を別々に検出し、
 両方が `page_contour_min_confidence` を満たした場合だけ各ページを独立して射影変換する。
 片側でもconfidence不足なら、その見開きは従来の「見開き全体を射影変換 → 左右分割」へfallbackし、

@@ -261,15 +261,19 @@ describe('frontend helpers', () => {
     expect(standard.dewarp_mode).toBe('auto');
     expect(standard.illumination_correction).toBe(true);
     expect(standard.white_normalization).toBe(false);
+    expect(standard.page_background_fill).toBe('preserve');
     expect(correctionPresetForConfig(standard)).toBe('standard');
     expect(correctionPresetForConfig({ ...standard, illumination_strength: 0.4 })).toBe('custom');
-    expect(correctionPresetForConfig(applyCorrectionPreset(standard, 'scan'))).toBe('scan');
+    const scan = applyCorrectionPreset(standard, 'scan');
+    expect(scan.page_background_fill).toBe('paper');
+    expect(correctionPresetForConfig(scan)).toBe('scan');
   });
 
   it('uses the scan-style setup defaults', () => {
     const config = buildInitialConfig();
     expect(config.finger_repair).toBe(true);
     expect(config.finger_repair_fallback).toBe('paper');
+    expect(config.page_background_fill).toBe('paper');
     expect(config.grayscale).toBe(false);
     expect(config.candidate_selection_mode).toBe('spread');
     expect(config.perspective_mode).toBe('spread');

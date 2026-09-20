@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .background_fill import detected_spread_mask, fill_page_background
 from .config import Config
 from .dedupe import compare
 from .export import contact_sheets, export_pdf
@@ -382,6 +383,15 @@ def _render_whole_spread(project, manifest, spread, cfg):
         source = extract_frame(manifest["source"], record["time"], hwaccel=cfg.hwaccel)
         upright, roi, crop = _whole_spread_geometry(source, record, spread, cfg)
         page = warp_roi(upright, roi)
+        background_mask = None
+        detection = crop.get("detection")
+        if crop.get("status") == "auto_pages" and detection and detection.get("detected"):
+            detected_mask = detected_spread_mask(upright.shape, detection)
+            background_mask = warp_roi(
+                detected_mask,
+                roi,
+                interpolation=cv2.INTER_NEAREST,
+            )
         mask = None
         if cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
             saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
@@ -401,6 +411,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
             "mask": mask,
             "crop": crop,
             "upright": upright,
+            "background_mask": background_mask,
         }
         return cache[candidate_id]
 
@@ -458,6 +469,26 @@ def _render_whole_spread(project, manifest, spread, cfg):
                     f"debug/finger_repair/{spread['id']}_whole_unresolved.png"
                 )
                 save_image(project / repair["unresolved_mask"], unresolved)
+
+    background_fill = {
+        "mode": cfg.page_background_fill,
+        "status": "preserve" if cfg.page_background_fill == "preserve" else "unavailable",
+        "applied": False,
+        "filled_fraction": 0.0,
+        "fill_color": None,
+    }
+    background_mask = selected.get("background_mask")
+    if cfg.page_background_fill != "preserve" and background_mask is not None:
+        page, background_fill = fill_page_background(
+            page,
+            background_mask,
+            mode=cfg.page_background_fill,
+            paper_target=cfg.white_target,
+        )
+        background_fill["status"] = "applied" if background_fill["applied"] else "not_needed"
+        background_fill["confidence"] = crop.get("confidence", 0.0)
+        background_fill["mask"] = f"debug/background_fill/{spread['id']}_page_mask.png"
+        save_image(project / background_fill["mask"], background_mask)
 
     # Single-page spine dewarping would distort the middle of a full spread.
     page = enhance_page(
@@ -518,6 +549,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
             "enabled": not bool(spread.get("duplicate_of")),
             "suspect": suspect,
             "finger_repair": repair,
+            "background_fill": background_fill,
             "crop": spread["whole_spread_crop"],
             "dewarp": {"mode": "off", "status": "off", "applied": False},
         }
