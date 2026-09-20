@@ -11,22 +11,43 @@ function ImageLink({ path, preview, file }) {
 function Spread({ spread, config, file, busy, onEdit }) {
   const [ratio, setRatio] = useState(spread.spine_ratio ?? config.spine_ratio);
   useEffect(() => setRatio(spread.spine_ratio ?? config.spine_ratio), [spread.spine_ratio, config.spine_ratio]);
+  const selectionMode = spread.candidate_selection_mode ?? config.candidate_selection_mode ?? 'spread';
+  const selectedPages = spread.selected_pages ?? { left: spread.selected, right: spread.selected };
   return <details className="spread">
     <summary>{spread.id} · {spread.start.toFixed(1)}–{spread.end.toFixed(1)}s{spread.duplicate_of ? ' · 重複候補' : ''}</summary>
     <p className="muted">{reasons(spread.suspect)}</p>
+    {selectionMode === 'per_page' && <p className="muted">左右ページを別々に採点・選択中 · 左 #{selectedPages.left} / 右 #{selectedPages.right}</p>}
     <div className="row">
       <button disabled={busy} onClick={() => onEdit('swap', { spread_id: spread.id })}>左右の順番を入れ替え</button>
       <label htmlFor={`spine-${spread.id}`}>分割位置</label>
       <input id={`spine-${spread.id}`} type="number" min="0.25" max="0.75" step="0.005" value={ratio} onChange={event => setRatio(event.target.value)} />
       <button disabled={busy || ratio === '' || Number(ratio) < .25 || Number(ratio) > .75} onClick={() => onEdit('spine', { spread_id: spread.id, ratio: Number(ratio) })}>反映</button>
     </div>
-    <div className="candidates">{spread.candidates.map(candidate => <div key={candidate.id} className={`candidate ${candidate.id === spread.selected ? 'selected' : ''}`}>
-      <ImageLink file={file} path={candidate.path} preview={candidate.preview} />
-      <p>{candidate.time.toFixed(2)}s · score {candidate.metrics.score.toFixed(3)}<br />
-        鮮鋭度 {candidate.metrics.sharpness.toFixed(0)} / 手 {candidate.metrics.hand_overlap === null ? '未評価' : `${(candidate.metrics.hand_overlap * 100).toFixed(1)}%`}</p>
-      <a href={file(candidate.hand_mask)} target="_blank" rel="noopener">手のマスク ↗</a>
-      <button disabled={busy || candidate.id === spread.selected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id })}>{candidate.id === spread.selected ? '採用中' : 'この候補を採用'}</button>
-    </div>)}</div>
+    <div className="candidates">{spread.candidates.map(candidate => {
+      const leftMetrics = candidate.page_metrics?.left ?? candidate.metrics;
+      const rightMetrics = candidate.page_metrics?.right ?? candidate.metrics;
+      const leftSelected = candidate.id === selectedPages.left;
+      const rightSelected = candidate.id === selectedPages.right;
+      const selected = selectionMode === 'per_page'
+        ? leftSelected || rightSelected
+        : candidate.id === spread.selected;
+      return <div key={candidate.id} className={`candidate ${selected ? 'selected' : ''}`}>
+        <ImageLink file={file} path={candidate.path} preview={candidate.preview} />
+        <p>{candidate.time.toFixed(2)}s · 全体 score {candidate.metrics.score.toFixed(3)}<br />
+          鮮鋭度 {candidate.metrics.sharpness.toFixed(0)} / 手 {candidate.metrics.hand_overlap === null ? '未評価' : `${(candidate.metrics.hand_overlap * 100).toFixed(1)}%`}</p>
+        {selectionMode === 'per_page' && <p>
+          左 score {leftMetrics.score.toFixed(3)} / 鮮鋭度 {leftMetrics.sharpness.toFixed(0)} / 手 {leftMetrics.hand_overlap === null ? '未評価' : `${(leftMetrics.hand_overlap * 100).toFixed(1)}%`}<br />
+          右 score {rightMetrics.score.toFixed(3)} / 鮮鋭度 {rightMetrics.sharpness.toFixed(0)} / 手 {rightMetrics.hand_overlap === null ? '未評価' : `${(rightMetrics.hand_overlap * 100).toFixed(1)}%`}
+        </p>}
+        <a href={file(candidate.hand_mask)} target="_blank" rel="noopener">手のマスク ↗</a>
+        {selectionMode === 'per_page'
+          ? <div className="row">
+            <button disabled={busy || leftSelected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id, side: 'left' })}>{leftSelected ? '左に採用中' : '左に採用'}</button>
+            <button disabled={busy || rightSelected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id, side: 'right' })}>{rightSelected ? '右に採用中' : '右に採用'}</button>
+          </div>
+          : <button disabled={busy || candidate.id === spread.selected} onClick={() => onEdit('select_candidate', { spread_id: spread.id, candidate_id: candidate.id })}>{candidate.id === spread.selected ? '採用中' : 'この候補を採用'}</button>}
+      </div>;
+    })}</div>
   </details>;
 }
 
@@ -53,6 +74,7 @@ export default function Review({ manifest, file, busy, onEdit }) {
       <ImageLink file={file} path={page.path} preview={page.preview} />
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
+      {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {page.dewarp?.mode === 'auto' && <div className="dewarp-meta">
         <span>湾曲補正: {page.dewarp.status === 'applied' ? `適用 ${(page.dewarp.strength * 100).toFixed(1)}%` : page.dewarp.status === 'disabled' ? 'ページ単位でOFF' : page.dewarp.status === 'not_needed' ? '補正不要' : '見送り'}{page.dewarp.confidence !== undefined ? ` · 信頼度 ${Math.round(page.dewarp.confidence * 100)}%` : ''}</span>
         <div className="row">{page.dewarp.before && <a href={file(page.dewarp.before)} target="_blank" rel="noopener">補正前 ↗</a>}
@@ -63,7 +85,7 @@ export default function Review({ manifest, file, busy, onEdit }) {
         <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
         <button disabled={busy} aria-label={`${page.id}を後ろへ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: 1 })}>→</button></div>
     </article>)}</div>
-    <h2 className="spreads-heading">見開き・候補フレーム</h2><p className="muted">候補をクリックすると元解像度で再抽出します。手のマスクとスコアも確認できます。</p>
+    <h2 className="spreads-heading">見開き・候補フレーム</h2><p className="muted">候補を選ぶと元解像度で再抽出します。左右別モードでは各ページのスコアを個別に確認・差し替えできます。</p>
     {manifest.spreads.map(spread => <Spread key={spread.id} spread={spread} config={manifest.config} file={file} busy={busy} onEdit={onEdit} />)}
   </section>;
 }
