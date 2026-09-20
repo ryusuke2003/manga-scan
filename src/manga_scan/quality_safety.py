@@ -1,6 +1,5 @@
 import math
 
-
 _CANDIDATE_TRIGGER_REASONS = {
     "low_sharpness",
     "high_motion",
