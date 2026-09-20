@@ -13,7 +13,7 @@ export default function App() {
       <a className="brand" href="/">Manga<span>Scan</span><small>LOCAL EDITION / 0.1</small></a>
       <p className="privacy"><span className="dot" /> このMacだけで処理</p>
       <button className="primary" disabled={busy} onClick={() => scanner.selectProject(null)}>＋ 新しいスキャン</button>
-      <h2>プロジェクト</h2><div id="projects">{server.projects.map(item => <button key={item.id} disabled={busy} className={item.id === project ? 'active' : ''} title={item.id} onClick={() => scanner.selectProject(item.id)}>{item.source_name}</button>)}</div>
+      <h2>プロジェクト</h2><div id="projects">{server.projects.map(item => <button key={item.id} className={item.id === project ? 'active' : ''} title={item.id} onClick={() => scanner.selectProject(item.id)}>{item.source_name}</button>)}</div>
       <p className="aside-note">動画から、読むための一冊へ。<br />OCRなし・画像生成なし。</p>
     </aside>
     <main>
