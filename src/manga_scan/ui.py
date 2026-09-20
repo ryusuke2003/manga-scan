@@ -33,7 +33,7 @@ def create_app(projects, config=None):
     token = secrets.token_urlsafe(32)
     app.config["API_TOKEN"] = token
     guard = threading.Lock()
-    job = {"busy": False, "project": None, "error": None}
+    job = {"busy": False, "project": None, "action": None, "error": None}
 
     def project_path(name):
         path = (root / name).resolve()
@@ -183,7 +183,7 @@ def create_app(projects, config=None):
                 raise ValueError("Symlinked projects cannot be deleted")
             if not entry.exists():
                 if job["project"] == name:
-                    job.update(project=None, error=None)
+                    job.update(project=None, action=None, error=None)
                 return jsonify(deleted=name, already_deleted=True)
             if not entry.is_dir() or not (entry / "manifest.json").is_file():
                 abort(404)
@@ -195,10 +195,10 @@ def create_app(projects, config=None):
                 return jsonify(error=str(exc)), 409
             except FileNotFoundError:
                 if job["project"] == name:
-                    job.update(project=None, error=None)
+                    job.update(project=None, action=None, error=None)
                 return jsonify(deleted=name, already_deleted=True)
             if job["project"] == name:
-                job.update(project=None, error=None)
+                job.update(project=None, action=None, error=None)
             return jsonify(deleted=name)
         finally:
             guard.release()
@@ -215,10 +215,10 @@ def create_app(projects, config=None):
             abort(404)
         return send_file(path, conditional=True)
 
-    def start_job(name, fn):
+    def start_job(name, action, fn):
         if not guard.acquire(blocking=False):
             return jsonify(error="処理中です。完了後に操作してください"), 409
-        job.update(busy=True, project=name, error=None)
+        job.update(busy=True, project=name, action=action, error=None)
 
         def work():
             try:
@@ -227,11 +227,11 @@ def create_app(projects, config=None):
                 app.logger.exception("Job failed")
                 job["error"] = str(exc)
             finally:
-                job["busy"] = False
+                job.update(busy=False, action=None)
                 guard.release()
 
         threading.Thread(target=work, daemon=True).start()
-        return jsonify(started=True), 202
+        return jsonify(started=True, action=action), 202
 
     @app.post("/api/projects/<name>/run")
     def process(name):
@@ -243,14 +243,14 @@ def create_app(projects, config=None):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
         raw_roi = rotate_roi(roi, (-cfg.rotation) % 360).tolist()
-        return start_job(name, lambda: run(project, raw_roi))
+        return start_job(name, "process", lambda: run(project, raw_roi))
 
     @app.post("/api/projects/<name>/edit")
     def review(name):
         project = project_path(name)
         data = request.get_json()
         action = data.pop("action")
-        return start_job(name, lambda: edit(project, action, **data))
+        return start_job(name, action, lambda: edit(project, action, **data))
 
     return app
 
