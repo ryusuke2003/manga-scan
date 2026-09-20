@@ -149,8 +149,8 @@ def create_app(projects, config=None):
             if upload is None or not upload.filename:
                 raise ValueError("画像ファイルを選択してください")
             suffix = Path(upload.filename).suffix.lower()
-            if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"):
-                raise ValueError("PNG / JPEG / WebP / HEIC画像を選択してください")
+            if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
+                raise ValueError("PNG / JPEG / WebP画像を選択してください")
             directory = project / "source" / "external_uploads"
             directory.mkdir(parents=True, exist_ok=True)
             temporary = directory / f"upload-{uuid.uuid4().hex}{suffix}"
