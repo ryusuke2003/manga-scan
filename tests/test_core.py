@@ -215,6 +215,7 @@ def test_explicit_legacy_rotation_disables_new_auto_detection_default():
     cfg = Config.from_dict({"rotation": 270})
     assert cfg.rotation == 270
     assert cfg.auto_rotation is False
+    assert Config.from_dict({"rotation": 0}).auto_rotation is True
     assert Config.from_dict({}).auto_rotation is True
 
 
