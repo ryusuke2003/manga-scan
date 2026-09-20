@@ -18,7 +18,7 @@ exposure_weight = 0.3
 hand_backend = "mediapipe" # "none" is explicit opt-out; all pages become suspect
 hand_model = "models/hand_landmarker.task"
 hand_padding = 0.015
-finger_repair = true # Reconstruct detected finger regions from clean pixels in alternate candidate frames
+finger_repair = true # Default: reconstruct detected finger regions from clean pixels in alternate candidate frames
 finger_repair_min_coverage = 0.9 # Below this coverage, keep unresolved pixels and flag the page for review
 
 duplicate_hash_distance = 4
@@ -26,7 +26,7 @@ duplicate_ssim = 0.985
 duplicate_suspect_ssim = 0.94
 dedupe_window = 3
 
-refine_quad = true # Opt-in conservative spread-ROI refinement
+refine_quad = true # Conservative spread-ROI refinement
 quad_max_shift = 0.025
 perspective_mode = "per_page" # "per_page" auto-detects left/right page contours and warps each page separately
 page_contour_min_confidence = 0.55 # per_page falls back to legacy spread split below this confidence
@@ -38,9 +38,9 @@ image_format = "png" # Or "jpeg"
 jpeg_quality = 92
 grayscale = true
 contrast = 1.0
-illumination_correction = true # Opt-in low-frequency lighting/shadow normalization
+illumination_correction = true # Low-frequency lighting/shadow normalization
 illumination_strength = 0.7 # 0 = no effect, 1 = full correction
-white_normalization = true # Opt-in: gently brighten only paper-like highlights
+white_normalization = true # Gently brighten only paper-like highlights
 white_target = 245 # 200..255; target for estimated paper white
 white_strength = 0.6 # 0..1; darker artwork is protected by a luminance mask
 rotation = 0 # Clockwise: spreads rotate before left/right split; cover rotates before output
