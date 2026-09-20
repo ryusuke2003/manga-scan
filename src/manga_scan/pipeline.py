@@ -634,6 +634,13 @@ def _render_whole_spread(project, manifest, spread, cfg):
     if cfg.finger_repair or cfg.glare_repair:
         if mask is None:
             repair = {"status": "unavailable", "coverage": 0.0, "donors": []}
+        elif not np.any(mask > 127):
+            repair = {
+                "status": "clean" if cfg.finger_repair else "disabled",
+                "coverage": 1.0 if cfg.finger_repair else 0.0,
+                "donors": [],
+                "occlusion_kinds": [],
+            }
         else:
 
             def donor_rank(record):
@@ -1024,8 +1031,8 @@ def render_spread(project, manifest, spread):
                 )
             else:
                 finger_repair = {
-                    "status": "clean",
-                    "coverage": 1.0,
+                    "status": "clean" if cfg.finger_repair else "disabled",
+                    "coverage": 1.0 if cfg.finger_repair else 0.0,
                     "donors": [],
                     "occlusion_kinds": [],
                 }
