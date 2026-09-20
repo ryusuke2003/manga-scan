@@ -52,7 +52,12 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
     save_image(project / f"{base}.png", image)
     save_image(project / f"{base}_hand_mask.png", mask)
     rectified = warp_roi(image, roi)
-    save_image(project / f"{base}_spread.png", rectified)
+    preview = f"{base}_spread.png"
+    save_image(project / preview, rectified)
+    review_preview = preview
+    if cfg.rotation:
+        review_preview = f"{base}_spread_review.png"
+        save_image(project / review_preview, rotate_image(rectified, cfg.rotation))
 
     if cfg.candidate_selection_mode == "per_page":
         rectified_mask = (
@@ -82,7 +87,8 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
         "id": number,
         "time": sample.time,
         "path": f"{base}.png",
-        "preview": f"{base}_spread.png",
+        "preview": preview,
+        "review_preview": review_preview,
         "hand_mask": f"{base}_hand_mask.png",
         "roi": roi,
         "metrics": metrics,
