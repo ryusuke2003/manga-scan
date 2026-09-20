@@ -16,6 +16,10 @@ export function spreadTime(spread) {
   return Number(spread.start);
 }
 
+function cadenceTime(spread) {
+  return Number.isFinite(spread.start) ? spread.start : spreadTime(spread);
+}
+
 export function timelinePercent(time, duration) {
   if (!Number.isFinite(time) || !Number.isFinite(duration) || duration <= 0) return 0;
   return Math.max(0, Math.min(100, time / duration * 100));
@@ -24,7 +28,7 @@ export function timelinePercent(time, duration) {
 export function detectMissingPageCandidates(spreads, gapFactor = 1.8, maxPerGap = 4) {
   const points = (spreads || [])
     .filter(spread => !spread.duplicate_of)
-    .map(spread => ({ spread, time: spreadTime(spread) }))
+    .map(spread => ({ spread, time: cadenceTime(spread) }))
     .filter(point => Number.isFinite(point.time))
     .sort((a, b) => a.time - b.time);
 
