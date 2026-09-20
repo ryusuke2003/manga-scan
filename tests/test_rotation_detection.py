@@ -156,6 +156,32 @@ def test_manual_rotation_redetects_automatic_cover(tmp_path, monkeypatch):
     np.testing.assert_allclose(updated["cover"]["roi"], expected)
 
 
+def test_manual_rotation_retries_previously_failed_auto_cover(tmp_path, monkeypatch):
+    project = _rotation_project(
+        tmp_path,
+        {
+            "status": "frame_selected",
+            "frame": "source/cover_frame.png",
+            "preview": "source/cover_preview.png",
+            "roi": None,
+            "detection": {"detected": False, "confidence": 0.3, "source": "auto"},
+        },
+    )
+    detected_roi = [[0.1, 0.2], [0.9, 0.2], [0.9, 0.8], [0.1, 0.8]]
+    monkeypatch.setattr(
+        ingest_module,
+        "detect_cover_quad",
+        lambda _image: {"detected": True, "confidence": 0.9, "roi": detected_roi},
+    )
+
+    updated = set_rotation(project, 90)
+
+    assert updated["cover"]["status"] == "ready"
+    assert updated["cover"]["detection"]["source"] == "auto"
+    assert updated["cover"]["roi"] is not None
+    assert updated["message"] == "基準にする見開きフレームを選んでください"
+
+
 def test_manual_rotation_preserves_user_edited_cover_crop(tmp_path, monkeypatch):
     roi = [[0.2, 0.1], [0.8, 0.1], [0.8, 0.9], [0.2, 0.9]]
     project = _rotation_project(
