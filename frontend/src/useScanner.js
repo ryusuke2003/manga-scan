@@ -5,6 +5,10 @@ export function didJobFinish(wasBusy, job) {
   return Boolean(wasBusy && !job.busy);
 }
 
+export function shouldReportPollError(error, aborted, mutating) {
+  return error.name !== 'AbortError' && !aborted && !mutating;
+}
+
 export default function useScanner() {
   const [project, setProject] = useState(null);
   const [manifest, setManifest] = useState(null);
@@ -36,7 +40,7 @@ export default function useScanner() {
         if (finished) setRevision(value => value + 1);
         if (next.job.error && next.job.project === project) setError(next.job.error);
       } catch (err) {
-        if (err.name !== 'AbortError' && !controller.signal.aborted) setError(err.message);
+        if (shouldReportPollError(err, controller.signal.aborted, mutation.current)) setError(err.message);
       } finally {
         if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
       }
