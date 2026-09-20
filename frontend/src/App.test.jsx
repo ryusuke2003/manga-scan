@@ -42,6 +42,7 @@ it('moves past an automatically detected cover and keeps a crop correction actio
     message: '表紙の外周を自動検出しました',
     warnings: [],
     pages: [],
+    spreads: [],
     roi: null,
     metadata: { duration: 10 },
     config: { rotation: 0 },
@@ -62,4 +63,70 @@ it('moves past an automatically detected cover and keeps a crop correction actio
   expect(screen.getByText(/表紙の外周を自動検出済み · 信頼度 87%/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: '外周を修正' }));
   expect(scanner.editCoverRoi).toHaveBeenCalledOnce();
+});
+
+
+it('previews an automatically detected reference spread with four ready points', () => {
+  scanner.project = 'scan-123';
+  scanner.busy = false;
+  scanner.server.job.busy = false;
+  scanner.start = vi.fn();
+  scanner.manifest = {
+    source: '/tmp/book.mov',
+    status: 'ready',
+    progress: 0,
+    message: '見開き外周を自動検出しました',
+    warnings: [],
+    pages: [],
+    spreads: [],
+    roi: [[0.08, 0.10], [0.92, 0.09], [0.94, 0.91], [0.07, 0.90]],
+    metadata: { duration: 10, display_width: 1000, display_height: 600, fps: 30, codec: 'h264' },
+    config: { rotation: 0 },
+    rotation_detection: { source: 'manual' },
+    cover: { status: 'skipped', roi: null },
+    reference: {
+      confirmed: true,
+      time: 1,
+      preview: 'source/reference_preview.png',
+      detection: { detected: true, confidence: 0.88, source: 'auto_pages' },
+    },
+  };
+
+  render(<App />);
+
+  expect(screen.getByText('自動検出した見開き外周を確認')).toBeTruthy();
+  expect(screen.getByText(/左右ページから外周を自動検出しました · 信頼度 88%/)).toBeTruthy();
+  expect(screen.getByText('4 / 4 点')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'この範囲で抽出開始 →' })).toBeTruthy();
+});
+
+it('falls back to the existing four-point editor when reference detection fails', () => {
+  scanner.project = 'scan-123';
+  scanner.busy = false;
+  scanner.server.job.busy = false;
+  scanner.manifest = {
+    source: '/tmp/book.mov',
+    status: 'ready',
+    progress: 0,
+    message: '見開き外周を自動検出できませんでした',
+    warnings: [],
+    pages: [],
+    roi: null,
+    metadata: { duration: 10, display_width: 1000, display_height: 600, fps: 30, codec: 'h264' },
+    config: { rotation: 0 },
+    rotation_detection: { source: 'manual' },
+    cover: { status: 'skipped', roi: null },
+    reference: {
+      confirmed: true,
+      time: 1,
+      preview: 'source/reference_preview.png',
+      detection: { detected: false, confidence: 0.22, source: 'auto_pages' },
+    },
+  };
+
+  render(<App />);
+
+  expect(screen.getByText('見開きの外周を4点で指定')).toBeTruthy();
+  expect(screen.getByText('外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。')).toBeTruthy();
+  expect(screen.getByText('0 / 4 点')).toBeTruthy();
 });
