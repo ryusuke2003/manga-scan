@@ -21,6 +21,9 @@ from .temporal_alignment import (
 REFERENCE_OUTLINE_CANDIDATES = 8
 REFERENCE_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
 REFERENCE_AMBIGUITY_SCORE_MARGIN = 0.035
+REFERENCE_PRIOR_SEARCH_WIDTH = 2
+REFERENCE_PRIOR_SEARCH_STEPS = (0.10, 0.05)
+REFERENCE_PRIOR_SEARCH_MAX_WIDTH = 600
 
 
 def _coarse_spread_priors():
@@ -85,26 +88,39 @@ def _working_image(image):
     )
 
 
+def _adjust_prior(roi, left=0.0, right=0.0, top=0.0, bottom=0.0):
+    """Move a quad's four edges in its local bilinear coordinate system."""
+
+    q = np.asarray(roi, dtype=np.float32)
+    coordinates = (
+        (-left, -top),
+        (1 + right, -top),
+        (1 + right, 1 + bottom),
+        (-left, 1 + bottom),
+    )
+    points = []
+    for u, v in coordinates:
+        point = (
+            q[0] * (1 - u) * (1 - v)
+            + q[1] * u * (1 - v)
+            + q[2] * u * v
+            + q[3] * (1 - u) * v
+        )
+        points.append(point)
+    adjusted = np.asarray(points, dtype=np.float32)
+    if not np.isfinite(adjusted).all():
+        raise ValueError("adjusted prior must remain finite")
+    adjusted = np.clip(adjusted, 0, 1)
+    if abs(float(cv2.contourArea(adjusted))) < 0.02:
+        raise ValueError("adjusted prior is too small")
+    return adjusted
+
+
 def _outline_priors(roi):
     q = np.asarray(roi, dtype=np.float32)
 
     def extrapolate(left=0.0, right=0.0, top=0.0, bottom=0.0):
-        coordinates = (
-            (-left, -top),
-            (1 + right, -top),
-            (1 + right, 1 + bottom),
-            (-left, 1 + bottom),
-        )
-        points = []
-        for u, v in coordinates:
-            point = (
-                q[0] * (1 - u) * (1 - v)
-                + q[1] * u * (1 - v)
-                + q[2] * u * v
-                + q[3] * (1 - u) * v
-            )
-            points.append(point)
-        return np.clip(np.asarray(points, dtype=np.float32), 0, 1)
+        return _adjust_prior(q, left=left, right=right, top=top, bottom=bottom)
 
     # Hough often locks onto an interior horizontal line while retaining the
     # real lower/side edges. Include asymmetric outward hypotheses so page
@@ -118,6 +134,122 @@ def _outline_priors(roi):
     ]
 
 
+def _prior_key(prior):
+    return tuple(np.rint(np.asarray(prior, dtype=np.float32).reshape(-1) * 1000).astype(int))
+
+
+def _distinct_priors(priors, minimum_distance=0.012):
+    selected = []
+    for prior in priors:
+        points = np.asarray(prior, dtype=np.float32)
+        if any(
+            float(np.mean(np.linalg.norm(points - existing, axis=1))) < minimum_distance
+            for existing in selected
+        ):
+            continue
+        selected.append(points)
+    return selected
+
+
+def _prior_search_frame(image):
+    height, width = image.shape[:2]
+    scale = min(1.0, REFERENCE_PRIOR_SEARCH_MAX_WIDTH / max(width, height))
+    if scale >= 1:
+        return image
+    return cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+
+def _score_prior(image, prior, min_confidence):
+    try:
+        pages = detect_page_quads(
+            image,
+            prior,
+            spine_ratio=0.5,
+            min_confidence=float(min_confidence),
+        )
+    except (ValueError, cv2.error):
+        return 0.0
+    left = float(pages["left"]["confidence"])
+    right = float(pages["right"]["confidence"])
+    detected_sides = int(pages["left"]["detected"]) + int(pages["right"]["detected"])
+    return (
+        0.62 * min(left, right)
+        + 0.28 * ((left + right) / 2)
+        + 0.05 * detected_sides
+    )
+
+
+def _prior_mutations(prior, step):
+    mutations = [np.asarray(prior, dtype=np.float32)]
+    for edge in ("left", "right", "top", "bottom"):
+        for amount in (-float(step), float(step)):
+            adjustment = {edge: amount}
+            try:
+                mutations.append(_adjust_prior(prior, **adjustment))
+            except ValueError:
+                continue
+    return mutations
+
+
+def _refine_priors(image, initial_priors, min_confidence):
+    """Search inward/outward edge adjustments on the anchor frame."""
+
+    search_image = _prior_search_frame(image)
+    score_cache = {}
+    evaluated = 0
+
+    def ranked(priors):
+        nonlocal evaluated
+        records = []
+        for prior in _distinct_priors(priors):
+            key = _prior_key(prior)
+            if key not in score_cache:
+                score_cache[key] = _score_prior(search_image, prior, min_confidence)
+                evaluated += 1
+            records.append((score_cache[key], prior))
+        records.sort(key=lambda item: item[0], reverse=True)
+        return records
+
+    initial_ranking = ranked(initial_priors)
+    final_ranking = initial_ranking
+    beam = final_ranking[:REFERENCE_PRIOR_SEARCH_WIDTH]
+    for step in REFERENCE_PRIOR_SEARCH_STEPS:
+        candidates = []
+        for _score, prior in beam:
+            candidates.extend(_prior_mutations(prior, step))
+        final_ranking = ranked(candidates)
+        beam = final_ranking[:REFERENCE_PRIOR_SEARCH_WIDTH]
+
+    output = []
+    for record in [
+        *final_ranking[:1],
+        *initial_ranking[:1],
+        *final_ranking[1:],
+    ]:
+        _score, prior = record
+        if any(
+            float(np.mean(np.linalg.norm(prior - existing[1], axis=1))) < 0.012
+            for existing in output
+        ):
+            continue
+        output.append(record)
+        if len(output) >= REFERENCE_PRIOR_SEARCH_WIDTH:
+            break
+    return [prior for _score, prior in output], {
+        "evaluated": evaluated,
+        "best_score": round(float(output[0][0]), 4) if output else 0.0,
+        "beam_width": len(beam),
+        "baseline_preserved": bool(
+            initial_ranking
+            and any(
+                float(np.mean(np.linalg.norm(initial_ranking[0][1] - prior, axis=1)))
+                < 0.012
+                for _score, prior in output
+            )
+        ),
+    }
+
+
 def _proposal_from_prior_set(
     working_frames,
     priors,
@@ -128,6 +260,7 @@ def _proposal_from_prior_set(
     proposal_id,
     outline=None,
     source,
+    local_search=None,
 ):
     detections = []
     failures = []
@@ -212,6 +345,7 @@ def _proposal_from_prior_set(
             pages["right"]["consensus_count"],
         ),
         "frame_count": len(working_frames),
+        "local_search": local_search,
     }, float(pages["confidence"])
 
 
@@ -262,17 +396,25 @@ def detect_reference_spread_consensus(
     )
 
     proposals = []
+    search_diagnostics = []
     best_failure = 0.0
     for index, outline in enumerate(outlines):
+        refined_priors, search = _refine_priors(
+            center,
+            _outline_priors(outline["roi"]),
+            min_confidence,
+        )
+        search_diagnostics.append({"proposal_id": f"hough_{index + 1}", **search})
         proposal, failure = _proposal_from_prior_set(
             working_frames,
-            _outline_priors(outline["roi"]),
+            refined_priors,
             min_confidence,
             alignments=alignments,
             anchor_index=int(anchor_index),
             proposal_id=f"hough_{index + 1}",
             outline=outline,
             source="outline_pages_consensus" if len(images) > 1 else "outline_pages",
+            local_search=search,
         )
         best_failure = max(best_failure, failure)
         if proposal is not None:
@@ -280,14 +422,21 @@ def detect_reference_spread_consensus(
 
     # Keep the established centered fallback as one explicit hypothesis. It is
     # especially useful when hands obscure the true outer Hough lines.
+    coarse_priors, coarse_search = _refine_priors(
+        center,
+        _coarse_spread_priors(),
+        min_confidence,
+    )
+    search_diagnostics.append({"proposal_id": "coarse", **coarse_search})
     coarse, failure = _proposal_from_prior_set(
         working_frames,
-        _coarse_spread_priors(),
+        coarse_priors,
         min_confidence,
         alignments=alignments,
         anchor_index=int(anchor_index),
         proposal_id="coarse",
         source="coarse_pages_consensus" if len(images) > 1 else "coarse_pages",
+        local_search=coarse_search,
     )
     best_failure = max(best_failure, failure)
     if coarse is not None:
@@ -313,6 +462,7 @@ def detect_reference_spread_consensus(
             "requires_confirmation": False,
             "candidate_count": len(outlines),
             "alignment": alignment,
+            "prior_search": search_diagnostics,
             "alternatives": [],
         }
 
@@ -334,6 +484,7 @@ def detect_reference_spread_consensus(
             "roi": item["roi"],
             "source": item["source"],
             "frame_support": item["frame_support"],
+            "local_search": item["local_search"],
         }
         for item in proposals[:3]
     ]
@@ -353,6 +504,8 @@ def detect_reference_spread_consensus(
         "frame_support": best["frame_support"],
         "frame_count": best["frame_count"],
         "alignment": alignment,
+        "local_search": best["local_search"],
+        "prior_search": search_diagnostics,
         "score_margin": round(
             float(best["score"]) - float(runner_up["score"]), 4
         ) if runner_up is not None else None,

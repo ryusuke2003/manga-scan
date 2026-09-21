@@ -5,6 +5,8 @@ from manga_scan.config import Config
 from manga_scan.ingest import _reference_consensus_frames, set_setup_frame
 from manga_scan.perspective import rotate_roi
 from manga_scan.spread_detect import (
+    _adjust_prior,
+    _refine_priors,
     detect_reference_spread,
     detect_reference_spread_consensus,
 )
@@ -45,6 +47,55 @@ def test_detect_reference_spread_rejects_blank_frame():
     assert not result["detected"]
     assert result["roi"] is None
     assert result["stage"] == "outline"
+
+
+def test_adjust_prior_can_search_inward_as_well_as_outward():
+    prior = np.asarray([[.1, .1], [.9, .1], [.9, .9], [.1, .9]], np.float32)
+
+    inset = _adjust_prior(prior, top=-0.1, bottom=-0.1)
+    outset = _adjust_prior(prior, top=0.1, bottom=0.1)
+
+    assert inset[0, 1] > prior[0, 1]
+    assert inset[3, 1] < prior[3, 1]
+    assert outset[0, 1] < prior[0, 1]
+    assert outset[3, 1] > prior[3, 1]
+
+
+def test_prior_local_search_moves_edges_toward_stronger_page_detection(monkeypatch):
+    initial = np.asarray([[.1, .1], [.9, .1], [.9, .9], [.1, .9]], np.float32)
+    target = _adjust_prior(initial, top=-0.1, bottom=-0.1)
+
+    def fake_detect(_image, prior, **_kwargs):
+        error = float(np.mean(np.linalg.norm(np.asarray(prior) - target, axis=1)))
+        confidence = max(0.0, 1.0 - 4.0 * error)
+        side = {
+            "quad": np.asarray(prior).tolist(),
+            "confidence": confidence,
+            "detected": confidence >= 0.5,
+            "touches_frame": False,
+        }
+        return {
+            "left": dict(side),
+            "right": dict(side),
+            "confidence": confidence,
+            "detected": confidence >= 0.5,
+        }
+
+    monkeypatch.setattr("manga_scan.spread_detect.detect_page_quads", fake_detect)
+
+    refined, diagnostics = _refine_priors(
+        np.zeros((400, 800, 3), np.uint8),
+        [initial],
+        min_confidence=0.5,
+    )
+
+    initial_error = np.mean(np.linalg.norm(initial - target, axis=1))
+    refined_error = np.mean(np.linalg.norm(refined[0] - target, axis=1))
+    assert refined_error < initial_error
+    assert any(np.allclose(prior, initial) for prior in refined)
+    assert diagnostics["evaluated"] > 1
+    assert diagnostics["best_score"] > 0.9
+    assert diagnostics["baseline_preserved"]
 
 
 def _occluded_mixed_color_spread():
@@ -263,8 +314,10 @@ def test_reference_spread_marks_close_distinct_candidates_ambiguous(monkeypatch)
         proposal_id,
         outline=None,
         source,
+        local_search=None,
     ):
         assert alignments[anchor_index]["status"] == "anchor"
+        assert local_search is not None
         if proposal_id == "coarse":
             return None, 0.0
         roi = roi_a if proposal_id == "hough_1" else roi_b
@@ -285,6 +338,7 @@ def test_reference_spread_marks_close_distinct_candidates_ambiguous(monkeypatch)
             "source": source,
             "frame_support": 3,
             "frame_count": 3,
+            "local_search": local_search,
         }, 0.8
 
     monkeypatch.setattr("manga_scan.spread_detect._proposal_from_prior_set", proposal)
