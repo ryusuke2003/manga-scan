@@ -148,6 +148,49 @@ def test_one_changed_half_is_not_dropped():
     assert not compare(a, b, Config())["duplicate"]
 
 
+def test_dedupe_aligns_handheld_camera_shift():
+    image = np.full((480, 720, 3), 245, np.uint8)
+    rng = np.random.default_rng(7)
+    for _ in range(100):
+        x1, y1 = rng.integers([10, 10], [680, 440])
+        x2 = min(710, x1 + int(rng.integers(8, 55)))
+        y2 = min(470, y1 + int(rng.integers(8, 45)))
+        shade = int(rng.integers(10, 190))
+        cv2.rectangle(image, (x1, y1), (x2, y2), (shade,) * 3, 2)
+    shifted = cv2.warpPerspective(
+        image,
+        np.float32([[1.01, 0.015, 18], [-0.01, 0.99, 12], [0.00002, -0.00003, 1]]),
+        (720, 480),
+        borderValue=(235, 235, 235),
+    )
+
+    result = compare(image, shifted, Config())
+
+    assert result["duplicate"] is True
+    assert result["alignment"]["available"] is True
+    assert result["alignment"]["correlation"] >= 0.45
+
+
+def test_aligned_match_on_only_one_half_is_not_dropped():
+    left = synthetic_line_page()
+    right = left.copy()
+    rng = np.random.default_rng(4)
+    right[:, right.shape[1] // 2 :] = rng.integers(
+        0,
+        255,
+        right[:, right.shape[1] // 2 :].shape,
+        dtype=np.uint8,
+    )
+    shifted = cv2.warpAffine(
+        right,
+        np.float32([[1, 0, 8], [0, 1, 5]]),
+        (right.shape[1], right.shape[0]),
+        borderValue=(240, 240, 240),
+    )
+
+    assert compare(left, shifted, Config())["duplicate"] is False
+
+
 def test_roi_crop_removes_desk_and_preserves_corners():
     image = np.zeros((201, 301, 3), np.uint8)
     image[40:161, 60:241] = (40, 100, 220)

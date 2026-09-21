@@ -260,15 +260,16 @@ def adjacent_quality_check(a, b, config):
         float(gray_thumb(b).std()),
     ) >= 8.0
     hash_limit = max(12, int(config.duplicate_hash_distance) * 3)
-    suspect = (
-        informative
-        and result["ssim"] >= config.duplicate_suspect_ssim
+    direct_suspect = (
+        result["ssim"] >= config.duplicate_suspect_ssim
         and result["hash_distance"] <= hash_limit
     )
+    suspect = informative and (direct_suspect or result["alignment"]["suspect"])
     return {
         "suspect": bool(suspect),
         "duplicate": bool(result["duplicate"]),
         "ssim": round(float(result["ssim"]), 6),
         "hash_distance": int(result["hash_distance"]),
         "informative": bool(informative),
+        "alignment": result["alignment"],
     }

@@ -72,25 +72,28 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
       </div>
     </div>
 
-    {missing.length ? <div className="missing-candidates">
-      {missing.map(candidate => <div className="missing-candidate" key={candidate.id}>
-        <div>
-          <strong>{candidate.time.toFixed(2)}s</strong>
-          <span>
-            {candidate.source === 'page_turn_v2'
-              ? `${candidate.leftTurn || 'ページめくり'} → ${candidate.rightTurn || 'ページめくり'} の間に安定区間なし`
-              : `${candidate.before} → ${candidate.after} の間が通常の約 ${candidate.gapRatio.toFixed(1)} 倍`}
-          </span>
-        </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onSelectTime(candidate.time)}
-        >
-          この時刻を追加欄へ
-        </button>
-      </div>)}
-    </div> : <p className="timeline-empty">{usingPageTurns
+    {missing.length ? <details className="advanced-settings missing-details">
+      <summary>欠落候補の詳細（{missing.length}件）</summary>
+      <div className="missing-candidates">
+        {missing.map(candidate => <div className="missing-candidate" key={candidate.id}>
+          <div>
+            <strong>{candidate.time.toFixed(2)}s</strong>
+            <span>
+              {candidate.source === 'page_turn_v2'
+                ? `${candidate.leftTurn || 'ページめくり'} → ${candidate.rightTurn || 'ページめくり'} の間に安定区間なし`
+                : `${candidate.before} → ${candidate.after} の間が通常の約 ${candidate.gapRatio.toFixed(1)} 倍`}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onSelectTime(candidate.time)}
+          >
+            この時刻を追加欄へ
+          </button>
+        </div>)}
+      </div>
+    </details> : <p className="timeline-empty">{usingPageTurns
       ? 'ページめくりイベントから欠落候補は見つかりませんでした。'
       : '大きな時間間隔の欠落候補は見つかりませんでした。'}</p>}
   </section>;

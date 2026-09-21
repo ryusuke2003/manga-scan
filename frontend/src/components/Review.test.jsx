@@ -10,6 +10,7 @@ import Review, {
   safeFixSummary,
 } from './Review.jsx';
 import Setup from './Setup.jsx';
+import VideoTimeline from './VideoTimeline.jsx';
 
 const manifest = {
   config: { output_layout: 'spread', candidate_selection_mode: 'per_page', spine_ratio: .5 },
@@ -21,6 +22,31 @@ const manifest = {
     path: 'original.png', preview: 'preview.png', hand_mask: 'mask.png',
     roi: [[0, 0], [1, 0], [1, 1], [0, 1]], metrics: { score: 1, sharpness: 100, hand_overlap: 0 } }] }],
 };
+
+it('keeps the long missing-candidate list collapsed by default', () => {
+  const timelineManifest = {
+    metadata: { duration: 40 },
+    spreads: [],
+    page_turn_analysis: {
+      version: 2,
+      missing_candidates: [{
+        id: 'turn_0001-turn_0002',
+        time: 17.9,
+        left_turn: 'turn_0001',
+        right_turn: 'turn_0002',
+      }],
+    },
+  };
+
+  render(<VideoTimeline manifest={timelineManifest} busy={false} onSelectTime={vi.fn()} />);
+
+  const summary = screen.getByText('欠落候補の詳細（1件）');
+  const details = summary.closest('details');
+  expect(details.open).toBe(false);
+
+  fireEvent.click(summary);
+  expect(details.open).toBe(true);
+});
 
 it('reorders full page IDs deterministically', () => {
   expect(reorderPageIds(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);

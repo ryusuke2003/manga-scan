@@ -792,7 +792,12 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       </div>}
       {page.final_quality?.reasons?.length > 0 && <div className="dewarp-meta">
         <span>完成画像QA: {reasons(page.final_quality.reasons)}</span>
-        {page.final_quality.adjacent_duplicate && <p className="muted">前ページ {page.final_quality.adjacent_duplicate.other_page_id} と類似 · SSIM {(page.final_quality.adjacent_duplicate.ssim * 100).toFixed(1)}%</p>}
+        {page.final_quality.adjacent_duplicate && <p className="muted">
+          前ページ {page.final_quality.adjacent_duplicate.other_page_id} と類似
+          {page.final_quality.adjacent_duplicate.alignment?.available
+            ? ` · 位置補正後 ${(page.final_quality.adjacent_duplicate.alignment.correlation * 100).toFixed(1)}%`
+            : ` · SSIM ${(page.final_quality.adjacent_duplicate.ssim * 100).toFixed(1)}%`}
+        </p>}
       </div>}
       {page.finger_repair && page.finger_repair.status !== 'disabled' && <div className="dewarp-meta">
         <span>{repairTitle(page.finger_repair)}: {page.finger_repair.status === 'complete' ? '完了' : page.finger_repair.status === 'clean' ? repairCleanLabel(page.finger_repair) : page.finger_repair.status === 'unavailable' ? 'マスクなし' : '一部のみ'}{fingerRepairCoverageSummary(page.finger_repair) ? ` · ${fingerRepairCoverageSummary(page.finger_repair)}` : ''}{page.finger_repair.donors?.length ? ` · donor #${page.finger_repair.donors.join(', #')}` : ''}{fingerFallbackLabel(page.finger_repair)}{localAlignmentSummary(page.finger_repair) ? ` · ${localAlignmentSummary(page.finger_repair)}` : ''}</span>
