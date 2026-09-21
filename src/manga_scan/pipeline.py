@@ -25,6 +25,7 @@ from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_
 from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
+from .high_fps_fallback import best_low_motion_run, fallback_reasons
 from .input_validation import load_bounded_rgb_image, validate_manifest_video
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads
@@ -1107,6 +1108,208 @@ def _resume_previous_spreads(project, manifest, cfg):
     return previous[-cfg.dedupe_window :]
 
 
+def _high_fps_window_samples(manifest, cfg, start, end, requested_fps):
+    source_fps = float(manifest.get("metadata", {}).get("fps") or requested_fps)
+    effective_fps = min(float(requested_fps), source_fps) if source_fps > 0 else float(requested_fps)
+    analysis_fps = float(manifest.get("analysis_fps") or cfg.video_sample_fps)
+    if effective_fps <= analysis_fps + 1e-6 or end <= start:
+        return [], effective_fps
+
+    height = int(manifest["metadata"]["display_height"])
+    width = int(manifest["metadata"]["display_width"])
+    analysis_width = min(cfg.analysis_width, width)
+    size = (
+        analysis_width,
+        max(2, round(height * analysis_width / width)),
+    )
+
+    samples = []
+    previous = None
+    stream = sample_frames(
+        manifest["source"],
+        effective_fps,
+        size,
+        cfg.hwaccel,
+        start_time=max(0.0, float(start)),
+    )
+    try:
+        for index, timestamp, frame in stream:
+            if timestamp > float(end) + (0.5 / effective_fps):
+                break
+            cropped = warp_roi(frame, manifest["roi"])
+            motion = motion_score(previous, cropped) if previous is not None else 1.0
+            samples.append(Sample(index, timestamp, motion, sharpness(cropped)))
+            previous = cropped
+    finally:
+        stream.close()
+    return samples, effective_fps
+
+
+def _add_auto_high_fps_candidates(
+    project,
+    manifest,
+    cfg,
+    detector,
+    spread_id,
+    records,
+    start,
+    end,
+    reasons,
+):
+    samples, effective_fps = _high_fps_window_samples(
+        manifest,
+        cfg,
+        start,
+        end,
+        cfg.auto_high_fps_fallback_fps,
+    )
+    if not samples:
+        return [], effective_fps
+
+    eligible = [sample for sample in samples if sample.motion <= cfg.turn_threshold]
+    if not eligible:
+        return [], effective_fps
+
+    limit = max(3, min(6, int(cfg.candidates_per_spread)))
+    picked = choose_candidates(eligible, limit)
+    existing_times = [float(item["time"]) for item in records]
+    duplicate_tolerance = 0.5 / effective_fps
+    picked = [
+        sample
+        for sample in picked
+        if all(abs(sample.time - current) > duplicate_tolerance for current in existing_times)
+    ]
+    if not picked:
+        return [], effective_fps
+
+    next_id = max((int(item["id"]) for item in records), default=-1) + 1
+    added = []
+    for offset, sample in enumerate(picked):
+        raise_if_cancelled(project)
+        record = candidate(
+            project,
+            manifest,
+            cfg,
+            detector,
+            spread_id,
+            next_id + offset,
+            sample,
+        )
+        record["rescan"] = {
+            "automatic": True,
+            "trigger_reasons": list(reasons),
+            "window_start": float(start),
+            "window_end": float(end),
+            "requested_fps": float(cfg.auto_high_fps_fallback_fps),
+            "effective_fps": float(effective_fps),
+        }
+        added.append(record)
+    records.extend(added)
+    _augment_temporal_hand_masks(project, records, cfg)
+    return added, effective_fps
+
+
+def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, segments, fps):
+    analysis = analyze_page_turns(
+        motion_samples,
+        segments,
+        cfg.motion_threshold,
+        cfg.turn_threshold,
+        fps,
+    )
+    if not cfg.auto_high_fps_fallback:
+        return segments, analysis
+
+    recovered = []
+    for missing in list(analysis.get("missing_candidates", [])):
+        raise_if_cancelled(project)
+        samples, effective_fps = _high_fps_window_samples(
+            manifest,
+            cfg,
+            float(missing["window_start"]),
+            float(missing["window_end"]),
+            cfg.auto_high_fps_fallback_fps,
+        )
+        stable = best_low_motion_run(
+            samples,
+            cfg.motion_threshold,
+            effective_fps,
+            cfg.auto_high_fps_min_stable_seconds,
+        )
+        if not stable:
+            continue
+        segments.append(stable)
+        best = min(stable, key=lambda sample: sample.motion)
+        recovered.append(
+            {
+                "id": missing["id"],
+                "original_time": float(missing["time"]),
+                "time": float(best.time),
+                "start": float(stable[0].time),
+                "end": float(stable[-1].time),
+                "sample_count": len(stable),
+                "requested_fps": float(cfg.auto_high_fps_fallback_fps),
+                "effective_fps": float(effective_fps),
+                "reason": "high_fps_stable_interval_recovered",
+            }
+        )
+
+    if recovered:
+        segments.sort(key=lambda segment: float(segment[0].time))
+        analysis = analyze_page_turns(
+            motion_samples,
+            segments,
+            cfg.motion_threshold,
+            cfg.turn_threshold,
+            fps,
+        )
+    analysis["high_fps_fallback"] = {
+        "enabled": True,
+        "requested_fps": float(cfg.auto_high_fps_fallback_fps),
+        "min_stable_seconds": float(cfg.auto_high_fps_min_stable_seconds),
+        "recovered_candidates": recovered,
+    }
+    return segments, analysis
+
+
+def _score_row(spread_id, record):
+    metrics = record["metrics"]
+    left = record["page_metrics"]["left"]
+    right = record["page_metrics"]["right"]
+    relative = metrics.get("relative_quality", {})
+    return {
+        "spread": spread_id,
+        "candidate": record["id"],
+        "time": record["time"],
+        **metrics,
+        "left_score": left.get("score"),
+        "right_score": right.get("score"),
+        "left_sharpness": left.get("sharpness"),
+        "right_sharpness": right.get("sharpness"),
+        "left_hand_overlap": left.get("hand_overlap"),
+        "right_hand_overlap": right.get("hand_overlap"),
+        "left_glare_overlap": left.get("glare_overlap", 0.0),
+        "right_glare_overlap": right.get("glare_overlap", 0.0),
+        "selection_score": metrics.get("selection_score"),
+        "relative_sharpness": relative.get("sharpness"),
+        "relative_motion": relative.get("motion"),
+        "relative_hand_overlap": relative.get("hand_overlap"),
+        "relative_glare": relative.get("glare"),
+        "relative_base_score": relative.get("base_score"),
+        "glare": metrics.get("glare"),
+        "glare_overlap": metrics.get("glare_overlap", 0.0),
+        "sharpness_median": metrics.get("sharpness_median"),
+        "sharpness_p10": metrics.get("sharpness_p10"),
+        "sharpness_worst": metrics.get("sharpness_worst"),
+        "left_selection_score": left.get("selection_score"),
+        "right_selection_score": right.get("selection_score"),
+        "left_glare": left.get("glare"),
+        "right_glare": right.get("glare"),
+        "left_sharpness_p10": left.get("sharpness_p10"),
+        "right_sharpness_p10": right.get("sharpness_p10"),
+    }
+
+
 def run(project, roi=None):
     project = Path(project).resolve()
     with project_lock(project):
@@ -1276,11 +1479,12 @@ def run(project, roi=None):
                         "No stable intervals found. Hold pages longer, tune "
                         "motion_threshold/stable_frames, or add frames manually"
                     )
-                page_turn_analysis = analyze_page_turns(
+                segments, page_turn_analysis = _recover_missing_segments_high_fps(
+                    project,
+                    manifest,
+                    cfg,
                     motion_samples,
                     segments,
-                    cfg.motion_threshold,
-                    cfg.turn_threshold,
                     fps,
                 )
                 manifest["page_turn_analysis"] = page_turn_analysis
@@ -1326,82 +1530,40 @@ def run(project, roi=None):
                     records.append(
                         candidate(project, manifest, cfg, detector, spread_id, j, sample)
                     )
-                    score_rows.append(
-                        {
-                            "spread": spread_id,
-                            "candidate": j,
-                            "time": sample.time,
-                            **records[-1]["metrics"],
-                            "left_score": records[-1]["page_metrics"]["left"]["score"],
-                            "right_score": records[-1]["page_metrics"]["right"]["score"],
-                            "left_sharpness": records[-1]["page_metrics"]["left"]["sharpness"],
-                            "right_sharpness": records[-1]["page_metrics"]["right"]["sharpness"],
-                            "left_hand_overlap": records[-1]["page_metrics"]["left"]["hand_overlap"],
-                            "right_hand_overlap": records[-1]["page_metrics"]["right"]["hand_overlap"],
-                            "left_glare_overlap": records[-1]["page_metrics"]["left"].get(
-                                "glare_overlap", 0.0
-                            ),
-                            "right_glare_overlap": records[-1]["page_metrics"]["right"].get(
-                                "glare_overlap", 0.0
-                            ),
-                        }
-                    )
                 _augment_temporal_hand_masks(project, records, cfg)
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
-
-                # Candidate scoring v2 is relative to this spread, so the values
-                # only exist after all candidates have been collected. Persist
-                # them back into candidate JSON and the debug CSV for inspection.
-                recent_rows = score_rows[-len(records):]
-                for record, row in zip(records, recent_rows):
-                    relative = record["metrics"].get("relative_quality", {})
-                    row.update(
-                        {
-                            "score": record["metrics"].get("score"),
-                            "hand_overlap": record["metrics"].get("hand_overlap"),
-                            "left_score": record["page_metrics"]["left"].get("score"),
-                            "right_score": record["page_metrics"]["right"].get("score"),
-                            "left_hand_overlap": record["page_metrics"]["left"].get(
-                                "hand_overlap"
-                            ),
-                            "right_hand_overlap": record["page_metrics"]["right"].get(
-                                "hand_overlap"
-                            ),
-                            "selection_score": record["metrics"].get("selection_score"),
-                            "relative_sharpness": relative.get("sharpness"),
-                            "relative_motion": relative.get("motion"),
-                            "relative_hand_overlap": relative.get("hand_overlap"),
-                            "relative_glare": relative.get("glare"),
-                            "relative_base_score": relative.get("base_score"),
-                            "glare": record["metrics"].get("glare"),
-                            "glare_overlap": record["metrics"].get("glare_overlap", 0.0),
-                            "sharpness_median": record["metrics"].get("sharpness_median"),
-                            "sharpness_p10": record["metrics"].get("sharpness_p10"),
-                            "sharpness_worst": record["metrics"].get("sharpness_worst"),
-                            "left_selection_score": record["page_metrics"]["left"].get(
-                                "selection_score"
-                            ),
-                            "right_selection_score": record["page_metrics"]["right"].get(
-                                "selection_score"
-                            ),
-                            "left_glare": record["page_metrics"]["left"].get("glare"),
-                            "right_glare": record["page_metrics"]["right"].get("glare"),
-                            "left_glare_overlap": record["page_metrics"]["left"].get(
-                                "glare_overlap", 0.0
-                            ),
-                            "right_glare_overlap": record["page_metrics"]["right"].get(
-                                "glare_overlap", 0.0
-                            ),
-                            "left_sharpness_p10": record["page_metrics"]["left"].get(
-                                "sharpness_p10"
-                            ),
-                            "right_sharpness_p10": record["page_metrics"]["right"].get(
-                                "sharpness_p10"
-                            ),
-                        }
+                initial_selected = selected
+                initial_selected_pages = dict(selected_pages)
+                reasons = (
+                    fallback_reasons(records, selection_mode)
+                    if cfg.auto_high_fps_fallback
+                    else []
+                )
+                added, effective_fps = ([], float(manifest.get("analysis_fps") or cfg.video_sample_fps))
+                if reasons:
+                    added, effective_fps = _add_auto_high_fps_candidates(
+                        project,
+                        manifest,
+                        cfg,
+                        detector,
+                        spread_id,
+                        records,
+                        interval["start"],
+                        interval["end"],
+                        reasons,
                     )
+                    if added:
+                        selected, selected_pages = choose_candidate_selection(
+                            records,
+                            selection_mode,
+                        )
+
+                # Candidate scoring v2 is relative to the final candidate pool.
+                # Persist both normal and automatically rescanned candidates.
+                for record in records:
                     write_json(project / Path(record["path"]).with_suffix(".json"), record)
+                    score_rows.append(_score_row(spread_id, record))
 
                 spread = {
                     "id": spread_id,
@@ -1413,6 +1575,18 @@ def run(project, roi=None):
                     "candidate_selection_mode": cfg.candidate_selection_mode,
                     "extra_suspect": [],
                 }
+                if reasons:
+                    spread["auto_high_fps_fallback"] = {
+                        "trigger_reasons": reasons,
+                        "requested_fps": float(cfg.auto_high_fps_fallback_fps),
+                        "effective_fps": float(effective_fps),
+                        "added": len(added),
+                        "candidate_ids": [record["id"] for record in added],
+                        "selection_changed": (
+                            selected != initial_selected
+                            or selected_pages != initial_selected_pages
+                        ),
+                    }
                 if i and typical_gap and gaps[i - 1] > typical_gap * cfg.interval_gap_factor:
                     spread["extra_suspect"].append("interval_gap")
                 thumbnail = selected_spread_preview(project, spread, cfg)
