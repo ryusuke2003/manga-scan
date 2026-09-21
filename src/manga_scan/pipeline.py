@@ -1114,7 +1114,11 @@ def run(project, roi=None):
         if manifest["status"] == "complete":
             raise ValueError("Project already processed. Use review edits or create a new project")
         cfg = Config.from_dict(manifest["config"])
-        validate_video_metadata(manifest["metadata"], cfg)
+        validate_video_metadata(
+            manifest["metadata"],
+            cfg,
+            require_dimensions=True,
+        )
         previous_roi = manifest.get("roi")
         requested_roi = validate_roi(roi if roi is not None else previous_roi).tolist()
         checkpoint = manifest.get("processing_checkpoint") or {}
