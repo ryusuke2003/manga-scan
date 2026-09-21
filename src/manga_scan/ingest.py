@@ -6,6 +6,7 @@ import cv2
 
 from .config import Config
 from .cover_detect import detect_cover_quad
+from .input_validation import validate_video_collection, validate_video_metadata
 from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .perspective import rotate_roi, validate_roi
 from .quality_safety import normalize_expected_page_count
@@ -21,12 +22,18 @@ def _concat_escape(path):
     return str(path).replace("'", "'\\''")
 
 
-def _prepare_video_source(videos, project, copy_source):
+def _prepare_video_source(videos, project, copy_source, config):
     if isinstance(videos, (str, Path)):
         videos = [videos]
     if not isinstance(videos, (list, tuple)) or not videos:
         raise ValueError("Select at least one video")
     paths = [local_video(video) for video in videos]
+    source_metadatas = []
+    for path in paths:
+        metadata = probe(path)
+        validate_video_metadata(metadata, config, label=path.name)
+        source_metadatas.append(metadata)
+    validate_video_collection(source_metadatas, config)
     project.mkdir(parents=True, exist_ok=True)
     (project / "source").mkdir(exist_ok=True)
 
@@ -40,14 +47,14 @@ def _prepare_video_source(videos, project, copy_source):
         source_files = [str(path) for path in paths]
 
     if len(source_files) == 1:
-        return source_files[0], source_files
+        return source_files[0], source_files, source_metadatas
 
     list_path = project / "source/input.ffconcat"
     lines = ["ffconcat version 1.0"]
     for path in source_files:
         lines.append(f"file '{_concat_escape(Path(path).resolve())}'")
     list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return str(list_path), source_files
+    return str(list_path), source_files, source_metadatas
 
 
 def create_project(
@@ -61,8 +68,14 @@ def create_project(
     project = Path(project).expanduser().resolve()
     if project.exists() and any(project.iterdir()):
         raise ValueError("Project directory must be empty; choose a new directory")
-    source, source_files = _prepare_video_source(video, project, copy_source)
+    source, source_files, _source_metadatas = _prepare_video_source(
+        video,
+        project,
+        copy_source,
+        config,
+    )
     metadata = probe(source)
+    validate_video_metadata(metadata, config, label="Combined video")
     first = extract_frame(metadata["path"])
     if config.auto_rotation and config.rotation:
         config.auto_rotation = False
@@ -158,6 +171,7 @@ def _refresh_reference_candidates(project, manifest, cfg):
     if not manifest.get("source") or not manifest.get("metadata"):
         reference["candidates"] = []
         return
+    validate_video_metadata(manifest["metadata"], cfg)
 
     start_time = float(cover.get("time", 0.0)) if cover.get("status") == "ready" else 0.0
     try:
@@ -231,6 +245,7 @@ def set_setup_frame(project, kind, time, confirm=False):
             raise ValueError("Project already processed")
         timestamp = _setup_time(manifest, time)
         cfg = Config.from_dict(manifest["config"])
+        validate_video_metadata(manifest["metadata"], cfg)
         image = extract_frame(manifest["source"], timestamp, hwaccel=cfg.hwaccel)
         path = f"source/{kind}_frame.png"
         preview_path = f"source/{kind}_preview.png"
