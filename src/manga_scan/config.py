@@ -39,6 +39,9 @@ class Config:
     dedupe_window: int = 3
     refine_quad: bool = True
     quad_max_shift: float = 0.025
+    roi_tracking: bool = True
+    roi_tracking_max_step: float = 0.08
+    roi_tracking_max_total: float = 0.16
     perspective_mode: str = "spread"
     page_contour_min_confidence: float = 0.55
     split_mode: str = "auto"
@@ -123,6 +126,8 @@ class Config:
             "duplicate_suspect_ssim": (0, 1),
             "dedupe_window": (1, 50),
             "quad_max_shift": (0, 0.1),
+            "roi_tracking_max_step": (0.01, 0.25),
+            "roi_tracking_max_total": (0.02, 0.4),
             "page_contour_min_confidence": (0, 1),
             "hand_padding": (0, 0.1),
             "finger_repair_min_coverage": (0, 1),
@@ -166,6 +171,8 @@ class Config:
             raise ValueError("finger_repair requires hand_backend='mediapipe'")
         if self.turn_threshold < self.motion_threshold:
             raise ValueError("turn_threshold must be >= motion_threshold")
+        if self.roi_tracking_max_total < self.roi_tracking_max_step:
+            raise ValueError("roi_tracking_max_total must be >= roi_tracking_max_step")
         if self.duplicate_suspect_ssim > self.duplicate_ssim:
             raise ValueError("duplicate_suspect_ssim must be <= duplicate_ssim")
         return self

@@ -55,8 +55,8 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 除外はmanifestのフラグで行い、重複候補も画像を残す。
 初回解析で自動PDF生成。編集後は `pdf_stale=true` とし再出力を明示する。
 
-改善余地: optical flow併用、より高度な2D/3D曲面推定、
-追跡によるROI移動、複数動画の統合、画像追加、ドラッグ並べ替え、ジョブ再開。
+改善余地: より高度な2D/3D曲面推定、長時間4Kでの性能最適化、
+実写条件ごとの輪郭/追跡confidence校正。
 
 ## 4. アルゴリズム
 
@@ -91,7 +91,7 @@ ROI射影画像のmotion判定はv2で、grayscale化後に縮小・低域化し
 元解像度の再取得は実際に採用された候補IDだけに限定し、左右が同じ候補なら1回、異なる候補なら最大2回。
 manifestには後方互換用の `selected` に加えて `selected_pages.left/right` を保存し、各pageにも
 `candidate_id` / `candidate_time` を記録する。レビューUIでは左右片側だけ候補を差し替えられる。
-`perspective_mode="per_page"` も同時に有効な場合は、同じ見開きの候補フレーム群からページ輪郭のconsensusを作り、採用ページ側へ反映して左右別射影変換を行う。左右が別候補なら選択側だけconsensusを上書きし、他方はその候補自身の輪郭を維持する。輪郭・fallback状態も `*_by_side` としてmanifestへ保持する。
+`perspective_mode="per_page"` も同時に有効な場合は、同じ見開きの候補フレーム群を採用候補へoptical-flow homographyで位置合わせしてからページ輪郭のconsensusを作る。候補間で本やカメラが数十pxずれても、移動そのものを輪郭outlierとして捨てず、同じ座標系で左右ページ境界を比較できる。左右が別候補なら左右それぞれの採用候補をanchorとして独立にconsensusし、選択側だけ結果を反映する。輪郭・alignment・fallback状態もmanifestへ保持する。
 
 レビューUIの動画タイムラインは各見開きの区間と採用候補時刻を動画全体へ配置する。
 欠落候補v2は高motionのページめくりイベントを時間方向にまとめ、隣接する2イベントの間に
@@ -158,7 +158,13 @@ glare mask / unresolved maskはmanifestと `debug/finger_repair/` に残す。
 両ページがconfidence閾値を満たし、外側4点から作る見開きquadも有効な場合だけ自動ROIとして採用する。
 検出結果はセットアップ画面へ4点プレビューし、ユーザーはそのまま確定できる。どの段階でも不確実ならROIを保存せず、
 従来の4点手動指定へfallbackする。解析本体はこの確定済み基準ROIを使って机を外す。`rotation` が指定されている場合は、左右を決める前に見開き全体・ROI・手マスクを同じ向きへ回転する。これにより90°/270°の横向き撮影でも上/下ではなく見た目上の左/右ページを得る。auto splitは回転後画像の中央±4%の暗い縦谷を検索する実験機能。
-候補生成時の保守的な自動外周補正は元ROIより外へ広げず、各点最大2.5%の移動まで。検出失敗はROI fallbackと警告。
+stable intervalごとの候補生成前に、直前の採用見開きと現在区間の先頭候補を比較し、
+前回ROI内部の特徴点だけをLucas-Kanade optical flowで追跡する。forward/backward一致、
+RANSAC homographyのinlier率・再投影誤差・ROI内特徴点coverageを満たす場合だけ前回ROIを現在座標へ写し、
+その見開きのtracking base ROIとして使う。1見開きのcorner移動は `roi_tracking_max_step`（既定0.08）、
+確定した基準ROIからの累積移動は `roi_tracking_max_total`（既定0.16）で制限する。
+追跡失敗や上限超過では直前のtrusted ROIを維持し、机の静止特徴を本の移動と誤認しないよう
+特徴点探索を本ROI内部へ限定する。そのtracking base ROIに対して、従来の保守的な自動外周微調整を各点最大2.5%まで行う。
 `output_layout="spread"` では、採用候補の回転後元フレームから左右ページのquadを検出する。両方が
 `page_contour_min_confidence` を満たした場合は、左quadの左上・左下と右quadの右上・右下を
 見開き外周として1回だけ射影変換する。内側4点は使わないため、中央の綴じ目を分割・再結合しない。

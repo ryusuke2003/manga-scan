@@ -37,6 +37,7 @@ from .quality_safety import (
     normalize_expected_page_count,
     refresh_review_safety,
 )
+from .roi_tracking import track_spread_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
@@ -71,10 +72,10 @@ def update(project, manifest, progress, message):
     LOG.info("%3.0f%% %s", progress * 100, message)
 
 
-def candidate(project, manifest, cfg, detector, spread_id, number, sample):
+def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_roi=None):
     # Only candidate timestamps seek back to the original video.
     image = extract_frame(manifest["source"], sample.time, cfg.analysis_width, cfg.hwaccel)
-    roi, quad_ok = manifest["roi"], True
+    roi, quad_ok = (base_roi if base_roi is not None else manifest["roi"]), True
     if cfg.refine_quad:
         roi, quad_ok = refine_quad(image, roi, cfg.quad_max_shift)
     overlap, mask = detector.detect(image, roi)
@@ -139,6 +140,11 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample):
         "hand_mask": f"{base}_hand_mask.png",
         "glare_mask": f"{base}_glare_mask.png",
         "roi": roi,
+        "tracking_base_roi": (
+            validate_roi(base_roi).tolist()
+            if base_roi is not None
+            else validate_roi(manifest["roi"]).tolist()
+        ),
         "metrics": metrics,
         "page_metrics": page_metrics,
         "page_suspect": page_suspect,
@@ -1098,6 +1104,27 @@ def _write_score_rows(project, rows):
         writer.writerows(rows)
 
 
+def _resume_tracking_state(project, manifest):
+    spreads = manifest.get("spreads", [])
+    if not spreads:
+        return None, validate_roi(manifest["roi"]).tolist()
+    for spread in reversed(spreads):
+        candidates = spread.get("candidates", [])
+        if not candidates:
+            continue
+        selected_id = spread.get("selected")
+        record = next(
+            (item for item in candidates if item.get("id") == selected_id),
+            candidates[0],
+        )
+        image = cv2.imread(str(project / record["path"]), cv2.IMREAD_COLOR)
+        if image is None:
+            continue
+        roi = spread.get("tracked_roi", record.get("roi", manifest["roi"]))
+        return image, validate_roi(roi).tolist()
+    return None, validate_roi(manifest["roi"]).tolist()
+
+
 def _resume_previous_spreads(project, manifest, cfg):
     previous = []
     for spread in manifest.get("spreads", []):
@@ -1155,6 +1182,7 @@ def _add_auto_high_fps_candidates(
     start,
     end,
     reasons,
+    base_roi=None,
 ):
     samples, effective_fps = _high_fps_window_samples(
         manifest,
@@ -1194,6 +1222,7 @@ def _add_auto_high_fps_candidates(
             spread_id,
             next_id + offset,
             sample,
+            base_roi=base_roi,
         )
         record["rescan"] = {
             "automatic": True,
@@ -1374,6 +1403,7 @@ def run(project, roi=None):
                     manifest,
                     cfg,
                 )
+                tracking_image, tracking_roi = _resume_tracking_state(project, manifest)
                 score_rows = _load_score_rows(project)
                 update(
                     project,
@@ -1512,6 +1542,8 @@ def run(project, roi=None):
                 save_manifest(project, manifest)
                 raise_if_cancelled(project)
                 previous_spreads = []
+                tracking_image = None
+                tracking_roi = validate_roi(manifest["roi"]).tolist()
                 score_rows = []
                 completed_spreads = 0
 
@@ -1524,11 +1556,53 @@ def run(project, roi=None):
                     Sample(**sample) for sample in interval["candidates"]
                 ]
                 spread_id = f"spread_{i + 1:04d}"
+                spread_roi = validate_roi(tracking_roi).tolist()
+                roi_tracking = {
+                    "tracked": False,
+                    "status": "reference" if tracking_image is None else "previous_roi",
+                    "roi": spread_roi,
+                    "step_shift": 0.0,
+                    "total_shift": float(
+                        np.max(
+                            np.linalg.norm(
+                                np.asarray(spread_roi, dtype=np.float32)
+                                - np.asarray(manifest["roi"], dtype=np.float32),
+                                axis=1,
+                            )
+                        )
+                    ),
+                }
+                if cfg.roi_tracking and tracking_image is not None and candidate_samples:
+                    tracking_probe = extract_frame(
+                        manifest["source"],
+                        candidate_samples[0].time,
+                        cfg.analysis_width,
+                        cfg.hwaccel,
+                    )
+                    roi_tracking = track_spread_roi(
+                        tracking_image,
+                        tracking_probe,
+                        tracking_roi,
+                        manifest["roi"],
+                        max_step=cfg.roi_tracking_max_step,
+                        max_total=cfg.roi_tracking_max_total,
+                    )
+                    spread_roi = roi_tracking["roi"]
+
                 records = []
                 for j, sample in enumerate(candidate_samples):
                     raise_if_cancelled(project)
                     records.append(
-                        candidate(project, manifest, cfg, detector, spread_id, j, sample)
+                        candidate(
+                            project,
+                            manifest,
+                            cfg,
+                            detector,
+                            spread_id,
+                            j,
+                            sample,
+                            base_roi=spread_roi,
+                        )
                     )
                 _augment_temporal_hand_masks(project, records, cfg)
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
@@ -1552,6 +1626,7 @@ def run(project, roi=None):
                         interval["start"],
                         interval["end"],
                         reasons,
+                        base_roi=spread_roi,
                     )
                     if added:
                         selected, selected_pages = choose_candidate_selection(
@@ -1573,6 +1648,8 @@ def run(project, roi=None):
                     "selected": selected,
                     "selected_pages": selected_pages,
                     "candidate_selection_mode": cfg.candidate_selection_mode,
+                    "tracked_roi": validate_roi(spread_roi).tolist(),
+                    "roi_tracking": roi_tracking,
                     "extra_suspect": [],
                 }
                 if reasons:
@@ -1603,6 +1680,17 @@ def run(project, roi=None):
                     previous_spreads = previous_spreads[-cfg.dedupe_window :]
                 raise_if_cancelled(project)
                 pages = render_spread(project, manifest, spread)
+                selected_tracking = _candidate_by_id(spread, spread["selected"])
+                next_tracking = cv2.imread(
+                    str(project / selected_tracking["path"]),
+                    cv2.IMREAD_COLOR,
+                )
+                if next_tracking is not None:
+                    tracking_image = next_tracking
+                    # Keep temporal tracking independent from candidate-local
+                    # refine_quad shrinkage. Per-candidate refinement is a render
+                    # detail, while tracked_roi is the trusted book position.
+                    tracking_roi = validate_roi(spread["tracked_roi"]).tolist()
                 manifest["spreads"].append(spread)
                 manifest["pages"].extend(pages)
                 _write_score_rows(project, score_rows)
@@ -1806,6 +1894,7 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
                     spread["id"],
                     next_id + offset,
                     sample,
+                    base_roi=spread.get("tracked_roi"),
                 )
                 record["rescan"] = {
                     "center_time": center,

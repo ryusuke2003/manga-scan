@@ -36,6 +36,9 @@ dedupe_window = 3
 
 refine_quad = true # Conservative spread-ROI refinement
 quad_max_shift = 0.025
+roi_tracking = true # Track conservative book movement between stable spreads
+roi_tracking_max_step = 0.08 # Maximum normalized corner movement accepted per spread
+roi_tracking_max_total = 0.16 # Maximum cumulative movement from the confirmed reference ROI
 perspective_mode = "spread" # "spread" warps the whole spread; "per_page" warps left/right pages separately
 page_contour_min_confidence = 0.55 # spread/split page detection falls back to the reference ROI below this confidence
 split_mode = "auto" # Legacy/fallback split; "auto" searches a dark valley near the center

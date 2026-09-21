@@ -96,6 +96,49 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
         run(project, ROI)
 
 
+def test_scan_tracks_roi_between_stable_spreads(video, tmp_path, monkeypatch):
+    project = tmp_path / "tracked-book"
+    cfg = Config(
+        output_layout="spread",
+        hand_backend="none",
+        finger_repair=False,
+        analysis_width=480,
+        candidates_per_spread=2,
+        roi_tracking=True,
+    )
+    create_project(video, project, cfg)
+
+    calls = []
+
+    def fake_track(previous_image, current_image, previous_roi, reference_roi, **_kwargs):
+        calls.append((previous_image.shape, current_image.shape))
+        shifted = [
+            [min(0.99, float(x) + 0.01), float(y)]
+            for x, y in previous_roi
+        ]
+        return {
+            "tracked": True,
+            "status": "tracked",
+            "roi": shifted,
+            "step_shift": 0.01,
+            "total_shift": 0.01 * len(calls),
+            "area_ratio": 1.0,
+            "alignment": {"status": "aligned", "inliers": 20},
+        }
+
+    monkeypatch.setattr(pipeline, "track_spread_roi", fake_track)
+    manifest = run(project, ROI)
+
+    assert len(calls) == len(manifest["spreads"]) - 1
+    assert manifest["spreads"][0]["roi_tracking"]["status"] == "reference"
+    assert all(
+        spread["roi_tracking"]["tracked"]
+        for spread in manifest["spreads"][1:]
+    )
+    for spread in manifest["spreads"][1:]:
+        assert spread["tracked_roi"] == spread["candidates"][0]["tracking_base_roi"]
+
+
 def test_page_scoped_high_fps_rescan_adds_candidates_without_switching_selection(video, tmp_path):
     project = tmp_path / "rescan-book"
     cfg = Config(
