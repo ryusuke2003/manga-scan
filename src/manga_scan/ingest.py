@@ -6,7 +6,11 @@ import cv2
 
 from .config import Config
 from .cover_detect import detect_cover_quad
-from .input_validation import validate_video_collection, validate_video_metadata
+from .input_validation import (
+    validate_manifest_video,
+    validate_video_collection,
+    validate_video_metadata,
+)
 from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .perspective import rotate_roi, validate_roi
 from .quality_safety import normalize_expected_page_count
@@ -182,7 +186,7 @@ def _refresh_reference_candidates(project, manifest, cfg):
     if not manifest.get("source") or not manifest.get("metadata"):
         reference["candidates"] = []
         return
-    validate_video_metadata(manifest["metadata"], cfg)
+    validate_manifest_video(manifest, cfg, require_dimensions=True)
 
     start_time = float(cover.get("time", 0.0)) if cover.get("status") == "ready" else 0.0
     try:
@@ -256,7 +260,7 @@ def set_setup_frame(project, kind, time, confirm=False):
             raise ValueError("Project already processed")
         timestamp = _setup_time(manifest, time)
         cfg = Config.from_dict(manifest["config"])
-        validate_video_metadata(manifest["metadata"], cfg)
+        validate_manifest_video(manifest, cfg, require_dimensions=True)
         image = extract_frame(manifest["source"], timestamp, hwaccel=cfg.hwaccel)
         path = f"source/{kind}_frame.png"
         preview_path = f"source/{kind}_preview.png"
