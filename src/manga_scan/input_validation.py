@@ -52,8 +52,8 @@ def load_bounded_rgb_image(path, config):
 
 def validate_video_metadata(metadata, config, label="Video"):
     try:
-        width = int(metadata["width"])
-        height = int(metadata["height"])
+        width = int(metadata.get("width", metadata.get("display_width")))
+        height = int(metadata.get("height", metadata.get("display_height")))
         duration = float(metadata["duration"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"{label} metadata is missing or invalid") from exc
