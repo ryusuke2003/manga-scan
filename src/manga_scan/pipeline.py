@@ -25,11 +25,7 @@ from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_
 from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
-from .input_validation import (
-    load_bounded_rgb_image,
-    validate_manifest_video,
-    validate_video_metadata,
-)
+from .input_validation import load_bounded_rgb_image, validate_manifest_video
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
