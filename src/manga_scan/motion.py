@@ -4,7 +4,9 @@ import cv2
 import numpy as np
 
 _MOTION_MAX_SIDE = 512
-_MOTION_BLUR_SIGMA = 1.35
+# Motion is about page movement, not fine focus breathing. A modest low-pass
+# still preserves page-turn structure while making small AF changes much less dominant.
+_MOTION_BLUR_SIGMA = 1.8
 _PHOTOMETRIC_MIN_SPAN = 18.0
 _PHOTOMETRIC_GAIN_MIN = 0.82
 _PHOTOMETRIC_GAIN_MAX = 1.22
