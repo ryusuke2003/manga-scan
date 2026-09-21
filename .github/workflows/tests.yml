@@ -21,8 +21,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install frontend dependencies
-        run: npm --prefix frontend install --no-audit --no-fund --no-package-lock
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
       - name: Test frontend
         run: npm --prefix frontend test
       - name: Build frontend
