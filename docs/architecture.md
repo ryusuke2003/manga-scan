@@ -70,7 +70,11 @@ VFRでの候補seekはその時刻に対応する元フレームをFFmpegで取�
 最大1元フレーム程度ずれる場合がある。候補取得後に画質・手・幾何を再評価する。
 iPhoneスローモーションの実撮影fpsを推測して時間を圧縮しない。
 
-ROI射影画像をgrayscale → Gaussian blur → 平均絶対差 / 255。
+ROI射影画像のmotion判定はv2で、grayscale化後に縮小・低域化し、10/50/90 percentileから
+中程度のglobal gain/bias（AE変化）を補正する。さらにgradient structureのphase correlationが
+高confidenceかつ数px以内のときだけtranslationを打ち消し、軽いAF変化・微振動による差分を抑える。
+低contrast画像、大きなshift、低confidence alignmentは補正せず、最後に平均絶対差 / 255をmotionとする。
+既存の `motion_threshold` / `turn_threshold` のスケールは維持する。
 連続 `stable_frames` 回の低motionでstable。高閾値以上で区間を閉じturningへ。
 2つの閾値の間は候補に含めず、安定状態の区間は維持する。
 冒頭は前フレームがないため候補から外し、末尾の確定済み静止区間は必ずflush。

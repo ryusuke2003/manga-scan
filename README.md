@@ -273,8 +273,9 @@ manga-scan ui --config config.toml --projects projects --port 8766
 
 見開きとして採用できる「連続した低motion区間」が1件も見つからなかった状態です。
 デフォルトは `video_sample_fps=10` / `stable_frames=5` なので、目安として約0.5秒以上、
-`motion_threshold=0.012` 以下の状態が続く必要があります。肉眼で止まって見えても、
-カメラの微振動やAF/AEの変化でmotionが閾値を超えることがあります。
+`motion_threshold=0.012` 以下の状態が続く必要があります。motion判定v2では、中程度のAE変化、
+軽いAFの揺れ、数px程度の微振動を正規化してから差分を測ります。大きな本の移動やページめくり、
+強い露出変化は従来どおりmotionとして残します。
 
 まずは各見開きで手を引いて静止する時間を長くしてください。それでも検出できない場合は、
 `projects/<project-id>/debug/motion.csv` の `motion` 列を確認してから、例えば次のように少し緩めます。

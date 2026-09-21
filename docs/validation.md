@@ -12,6 +12,7 @@ OpenCV 4.14.0、MediaPipe 0.10.35。依存の全バージョンは
 最新の成否はGitHub Actionsと手元の `pytest` / Vitest結果を基準にし、この文書では変動する件数を固定しない。
 
 - ROI内motionの同一/変化、連続静止、末尾flush、短い静止の棄却。
+- motion v2が中程度のAE変化、軽いAF blur、数pxのmicro-jitterを低motionとして維持しつつ、実際のページ内容変更はturn thresholdを超えること。
 - 候補が時間区間の前半/後半へ分散すること。
 - dHash/SSIM、白紙を自動除外しないこと、片側だけ変わった見開きの保持。
 - 品質スコア各項目の減点、無効化した手検出の明示。
