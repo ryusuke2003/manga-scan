@@ -23,6 +23,8 @@ OpenCV 4.14.0、MediaPipe 0.10.35。依存の全バージョンは
 - ROIの透視補正、机の除外、自己交差/範囲外/NaN/誤順序の拒否。
 - 基準フレーム全体からの見開き外周自動検出、左右ページ検証、confidence不足時の4点手動fallback。
 - 左右ページ輪郭の自動検出、confidence不足時のfallback、左右別 `warpPerspective`。
+- 各見開きの複数候補を採用候補座標へtemporal homographyで整列してから輪郭consensusし、候補間で本位置がずれた場合も同じページ境界へ収束すること。
+- ROI追従は前回の本ROI内部だけから特徴点を取り、数%程度の本移動には追従する一方、step/cumulative上限を超える移動や低confidence homographyは拒否して直前ROIを維持すること。
 - 見開き出力で左右ページ+ノドを保護し、信頼できるページ輪郭の外側だけを紙色/白で隠すこと。confidence不足時は背景を変更しないこと。
 - 横向き90°/270°撮影で、回転後の見た目上の左右を分割し、ROI・手mask・左右別採点も同じ向きになること。
 - 奇数幅の左右分割で画素を欠落させないこと、auto spine、固定/自動湾曲remap。
