@@ -139,6 +139,121 @@ def test_page_scoped_high_fps_rescan_adds_candidates_without_switching_selection
     assert (project / refreshed["path"]).is_file()
 
 
+def test_automatic_high_fps_fallback_adds_candidates_only_for_triggered_spread(
+    video,
+    tmp_path,
+    monkeypatch,
+):
+    project = tmp_path / "auto-rescan-book"
+    cfg = Config(
+        output_layout="spread",
+        hand_backend="none",
+        finger_repair=False,
+        analysis_width=480,
+        candidates_per_spread=3,
+        auto_high_fps_fallback=True,
+        auto_high_fps_fallback_fps=60,
+    )
+    create_project(video, project, cfg)
+
+    calls = 0
+
+    def force_first_spread(records, selection_mode):
+        nonlocal calls
+        calls += 1
+        return ["low_sharpness"] if calls == 1 else []
+
+    monkeypatch.setattr(pipeline, "fallback_reasons", force_first_spread)
+    manifest = run(project, ROI)
+
+    first = manifest["spreads"][0]
+    info = first["auto_high_fps_fallback"]
+    assert info["trigger_reasons"] == ["low_sharpness"]
+    assert info["effective_fps"] == pytest.approx(30)
+    assert info["added"] > 0
+    assert info["candidate_ids"]
+    added = [
+        record
+        for record in first["candidates"]
+        if record["id"] in info["candidate_ids"]
+    ]
+    assert added
+    assert all(record["rescan"]["automatic"] is True for record in added)
+    assert all(
+        record["rescan"]["trigger_reasons"] == ["low_sharpness"]
+        for record in added
+    )
+    assert all(
+        "auto_high_fps_fallback" not in spread
+        for spread in manifest["spreads"][1:]
+    )
+
+
+def test_missing_page_high_fps_fallback_only_recovers_a_real_stable_run(
+    tmp_path,
+    monkeypatch,
+):
+    values = [
+        1.0,
+        0.006,
+        0.006,
+        0.006,
+        0.006,
+        0.006,
+        0.030,
+        0.050,
+        0.040,
+        0.017,
+        0.014,
+        0.016,
+        0.040,
+        0.050,
+        0.030,
+        0.006,
+        0.006,
+        0.006,
+        0.006,
+        0.006,
+    ]
+    samples = [
+        pipeline.Sample(index, index / 10, motion, 100.0)
+        for index, motion in enumerate(values)
+    ]
+    segments = [samples[1:6], samples[15:20]]
+    recovered_samples = [
+        pipeline.Sample(100 + index, 0.90 + index * 0.04, 0.005, 120.0)
+        for index in range(6)
+    ]
+
+    monkeypatch.setattr(
+        pipeline,
+        "_high_fps_window_samples",
+        lambda manifest, cfg, start, end, requested_fps: (recovered_samples, 25.0),
+    )
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        auto_high_fps_fallback=True,
+        auto_high_fps_min_stable_seconds=0.18,
+    )
+    updated, analysis = pipeline._recover_missing_segments_high_fps(
+        tmp_path,
+        {"analysis_fps": 10},
+        cfg,
+        samples,
+        segments,
+        10,
+    )
+
+    assert len(updated) == 3
+    assert analysis["missing_candidates"] == []
+    recovered = analysis["high_fps_fallback"]["recovered_candidates"]
+    assert len(recovered) == 1
+    assert recovered[0]["reason"] == "high_fps_stable_interval_recovered"
+    assert recovered[0]["effective_fps"] == pytest.approx(25.0)
+    assert recovered[0]["sample_count"] == 6
+
+
 def test_cancelled_processing_resumes_after_completed_spread(video, tmp_path, monkeypatch):
     project = tmp_path / "resume-book"
     cfg = Config(
