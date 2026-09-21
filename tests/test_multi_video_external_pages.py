@@ -3,6 +3,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import manga_scan.ingest as ingest_module
 import manga_scan.pipeline as pipeline
 from manga_scan.config import Config
 from manga_scan.ingest import _prepare_video_source
@@ -98,3 +99,33 @@ def test_external_page_can_be_added_replaced_and_undone(tmp_path, monkeypatch):
     restored = read_manifest(project)
     assert restored["pages"][0]["path"] == "pages/original.png"
     assert restored["pages"][0].get("source") != "external_image"
+
+
+
+def test_prepare_video_source_rejects_oversized_video_before_copy(tmp_path, monkeypatch):
+    video = tmp_path / "huge.mp4"
+    video.write_bytes(b"video")
+    cfg = Config(hand_backend="none", finger_repair=False)
+
+    monkeypatch.setattr(
+        ingest_module,
+        "probe",
+        lambda _path: {
+            "path": str(video),
+            "width": 9000,
+            "height": 4320,
+            "duration": 30,
+        },
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="maximum dimension"):
+        _prepare_video_source(
+            video,
+            tmp_path / "project",
+            copy_source=True,
+            config=cfg,
+        )
+
+    assert not (tmp_path / "project" / "source" / "video_001.mp4").exists()
