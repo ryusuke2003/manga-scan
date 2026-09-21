@@ -68,6 +68,9 @@ back to its original coordinates instead of applying an unreliable warp.
 Reference-outline ranking also combines Hough lines with long OpenCV Line
 Segment Detector results, so short panel/text rules are less likely to outrank
 page-length edges.
+Each outline is then refined on the center frame with a bounded beam search
+that can move every edge inward or outward. Only the strongest refined priors
+are evaluated across the neighboring frames.
 
 Results are written to:
 

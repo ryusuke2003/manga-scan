@@ -356,6 +356,8 @@ def _reference_consensus_result(video_spec, sample, path):
         "ambiguous": bool(detection.get("ambiguous")),
         "score_margin": detection.get("score_margin"),
         "alignment": detection.get("alignment"),
+        "local_search": detection.get("local_search"),
+        "prior_search": detection.get("prior_search"),
         "offsets": offsets,
         "iou": round(iou, 4),
         "min_iou": sample["min_reference_iou"],
