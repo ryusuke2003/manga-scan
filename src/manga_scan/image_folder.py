@@ -25,20 +25,18 @@ def image_files(folder, max_files=None):
     folder = Path(folder).expanduser().resolve(strict=True)
     if not folder.is_dir():
         raise ValueError("Select an image folder")
-    files = sorted(
-        (
-            path
-            for path in folder.iterdir()
-            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
-        ),
-        key=_natural_key,
-    )
+    files = []
+    for path in folder.iterdir():
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+            continue
+        files.append(path)
+        if max_files is not None and len(files) > max_files:
+            raise ValueError(
+                f"Too many images in folder: more than {max_files}; maximum is {max_files}"
+            )
     if not files:
         raise ValueError("No PNG / JPEG / WebP images found in the selected folder")
-    if max_files is not None and len(files) > max_files:
-        raise ValueError(
-            f"Too many images in folder: {len(files)}; maximum is {max_files}"
-        )
+    files.sort(key=_natural_key)
     return folder, files
 
 
