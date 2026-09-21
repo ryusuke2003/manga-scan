@@ -1,0 +1,28 @@
+name: generate-frontend-lock
+on:
+  push:
+    branches:
+      - security/pin-npm-and-bound-inputs
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/pin-npm-and-bound-inputs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm --prefix frontend install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - run: |
+          test -f frontend/package-lock.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add frontend/package-lock.json
+          git commit -m "Lock frontend npm dependencies"
+          git push origin HEAD:security/pin-npm-and-bound-inputs
