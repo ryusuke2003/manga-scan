@@ -25,7 +25,11 @@ from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_
 from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
-from .input_validation import load_bounded_rgb_image, validate_video_metadata
+from .input_validation import (
+    load_bounded_rgb_image,
+    validate_manifest_video,
+    validate_video_metadata,
+)
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
@@ -1114,11 +1118,7 @@ def run(project, roi=None):
         if manifest["status"] == "complete":
             raise ValueError("Project already processed. Use review edits or create a new project")
         cfg = Config.from_dict(manifest["config"])
-        validate_video_metadata(
-            manifest["metadata"],
-            cfg,
-            require_dimensions=True,
-        )
+        validate_manifest_video(manifest, cfg, require_dimensions=True)
         previous_roi = manifest.get("roi")
         requested_roi = validate_roi(roi if roi is not None else previous_roi).tolist()
         checkpoint = manifest.get("processing_checkpoint") or {}
@@ -1729,7 +1729,7 @@ def edit(project, action, **params):
             save_manifest(project, manifest)
             return manifest
         if action == "rescan_candidates":
-            validate_video_metadata(manifest["metadata"], cfg)
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             _rescan_page_candidates(
                 project,
                 manifest,
@@ -1785,7 +1785,7 @@ def edit(project, action, **params):
             manifest["pages"] = [pages[page_id] for page_id in requested]
             _push_page_history(manifest, before, "ドラッグ並び替え")
         elif action == "page_settings":
-            validate_video_metadata(manifest["metadata"], cfg)
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])
             if page["side"] == "cover":
                 raise ValueError("Cover page overrides are not supported")
@@ -1853,7 +1853,7 @@ def edit(project, action, **params):
                 new["enabled"] = old["enabled"]
                 manifest["pages"][index] = new
         elif action == "output_layout":
-            validate_video_metadata(manifest["metadata"], cfg)
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             layout = params["layout"]
             if layout not in ("spread", "split"):
                 raise ValueError("Output layout must be spread or split")
@@ -1889,7 +1889,7 @@ def edit(project, action, **params):
         ):
             spread = next(s for s in manifest["spreads"] if s["id"] == params["spread_id"])
             if action != "swap":
-                validate_video_metadata(manifest["metadata"], cfg)
+                validate_manifest_video(manifest, cfg, require_dimensions=True)
             layout = spread.get("output_layout", cfg.output_layout)
             if layout == "spread" and (
                 action in ("swap", "spine", "toggle_dewarp")
@@ -1959,7 +1959,7 @@ def edit(project, action, **params):
                     new["enabled"] = old["enabled"]
                     manifest["pages"][index] = new
         elif action == "add_frame":
-            validate_video_metadata(manifest["metadata"], cfg)
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             timestamp = float(params["time"])
             if (
                 not math.isfinite(timestamp)
