@@ -94,13 +94,17 @@ manifestには後方互換用の `selected` に加えて `selected_pages.left/ri
 `perspective_mode="per_page"` も同時に有効な場合は、同じ見開きの候補フレーム群からページ輪郭のconsensusを作り、採用ページ側へ反映して左右別射影変換を行う。左右が別候補なら選択側だけconsensusを上書きし、他方はその候補自身の輪郭を維持する。輪郭・fallback状態も `*_by_side` としてmanifestへ保持する。
 
 レビューUIの動画タイムラインは各見開きの区間と採用候補時刻を動画全体へ配置する。
-欠落候補の判定には候補選択位置の揺れを使わず、重複除外済み見開きの安定区間開始時刻 `spread.start` を使う。
-隣接開始時刻差の中央値を通常のページ送り間隔とみなし、フロント側の既定ではその約1.8倍以上の
-空白を「欠落ページ候補」として表示する。これはUIの候補表示用閾値であり、pipeline側で
-`interval_gap` 警告を付ける `interval_gap_factor`（デフォルト3.0）とは別のヒューリスティックである。
-空白の長さから最大4件まで候補時刻を等間隔に推定する。
-これはOCRや実ページ番号による欠落判定ではなく時間間隔のヒューリスティックなので、自動追加はせず、
-ユーザーが元動画を確認した上で既存の手動追加へ渡す。手動追加後はspread時刻列へ入るため候補を再計算する。
+欠落候補v2は高motionのページめくりイベントを時間方向にまとめ、隣接する2イベントの間に
+accepted stable intervalが存在しない場合だけ候補化する。候補時刻はその窓内の最小motion sample。
+新規解析ではこのpage-turn判定を使い、v2 metadataの無い旧projectだけ開始時刻gap heuristicへfallbackする。
+
+`auto_high_fps_fallback=true` では欠落候補の窓だけ `auto_high_fps_fallback_fps` で再サンプルする。
+`auto_high_fps_min_stable_seconds` 以上、連続して `motion_threshold` 以下となるrunが確認できた場合だけ
+そのrunをstable intervalへ追加し、page-turn解析を再計算する。確認できない候補は自動追加せずReviewへ残す。
+また通常の見開きでも、全候補（per-page選択では片側の全候補）が
+low sharpness / hand overlap / glare overlap / high motion のいずれかで要確認の場合だけ、
+そのstable interval内を高fps再探索する。追加候補は既存のcandidate scoringへ合流し、
+通常の自動選択と同じ規則で再選択する。source fps以下では追加サンプリングしない。
 
 ### 合成スコア
 
