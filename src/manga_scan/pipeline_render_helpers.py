@@ -128,6 +128,7 @@ def detect_spread_page_consensus(
     }
     return result
 
+
 def rectify_spread_pages(
     project,
     image,
