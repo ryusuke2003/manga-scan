@@ -26,7 +26,6 @@ def fallback_reasons(records, selection_mode):
                 for record in records
             ]
             if side_reasons and all(side_reasons):
-                triggered.update().update() if False else None
                 for reasons in side_reasons:
                     triggered.update(reasons)
         return sorted(triggered)
