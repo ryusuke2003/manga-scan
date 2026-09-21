@@ -439,6 +439,10 @@ function PageReviewControls({ page, manifest, file, busy, onEdit }) {
       {spread?.candidate_rescan && <span className="muted">
         前回: {spread.candidate_rescan.added}件追加 · 実効 {Number(spread.candidate_rescan.effective_fps).toFixed(0)}fps
       </span>}
+      {spread?.auto_high_fps_fallback && <span className="muted">
+        自動fallback: {spread.auto_high_fps_fallback.added}件追加 · 実効 {Number(spread.auto_high_fps_fallback.effective_fps).toFixed(0)}fps
+        {spread.auto_high_fps_fallback.selection_changed ? ' · 採用候補を改善' : ''}
+      </span>}
     </div>
   </div>;
 }
