@@ -75,6 +75,45 @@ def test_motion_identical_and_moving():
     assert motion_score(np.zeros_like(image), np.full_like(image, 255)) == 1
 
 
+def test_motion_v2_tolerates_moderate_auto_exposure_change():
+    image = synthetic_line_page()
+    changed = np.clip(image.astype(np.float32) * 0.90 + 15, 0, 255).astype(np.uint8)
+
+    assert motion_score(image, changed) < Config().motion_threshold
+
+
+def test_motion_v2_tolerates_focus_breathing():
+    image = synthetic_line_page()
+    softened = cv2.GaussianBlur(image, (0, 0), sigmaX=0.9, sigmaY=0.9)
+
+    assert motion_score(image, softened) < Config().motion_threshold
+
+
+def test_motion_v2_tolerates_small_jitter_with_ae_and_af_change():
+    image = synthetic_line_page()
+    height, width = image.shape[:2]
+    shifted = cv2.warpAffine(
+        image,
+        np.asarray([[1.0, 0.0, 2.0], [0.0, 1.0, -1.0]], np.float32),
+        (width, height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT101,
+    )
+    shifted = cv2.GaussianBlur(shifted, (0, 0), sigmaX=0.65, sigmaY=0.65)
+    shifted = np.clip(shifted.astype(np.float32) * 0.94 + 9, 0, 255).astype(np.uint8)
+
+    assert motion_score(image, shifted) < Config().motion_threshold
+
+
+def test_motion_v2_still_detects_real_page_content_change():
+    image = synthetic_line_page()
+    changed = image.copy()
+    cv2.rectangle(changed, (250, 28), (455, 212), (18, 18, 18), -1)
+    cv2.line(changed, (270, 45), (430, 195), (245, 245, 245), 5)
+
+    assert motion_score(image, changed) > Config().turn_threshold
+
+
 def test_state_machine_consecutive_stability_and_eof():
     detector = StableDetector(3, 0.01, 0.03)
     scores = [0.2, 0, 0, 0.02, 0, 0, 0, 0.005, 0.2, 0, 0, 0]
