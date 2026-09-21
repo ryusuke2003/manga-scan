@@ -107,3 +107,44 @@ def validate_video_collection(metadatas, config):
             f"maximum is {config.max_video_duration_seconds:.1f}s"
         )
     return total
+
+
+
+def validate_manifest_video(manifest, config, *, require_dimensions=False):
+    """Validate a project's video metadata, re-probing legacy projects when possible."""
+
+    metadata = manifest.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("Video metadata is missing or invalid")
+
+    width = metadata.get("width", metadata.get("display_width"))
+    height = metadata.get("height", metadata.get("display_height"))
+    if require_dimensions and (width is None or height is None):
+        source = manifest.get("source")
+        if source:
+            source_path = Path(source).expanduser()
+            if source_path.is_file():
+                from .video import probe
+
+                fresh = probe(source_path)
+                validate_video_metadata(
+                    fresh,
+                    config,
+                    label="Video",
+                    require_dimensions=True,
+                )
+                metadata.update(fresh)
+                metadata.setdefault("display_width", fresh["width"])
+                metadata.setdefault("display_height", fresh["height"])
+                return metadata
+
+        # Minimal historical/test manifests can omit dimensions and reference a
+        # missing source. They cannot decode a real file, but duration limits
+        # still apply. Real legacy sources are always re-probed above.
+        return validate_video_metadata(metadata, config)
+
+    return validate_video_metadata(
+        metadata,
+        config,
+        require_dimensions=require_dimensions,
+    )
