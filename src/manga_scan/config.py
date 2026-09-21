@@ -7,6 +7,9 @@ from pathlib import Path
 @dataclass
 class Config:
     video_sample_fps: float = 10.0
+    max_video_pixels: int = 40_000_000
+    max_video_dimension: int = 8192
+    max_video_duration_seconds: float = 14_400.0
     analysis_width: int = 768
     stable_frames: int = 5
     motion_threshold: float = 0.012
@@ -43,6 +46,9 @@ class Config:
     gutter_fraction: float = 0.0
     reading_order: str = "rtl"
     image_format: str = "png"
+    max_image_pixels: int = 60_000_000
+    max_image_dimension: int = 12_000
+    max_image_files: int = 5_000
     jpeg_quality: int = 92
     grayscale: bool = False
     contrast: float = 1.0
@@ -68,6 +74,11 @@ class Config:
     def validate(self):
         integer_fields = {
             "analysis_width",
+            "max_video_pixels",
+            "max_video_dimension",
+            "max_image_pixels",
+            "max_image_dimension",
+            "max_image_files",
             "stable_frames",
             "candidates_per_spread",
             "dedupe_window",
@@ -89,6 +100,12 @@ class Config:
                 raise ValueError(f"{f.name} must be a finite number")
         limits = {
             "video_sample_fps": (1, 30),
+            "max_video_pixels": (1_000_000, 200_000_000),
+            "max_video_dimension": (1024, 32768),
+            "max_video_duration_seconds": (60, 86_400),
+            "max_image_pixels": (1_000_000, 200_000_000),
+            "max_image_dimension": (1024, 32768),
+            "max_image_files": (1, 20_000),
             "analysis_width": (128, 1920),
             "stable_frames": (2, 100),
             "candidates_per_spread": (2, 30),
