@@ -7,13 +7,30 @@ from manga_scan.temporal_alignment import transform_normalized_quad
 
 
 def _textured_frame():
+    rng = np.random.default_rng(7)
     image = np.full((400, 800, 3), (48, 78, 112), np.uint8)
-    for y in range(35, 375, 45):
-        for x in range(35, 765, 55):
-            color = ((x * 3) % 220 + 25, (y * 5) % 210 + 30, (x + y) % 200 + 35)
-            cv2.circle(image, (x, y), 7, color, -1, cv2.LINE_AA)
-            cv2.line(image, (x - 10, y + 12), (x + 12, y - 9), (235, 235, 235), 2)
-    cv2.putText(image, "MANGA", (280, 215), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (245, 245, 245), 3)
+    for index in range(120):
+        x = int(rng.integers(30, 770))
+        y = int(rng.integers(30, 370))
+        radius = int(rng.integers(3, 10))
+        value = int(rng.integers(40, 245))
+        cv2.circle(
+            image,
+            (x, y),
+            radius,
+            (value, min(255, value + 17), max(0, value - 11)),
+            -1,
+            cv2.LINE_AA,
+        )
+        if index % 5 == 0:
+            cv2.line(
+                image,
+                (max(0, x - 14), min(399, y + 10)),
+                (min(799, x + 12), max(0, y - 9)),
+                (235, 235, 235),
+                2,
+            )
+    cv2.putText(image, "MANGA 81", (270, 215), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (245, 245, 245), 3)
     return image
 
 
@@ -39,7 +56,7 @@ def _detection(left, right):
 def test_spread_contour_consensus_aligns_moved_candidates_to_selected_anchor(tmp_path):
     anchor = _textured_frame()
     anchor_to_neighbor = np.asarray(
-        [[1.0, 0.008, 38.0], [-0.005, 1.0, 18.0], [0.00001, 0.0, 1.0]],
+        [[1.0, 0.004, 24.0], [-0.003, 1.0, 12.0], [0.000005, 0.0, 1.0]],
         np.float64,
     )
     neighbor = cv2.warpPerspective(
