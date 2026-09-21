@@ -3,6 +3,7 @@ import pytest
 from manga_scan.config import Config
 from manga_scan.input_validation import (
     validate_image_dimensions,
+    validate_manifest_video,
     validate_video_collection,
     validate_video_metadata,
 )
@@ -86,3 +87,55 @@ def test_processing_revalidates_legacy_project_before_video_decode(tmp_path):
 
     with pytest.raises(ValueError, match="maximum dimension"):
         run(project)
+
+
+
+def test_legacy_manifest_reprobes_existing_source_for_dimensions(tmp_path, monkeypatch):
+    source = tmp_path / "legacy.mp4"
+    source.write_bytes(b"video")
+    cfg = Config().validate()
+    manifest = {
+        "source": str(source),
+        "metadata": {"duration": 30},
+    }
+
+    monkeypatch.setattr(
+        "manga_scan.video.probe",
+        lambda _path: {
+            "path": str(source),
+            "width": 9000,
+            "height": 4320,
+            "duration": 30,
+        },
+    )
+
+    with pytest.raises(ValueError, match="maximum dimension"):
+        validate_manifest_video(manifest, cfg, require_dimensions=True)
+
+
+def test_legacy_manifest_reprobe_backfills_safe_dimensions(tmp_path, monkeypatch):
+    source = tmp_path / "legacy-safe.mp4"
+    source.write_bytes(b"video")
+    cfg = Config().validate()
+    manifest = {
+        "source": str(source),
+        "metadata": {"duration": 30},
+    }
+
+    monkeypatch.setattr(
+        "manga_scan.video.probe",
+        lambda _path: {
+            "path": str(source),
+            "width": 1920,
+            "height": 1080,
+            "duration": 30,
+            "fps": 30,
+        },
+    )
+
+    metadata = validate_manifest_video(manifest, cfg, require_dimensions=True)
+
+    assert metadata["width"] == 1920
+    assert metadata["height"] == 1080
+    assert metadata["display_width"] == 1920
+    assert metadata["display_height"] == 1080
