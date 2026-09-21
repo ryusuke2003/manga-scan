@@ -52,8 +52,9 @@ This evaluates:
 1. automatic video rotation
 2. reference-spread detection, including the cover false-positive case
 3. left/right page-contour detection from a manually annotated coarse spread ROI
-4. page-contour consensus across the center frame and frames 0.5 seconds before/after
-5. top-8 Hough reference candidates verified by left/right page consensus across the same frames
+4. page-contour consensus across the center frame and frames 0.5 seconds before/after,
+   after optical-flow/RANSAC homography alignment into the center-frame coordinates
+5. top-8 Hough reference candidates verified by the same aligned left/right page consensus
 6. polygon IoU against the manually annotated real page boundary
 7. sharpness as a reported diagnostic value
 
@@ -62,6 +63,11 @@ can override it with `consensus_offsets`; the list must contain at least three
 unique offsets including `0`, and every resulting timestamp must stay inside
 the video. This mirrors the production behavior of combining page boundaries
 from multiple candidate frames while keeping the single-frame metric visible.
+When feature tracking or homography validation fails, that frame safely falls
+back to its original coordinates instead of applying an unreliable warp.
+Reference-outline ranking also combines Hough lines with long OpenCV Line
+Segment Detector results, so short panel/text rules are less likely to outrank
+page-length edges.
 
 Results are written to:
 

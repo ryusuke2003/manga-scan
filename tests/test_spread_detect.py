@@ -211,6 +211,36 @@ def test_reference_spread_consensus_requires_multiple_consistent_frames():
     assert result["source"].endswith("_consensus")
 
 
+def test_reference_spread_consensus_aligns_handheld_camera_motion():
+    anchor = _synthetic_spread()
+    previous = cv2.warpPerspective(
+        anchor,
+        np.asarray([[1, 0, -45], [0, 1, -20], [0, 0, 1]], np.float64),
+        (anchor.shape[1], anchor.shape[0]),
+        borderValue=(45, 85, 125),
+    )
+    following = cv2.warpPerspective(
+        anchor,
+        np.asarray([[1, 0, 42], [0, 1, 18], [0, 0, 1]], np.float64),
+        (anchor.shape[1], anchor.shape[0]),
+        borderValue=(45, 85, 125),
+    )
+
+    result = detect_reference_spread_consensus(
+        [previous, anchor, following],
+        min_confidence=0.5,
+        anchor_index=1,
+    )
+
+    assert result["detected"]
+    assert result["frame_support"] == 3
+    assert result["alignment"]["aligned"] == 2
+    assert all(
+        frame["status"] in ("aligned", "anchor")
+        for frame in result["alignment"]["frames"]
+    )
+
+
 def test_reference_spread_marks_close_distinct_candidates_ambiguous(monkeypatch):
     roi_a = [[0.05, 0.1], [0.9, 0.1], [0.9, 0.9], [0.05, 0.9]]
     roi_b = [[0.1, 0.1], [0.95, 0.1], [0.95, 0.9], [0.1, 0.9]]
@@ -223,7 +253,18 @@ def test_reference_spread_marks_close_distinct_candidates_ambiguous(monkeypatch)
         lambda *_args, **_kwargs: outlines,
     )
 
-    def proposal(_frames, _priors, _confidence, *, proposal_id, outline=None, source):
+    def proposal(
+        _frames,
+        _priors,
+        _confidence,
+        *,
+        alignments,
+        anchor_index,
+        proposal_id,
+        outline=None,
+        source,
+    ):
+        assert alignments[anchor_index]["status"] == "anchor"
         if proposal_id == "coarse":
             return None, 0.0
         roi = roi_a if proposal_id == "hough_1" else roi_b

@@ -1,7 +1,11 @@
 import cv2
 import numpy as np
 
-from manga_scan.cover_detect import _boundary_line_count, detect_cover_quad
+from manga_scan.cover_detect import (
+    _boundary_line_count,
+    _long_line_segments,
+    detect_cover_quad,
+)
 
 
 def test_detect_cover_quad_finds_book_outline():
@@ -54,3 +58,15 @@ def test_cover_detection_confidence_stays_in_probability_range():
     result = detect_cover_quad(image)
 
     assert 0.0 <= result["confidence"] <= 1.0
+
+
+def test_lsd_candidates_keep_long_segments_and_filter_short_content_lines():
+    gray = np.full((300, 500), 180, np.uint8)
+    cv2.line(gray, (30, 60), (470, 65), 20, 3, cv2.LINE_AA)
+    cv2.line(gray, (220, 180), (250, 182), 20, 3, cv2.LINE_AA)
+
+    segments = _long_line_segments(gray, width=500, height=300)
+
+    assert segments
+    assert max(segment[3] for segment in segments) > 0.8
+    assert all(segment[3] * 500 >= 54 for segment in segments)

@@ -11,6 +11,12 @@ from .page_contour import (
     detect_page_quads,
     spread_quad_from_page_quads,
 )
+from .temporal_alignment import (
+    align_page_detection,
+    alignment_summary,
+    estimate_frame_alignments,
+    transform_normalized_quad,
+)
 
 REFERENCE_OUTLINE_CANDIDATES = 8
 REFERENCE_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
@@ -117,6 +123,8 @@ def _proposal_from_prior_set(
     priors,
     min_confidence,
     *,
+    alignments,
+    anchor_index,
     proposal_id,
     outline=None,
     source,
@@ -124,9 +132,25 @@ def _proposal_from_prior_set(
     detections = []
     failures = []
     for frame_index, working in enumerate(working_frames):
+        frame_priors = priors
+        alignment = alignments[frame_index]
+        if alignment.get("status") == "aligned":
+            try:
+                anchor_to_frame = np.linalg.inv(alignment["matrix"])
+                frame_priors = [
+                    transform_normalized_quad(
+                        prior,
+                        anchor_to_frame,
+                        working_frames[anchor_index].shape,
+                        working.shape,
+                    )
+                    for prior in priors
+                ]
+            except (ValueError, np.linalg.LinAlgError, cv2.error):
+                frame_priors = priors
         success, failure = _detect_pages_from_priors(
             working,
-            priors,
+            frame_priors,
             min_confidence,
             confidence_cap=float(outline["confidence"]) if outline else None,
         )
@@ -137,6 +161,12 @@ def _proposal_from_prior_set(
             continue
         pages = dict(pages)
         pages["candidate_id"] = frame_index
+        pages = align_page_detection(
+            pages,
+            alignment,
+            working.shape,
+            working_frames[anchor_index].shape,
+        )
         detections.append(pages)
 
     minimum_frames = 2 if len(working_frames) > 1 else 1
@@ -148,6 +178,7 @@ def _proposal_from_prior_set(
         detections,
         min_confidence=min_confidence,
         max_corner_deviation=REFERENCE_CONSENSUS_MAX_CORNER_DEVIATION,
+        anchor_ids={"left": anchor_index, "right": anchor_index},
     )
     if not pages["detected"]:
         return None, float(pages["confidence"])
@@ -219,6 +250,8 @@ def detect_reference_spread_consensus(
     if not 0 <= int(anchor_index) < len(working_frames):
         raise ValueError("anchor_index must identify one supplied frame")
     center = working_frames[int(anchor_index)]
+    alignments = estimate_frame_alignments(working_frames, int(anchor_index))
+    alignment = alignment_summary(alignments)
     outlines = detect_cover_quad_candidates(
         center,
         min_confidence=max(0.42, float(min_confidence) - 0.12),
@@ -235,6 +268,8 @@ def detect_reference_spread_consensus(
             working_frames,
             _outline_priors(outline["roi"]),
             min_confidence,
+            alignments=alignments,
+            anchor_index=int(anchor_index),
             proposal_id=f"hough_{index + 1}",
             outline=outline,
             source="outline_pages_consensus" if len(images) > 1 else "outline_pages",
@@ -249,6 +284,8 @@ def detect_reference_spread_consensus(
         working_frames,
         _coarse_spread_priors(),
         min_confidence,
+        alignments=alignments,
+        anchor_index=int(anchor_index),
         proposal_id="coarse",
         source="coarse_pages_consensus" if len(images) > 1 else "coarse_pages",
     )
@@ -275,6 +312,7 @@ def detect_reference_spread_consensus(
             "ambiguous": False,
             "requires_confirmation": False,
             "candidate_count": len(outlines),
+            "alignment": alignment,
             "alternatives": [],
         }
 
@@ -314,6 +352,7 @@ def detect_reference_spread_consensus(
         "candidate_count": len(outlines),
         "frame_support": best["frame_support"],
         "frame_count": best["frame_count"],
+        "alignment": alignment,
         "score_margin": round(
             float(best["score"]) - float(runner_up["score"]), 4
         ) if runner_up is not None else None,

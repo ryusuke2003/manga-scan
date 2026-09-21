@@ -36,10 +36,49 @@ def _edge_support(distance, quad):
     return float(np.mean(np.asarray(samples) <= 3.0))
 
 
+def _long_line_segments(gray, width, height):
+    """Convert long LSD segments to Hough-style lines with a length score."""
+
+    try:
+        detected = cv2.createLineSegmentDetector(cv2.LSD_REFINE_STD).detect(gray)[0]
+    except cv2.error:
+        return []
+    if detected is None:
+        return []
+    minimum_length = max(40.0, min(width, height) * 0.18)
+    normalizer = max(float(width), float(height), 1.0)
+    records = []
+    for segment in detected.reshape(-1, 4):
+        x1, y1, x2, y2 = map(float, segment)
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.hypot(dx, dy)
+        if length < minimum_length:
+            continue
+        normal_x = -dy / length
+        normal_y = dx / length
+        theta = math.atan2(normal_y, normal_x)
+        rho = normal_x * x1 + normal_y * y1
+        if theta < 0:
+            theta += math.pi
+            rho = -rho
+        elif theta >= math.pi:
+            theta -= math.pi
+            rho = -rho
+        length_ratio = min(1.0, length / normalizer)
+        quality = 0.55 + 0.45 * length_ratio
+        records.append((rho, theta, quality, length_ratio))
+    return records
+
+
 def _axis_lines(raw_lines, width, height):
     horizontal = []
     vertical = []
-    for rank, (rho, theta) in enumerate(raw_lines):
+    for rho, theta, quality, length_ratio in sorted(
+        raw_lines,
+        key=lambda item: item[2],
+        reverse=True,
+    ):
         direction = (math.degrees(float(theta)) + 90) % 180
         if min(abs(direction), abs(direction - 180)) < 15:
             family = horizontal
@@ -63,7 +102,15 @@ def _axis_lines(raw_lines, width, height):
             continue
         if any(abs(position - existing[2]) < 7 for existing in family):
             continue
-        family.append((float(rho), float(theta), float(position), rank))
+        family.append(
+            (
+                float(rho),
+                float(theta),
+                float(position),
+                float(quality),
+                float(length_ratio),
+            )
+        )
         if len(horizontal) >= 20 and len(vertical) >= 20:
             break
     return horizontal, vertical
@@ -133,9 +180,19 @@ def detect_cover_quad_candidates(
 
     threshold = max(45, round(min(width, height) * 0.12))
     detected_lines = cv2.HoughLines(edges, 1, np.pi / 360, threshold)
-    if detected_lines is None:
-        return []
-    horizontal, vertical = _axis_lines(detected_lines[:, 0], width, height)
+    raw_lines = []
+    if detected_lines is not None:
+        raw_lines.extend(
+            (
+                float(rho),
+                float(theta),
+                math.exp(-rank / 160),
+                0.0,
+            )
+            for rank, (rho, theta) in enumerate(detected_lines[:, 0])
+        )
+    raw_lines.extend(_long_line_segments(gray, width, height))
+    horizontal, vertical = _axis_lines(raw_lines, width, height)
     if len(horizontal) < 2 or len(vertical) < 2:
         return []
 
@@ -172,12 +229,14 @@ def detect_cover_quad_candidates(
                 continue
             area_score = min(area_ratio / 0.3, 1.0)
             aspect_score = math.exp(-abs(math.log(aspect / target_aspect)))
-            rank_score = sum(math.exp(-line[3] / 160) for line in (top, bottom, left, right)) / 4
+            rank_score = sum(line[3] for line in (top, bottom, left, right)) / 4
+            segment_score = sum(line[4] for line in (top, bottom, left, right)) / 4
             boundary_lines = _boundary_line_count(quad, width, height)
             preliminary = (
                 0.28 * area_score
                 + 0.20 * aspect_score
-                + 0.24 * rank_score
+                + 0.18 * rank_score
+                + 0.06 * segment_score
                 - 0.18 * boundary_lines
             )
             candidates.append((preliminary, quad))

@@ -243,6 +243,11 @@ def _page_consensus_result(video_spec, sample, path):
         spread_quad_from_page_quads,
     )
     from manga_scan.split import rotate_image
+    from manga_scan.temporal_alignment import (
+        align_page_detection,
+        alignment_summary,
+        estimate_frame_alignments,
+    )
     from manga_scan.video import extract_frame
 
     offsets = [
@@ -250,12 +255,14 @@ def _page_consensus_result(video_spec, sample, path):
         for value in sample.get("consensus_offsets", _DEFAULT_CONSENSUS_OFFSETS)
     ]
     detections = []
+    displayed_frames = []
     times = []
     anchor_id = None
     for candidate_id, offset in enumerate(offsets):
         timestamp = float(sample["time"]) + offset
         source = extract_frame(path, timestamp)
         displayed = rotate_image(source, video_spec["expected_rotation"])
+        displayed_frames.append(displayed)
         detection = detect_page_quads(
             displayed,
             sample["spread_quad"],
@@ -268,6 +275,16 @@ def _page_consensus_result(video_spec, sample, path):
         if abs(offset) <= 1e-9:
             anchor_id = candidate_id
 
+    alignments = estimate_frame_alignments(displayed_frames, anchor_id)
+    detections = [
+        align_page_detection(
+            detection,
+            alignments[index],
+            displayed_frames[index].shape,
+            displayed_frames[anchor_id].shape,
+        )
+        for index, detection in enumerate(detections)
+    ]
     consensus = consensus_page_quads(
         detections,
         min_confidence=0.55,
@@ -294,6 +311,7 @@ def _page_consensus_result(video_spec, sample, path):
         "right_consensus_count": consensus["right"]["consensus_count"],
         "offsets": offsets,
         "times": times,
+        "alignment": alignment_summary(alignments),
         "iou": round(consensus_iou, 4),
         "min_iou": sample["min_page_iou"],
         "passed": bool(
@@ -337,6 +355,7 @@ def _reference_consensus_result(video_spec, sample, path):
         "frame_support": detection.get("frame_support", 0),
         "ambiguous": bool(detection.get("ambiguous")),
         "score_margin": detection.get("score_margin"),
+        "alignment": detection.get("alignment"),
         "offsets": offsets,
         "iou": round(iou, 4),
         "min_iou": sample["min_reference_iou"],
