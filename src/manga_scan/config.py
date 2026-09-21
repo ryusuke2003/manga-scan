@@ -70,6 +70,9 @@ class Config:
     suspect_hand_overlap: float = 0.015
     suspect_glare_overlap: float = 0.01
     interval_gap_factor: float = 3.0
+    auto_high_fps_fallback: bool = True
+    auto_high_fps_fallback_fps: float = 60.0
+    auto_high_fps_min_stable_seconds: float = 0.18
 
     def validate(self):
         integer_fields = {
@@ -134,6 +137,8 @@ class Config:
             "suspect_sharpness": (0, 100000),
             "suspect_hand_overlap": (0, 1),
             "interval_gap_factor": (1, 20),
+            "auto_high_fps_fallback_fps": (10, 120),
+            "auto_high_fps_min_stable_seconds": (0.1, 1.0),
         }
         for name, (lo, hi) in limits.items():
             if not lo <= getattr(self, name) <= hi:

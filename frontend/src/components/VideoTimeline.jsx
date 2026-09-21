@@ -22,6 +22,7 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
         && time < candidate.windowEnd;
     }));
   const usingPageTurns = pageTurnMissing !== null;
+  const highFpsRecovered = manifest.page_turn_analysis?.high_fps_fallback?.recovered_candidates || [];
 
   return <section className="panel timeline-panel">
     <div className="timeline-head">
@@ -30,12 +31,12 @@ export default function VideoTimeline({ manifest, busy, onSelectTime }) {
         <h2>検出した見開きと欠落候補</h2>
       </div>
       <span className={`timeline-status ${missing.length ? 'warn' : ''}`}>
-        欠落候補 {missing.length}
+        欠落候補 {missing.length}{highFpsRecovered.length ? ` · 自動復旧 ${highFpsRecovered.length}` : ''}
       </span>
     </div>
     <p className="muted">
       {usingPageTurns
-        ? 'ページめくりイベントの間に採用可能な安定区間が無かった箇所を候補として表示します。候補時刻は、その区間で最も動きが小さかった瞬間です。追加前に元動画を確認してください。'
+        ? `ページめくりイベント間を確認します。通常10fpsで安定区間が無い場合は自動で高fps再探索し、連続した低motion区間を確認できたものだけ復旧します。未復旧の${missing.length}件は追加前に元動画を確認してください。`
         : '見開きの検出間隔が普段より長い箇所を候補として表示します。ページ番号を認識しているわけではないため、追加前に元動画を確認してください。'}
     </p>
 
