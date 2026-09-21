@@ -22,18 +22,33 @@ from .page_warp import warp_detected_pages
 from .perspective import rotate_roi, validate_roi, warp_roi
 from .split import rotate_image, spine_position, split_spread
 from .storage import save_image, write_json
+from .temporal_alignment import (
+    align_page_detection,
+    alignment_summary,
+    estimate_frame_alignments,
+)
 
 PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION = 0.04
 
 
-def detect_spread_page_consensus(project, spread, cfg, anchor_ids=None, detect_page_quads_fn=detect_page_quads):
-    """Estimate page quads from all saved candidates for one spread.
+def detect_spread_page_consensus(
+    project,
+    spread,
+    cfg,
+    anchor_ids=None,
+    detect_page_quads_fn=detect_page_quads,
+):
+    """Estimate page quads from all saved candidates after temporal alignment.
 
-    Candidate preview frames are already analysis-resolution images, so this
-    adds no extra video seeks. Each frame is evaluated independently and the
-    page_contour module rejects geometric outliers before combining corners.
+    Each page side is aligned into the coordinate system of the candidate that
+    will actually render that side. This keeps consensus useful when the book or
+    camera drifts between candidate frames instead of treating the shift itself
+    as a contour outlier.
     """
 
+    anchor_ids = dict(anchor_ids or {})
+    records = []
+    images = []
     detections = []
     overrides = spread.get("roi_overrides", {})
     for record in spread.get("candidates", []):
@@ -54,17 +69,64 @@ def detect_spread_page_consensus(project, spread, cfg, anchor_ids=None, detect_p
             min_confidence=cfg.page_contour_min_confidence,
         )
         detection["candidate_id"] = record["id"]
+        records.append(record)
+        images.append(upright)
         detections.append(detection)
 
     if not detections:
         return None
-    return consensus_page_quads(
-        detections,
-        min_confidence=cfg.page_contour_min_confidence,
-        max_corner_deviation=PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION,
-        anchor_ids=anchor_ids,
-    )
 
+    side_results = {}
+    alignment_by_side = {}
+    candidate_ids = [record["id"] for record in records]
+    default_anchor = spread.get("selected", candidate_ids[0])
+    for side in ("left", "right"):
+        anchor_id = anchor_ids.get(side, default_anchor)
+        try:
+            anchor_index = candidate_ids.index(anchor_id)
+        except ValueError:
+            anchor_index = 0
+            anchor_id = candidate_ids[0]
+
+        alignments = estimate_frame_alignments(images, anchor_index)
+        aligned = [
+            align_page_detection(
+                detection,
+                alignment,
+                image.shape,
+                images[anchor_index].shape,
+            )
+            for detection, alignment, image in zip(detections, alignments, images)
+        ]
+        consensus = consensus_page_quads(
+            aligned,
+            min_confidence=cfg.page_contour_min_confidence,
+            max_corner_deviation=PAGE_CONTOUR_CONSENSUS_MAX_CORNER_DEVIATION,
+            anchor_ids={side: anchor_id},
+        )
+        side_results[side] = consensus[side]
+        alignment_by_side[side] = {
+            "anchor_id": anchor_id,
+            **alignment_summary(alignments),
+        }
+
+    result = {
+        "left": side_results["left"],
+        "right": side_results["right"],
+    }
+    result["confidence"] = min(
+        result["left"]["confidence"],
+        result["right"]["confidence"],
+    )
+    result["detected"] = bool(
+        result["left"]["detected"] and result["right"]["detected"]
+    )
+    result["consensus"] = {
+        "candidate_count": len(detections),
+        "candidate_ids": candidate_ids,
+        "alignment_by_side": alignment_by_side,
+    }
+    return result
 
 def rectify_spread_pages(
     project,
