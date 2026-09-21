@@ -33,11 +33,11 @@ def _prepare_video_source(videos, project, copy_source, config=None):
         for path in paths:
             metadata = probe(path)
             validate_video_metadata(
-            metadata,
-            config,
-            label=path.name,
-            require_dimensions=True,
-        )
+                metadata,
+                config,
+                label=path.name,
+                require_dimensions=True,
+            )
             source_metadatas.append(metadata)
         validate_video_collection(source_metadatas, config)
     project.mkdir(parents=True, exist_ok=True)
