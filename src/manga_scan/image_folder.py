@@ -2,10 +2,9 @@ import re
 from pathlib import Path
 
 import cv2
-import numpy as np
-from PIL import Image, ImageOps
 
 from .config import Config
+from .input_validation import load_bounded_rgb_image
 from .final_quality import final_quality_checks
 from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .quality_safety import normalize_expected_page_count, refresh_review_safety
@@ -22,7 +21,7 @@ def _natural_key(path):
     ]
 
 
-def image_files(folder):
+def image_files(folder, max_files=None):
     folder = Path(folder).expanduser().resolve(strict=True)
     if not folder.is_dir():
         raise ValueError("Select an image folder")
@@ -36,13 +35,15 @@ def image_files(folder):
     )
     if not files:
         raise ValueError("No PNG / JPEG / WebP images found in the selected folder")
+    if max_files is not None and len(files) > max_files:
+        raise ValueError(
+            f"Too many images in folder: {len(files)}; maximum is {max_files}"
+        )
     return folder, files
 
 
-def load_image(path):
-    with Image.open(path) as source:
-        normalized = ImageOps.exif_transpose(source).convert("RGB")
-        rgb = np.array(normalized)
+def load_image(path, config):
+    rgb = load_bounded_rgb_image(path, config)
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
@@ -111,7 +112,7 @@ def create_image_folder_project(
     if project.exists() and any(project.iterdir()):
         raise ValueError("Project directory must be empty; choose a new directory")
 
-    folder, files = image_files(folder)
+    folder, files = image_files(folder, cfg.max_image_files)
     for name in ("source", "source/images", "pages", "debug", "output"):
         (project / name).mkdir(parents=True, exist_ok=True)
 
@@ -124,7 +125,7 @@ def create_image_folder_project(
     pages = [
         _render_image_page(
             project,
-            load_image(path),
+            load_image(path, cfg),
             path,
             path.name,
             index,
