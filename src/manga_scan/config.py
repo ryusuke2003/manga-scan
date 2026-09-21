@@ -100,12 +100,12 @@ class Config:
                 raise ValueError(f"{f.name} must be a finite number")
         limits = {
             "video_sample_fps": (1, 30),
-            "max_video_pixels": (1_000_000, 200_000_000),
-            "max_video_dimension": (1024, 32768),
-            "max_video_duration_seconds": (60, 86_400),
-            "max_image_pixels": (1_000_000, 200_000_000),
-            "max_image_dimension": (1024, 32768),
-            "max_image_files": (1, 20_000),
+            "max_video_pixels": (1_000_000, 40_000_000),
+            "max_video_dimension": (1024, 8192),
+            "max_video_duration_seconds": (60, 14_400),
+            "max_image_pixels": (1_000_000, 60_000_000),
+            "max_image_dimension": (1024, 12_000),
+            "max_image_files": (1, 5_000),
             "analysis_width": (128, 1920),
             "stable_frames": (2, 100),
             "candidates_per_spread": (2, 30),
