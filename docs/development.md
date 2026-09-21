@@ -5,12 +5,14 @@
 
 ## 開発用の依存関係を入れる
 
+フロント依存は `frontend/package-lock.json` を正とし、`npm install` ではなく `npm ci` を使います。依存を更新するときだけ `npm install` で lockfile も更新し、その差分をレビューしてください。
+
 初回、または開発用依存をまだ入れていない場合に実行します。
 
 ```bash
 source .venv/bin/activate
 python -m pip install -e '.[hands,dev]'
-npm --prefix frontend install --no-audit --no-fund --no-package-lock
+npm --prefix frontend ci --no-audit --no-fund
 ```
 
 ## フロントエンドを変更したとき
@@ -31,7 +33,7 @@ build結果は `src/manga_scan/static/` に出力されます。
 `frontend/package.json` の依存関係も変更した場合や、`node_modules` がない場合は、build前に次も実行してください。
 
 ```bash
-npm --prefix frontend install --no-audit --no-fund --no-package-lock
+npm --prefix frontend ci --no-audit --no-fund
 ```
 
 ### Viteの開発サーバーで確認する

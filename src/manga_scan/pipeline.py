@@ -25,6 +25,7 @@ from .final_quality import FINAL_QUALITY_REASONS, adjacent_quality_check, final_
 from .finger_repair import repair_finger_regions
 from .glare import detect_glare_mask, glare_overlap_fraction
 from .hand import HandDetector, boundary_finger_mask, temporal_transient_mask
+from .input_validation import load_bounded_rgb_image, validate_manifest_video
 from .motion import Sample, StableDetector, choose_candidates, motion_score
 from .page_contour import detect_page_quads
 from .page_detect import refine_quad
@@ -1113,6 +1114,7 @@ def run(project, roi=None):
         if manifest["status"] == "complete":
             raise ValueError("Project already processed. Use review edits or create a new project")
         cfg = Config.from_dict(manifest["config"])
+        validate_manifest_video(manifest, cfg, require_dimensions=True)
         previous_roi = manifest.get("roi")
         requested_roi = validate_roi(roi if roi is not None else previous_roi).tolist()
         checkpoint = manifest.get("processing_checkpoint") or {}
@@ -1483,21 +1485,16 @@ def run(project, roi=None):
 
 def import_external_page(project, image_path, page_id=None, display_name=None):
     """Add or replace one final page using a local external image."""
-    from PIL import Image, ImageOps
-
     project = Path(project).resolve()
     image_path = Path(image_path).expanduser().resolve(strict=True)
     if image_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
         raise ValueError("Unsupported image format")
 
-    with Image.open(image_path) as source:
-        normalized = ImageOps.exif_transpose(source).convert("RGB")
-        rgb = np.array(normalized)
-    image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-
     with project_lock(project):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
+        rgb = load_bounded_rgb_image(image_path, cfg)
+        image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         before = _page_review_state(manifest, include_pages=True)
         imported = project / "source" / "external_pages"
         imported.mkdir(parents=True, exist_ok=True)
@@ -1728,6 +1725,7 @@ def edit(project, action, **params):
             save_manifest(project, manifest)
             return manifest
         if action == "rescan_candidates":
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             _rescan_page_candidates(
                 project,
                 manifest,
@@ -1783,6 +1781,7 @@ def edit(project, action, **params):
             manifest["pages"] = [pages[page_id] for page_id in requested]
             _push_page_history(manifest, before, "ドラッグ並び替え")
         elif action == "page_settings":
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])
             if page["side"] == "cover":
                 raise ValueError("Cover page overrides are not supported")
@@ -1850,6 +1849,7 @@ def edit(project, action, **params):
                 new["enabled"] = old["enabled"]
                 manifest["pages"][index] = new
         elif action == "output_layout":
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             layout = params["layout"]
             if layout not in ("spread", "split"):
                 raise ValueError("Output layout must be spread or split")
@@ -1884,6 +1884,8 @@ def edit(project, action, **params):
             "reset_crop",
         ):
             spread = next(s for s in manifest["spreads"] if s["id"] == params["spread_id"])
+            if action != "swap":
+                validate_manifest_video(manifest, cfg, require_dimensions=True)
             layout = spread.get("output_layout", cfg.output_layout)
             if layout == "spread" and (
                 action in ("swap", "spine", "toggle_dewarp")
@@ -1953,6 +1955,7 @@ def edit(project, action, **params):
                     new["enabled"] = old["enabled"]
                     manifest["pages"][index] = new
         elif action == "add_frame":
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
             timestamp = float(params["time"])
             if (
                 not math.isfinite(timestamp)
