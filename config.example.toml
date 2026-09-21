@@ -68,3 +68,6 @@ suspect_sharpness = 60.0
 suspect_hand_overlap = 0.015
 suspect_glare_overlap = 0.01
 interval_gap_factor = 3.0
+auto_high_fps_fallback = true # Rescan only problematic spreads / missing-page windows at higher density
+auto_high_fps_fallback_fps = 60.0 # Capped at the source video's actual fps
+auto_high_fps_min_stable_seconds = 0.18 # Missing-page recovery requires this much continuous low motion
