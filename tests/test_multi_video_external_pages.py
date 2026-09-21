@@ -2,6 +2,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 import manga_scan.ingest as ingest_module
 import manga_scan.pipeline as pipeline
@@ -118,8 +119,6 @@ def test_prepare_video_source_rejects_oversized_video_before_copy(tmp_path, monk
         },
     )
 
-    import pytest
-
     with pytest.raises(ValueError, match="maximum dimension"):
         _prepare_video_source(
             video,
@@ -129,3 +128,23 @@ def test_prepare_video_source_rejects_oversized_video_before_copy(tmp_path, monk
         )
 
     assert not (tmp_path / "project" / "source" / "video_001.mp4").exists()
+
+
+
+def test_external_page_rejects_oversized_decoded_image(tmp_path):
+    project = tmp_path / "project-large-image"
+    manifest = _project_manifest(project)
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        max_image_pixels=1_000_000,
+    )
+    manifest["config"] = cfg.to_dict()
+    save_manifest(project, manifest)
+
+    external = tmp_path / "oversized.png"
+    image = np.zeros((1000, 1200, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(external), image)
+
+    with pytest.raises(ValueError, match="maximum is 1,000,000 pixels"):
+        pipeline.import_external_page(project, external)
