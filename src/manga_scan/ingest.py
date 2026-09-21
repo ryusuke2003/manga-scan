@@ -32,7 +32,12 @@ def _prepare_video_source(videos, project, copy_source, config=None):
         source_metadatas = []
         for path in paths:
             metadata = probe(path)
-            validate_video_metadata(metadata, config, label=path.name)
+            validate_video_metadata(
+            metadata,
+            config,
+            label=path.name,
+            require_dimensions=True,
+        )
             source_metadatas.append(metadata)
         validate_video_collection(source_metadatas, config)
     project.mkdir(parents=True, exist_ok=True)
@@ -76,7 +81,12 @@ def create_project(
         config,
     )
     metadata = probe(source)
-    validate_video_metadata(metadata, config, label="Combined video")
+    validate_video_metadata(
+        metadata,
+        config,
+        label="Combined video",
+        require_dimensions=True,
+    )
     first = extract_frame(metadata["path"])
     if config.auto_rotation and config.rotation:
         config.auto_rotation = False
