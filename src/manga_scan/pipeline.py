@@ -1687,9 +1687,10 @@ def run(project, roi=None):
                 )
                 if next_tracking is not None:
                     tracking_image = next_tracking
-                    tracking_roi = validate_roi(
-                        selected_tracking.get("roi", spread_roi)
-                    ).tolist()
+                    # Keep temporal tracking independent from candidate-local
+                    # refine_quad shrinkage. Per-candidate refinement is a render
+                    # detail, while tracked_roi is the trusted book position.
+                    tracking_roi = validate_roi(spread["tracked_roi"]).tolist()
                 manifest["spreads"].append(spread)
                 manifest["pages"].extend(pages)
                 _write_score_rows(project, score_rows)
