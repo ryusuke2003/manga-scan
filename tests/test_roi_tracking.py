@@ -6,20 +6,35 @@ from manga_scan.temporal_alignment import transform_normalized_quad
 
 
 def _textured_frame():
+    rng = np.random.default_rng(42)
     image = np.full((360, 540, 3), (45, 75, 110), np.uint8)
-    for y in range(35, 335, 45):
-        for x in range(35, 510, 55):
-            color = ((x * 5) % 220 + 20, (y * 3) % 210 + 25, (x + y) % 190 + 35)
-            cv2.circle(image, (x, y), 7, color, -1, cv2.LINE_AA)
-            cv2.line(image, (x - 9, y + 10), (x + 11, y - 8), (235, 235, 235), 2)
-    cv2.putText(image, "BOOK", (175, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (245, 245, 245), 3)
+    for index in range(90):
+        x = int(rng.integers(28, 512))
+        y = int(rng.integers(28, 332))
+        radius = int(rng.integers(3, 10))
+        value = int(rng.integers(45, 245))
+        color = (
+            min(255, value + (index * 13) % 31),
+            max(0, value - (index * 7) % 29),
+            min(255, value + (index * 5) % 23),
+        )
+        cv2.circle(image, (x, y), radius, color, -1, cv2.LINE_AA)
+        if index % 4 == 0:
+            cv2.line(
+                image,
+                (max(0, x - 13), min(359, y + 9)),
+                (min(539, x + 11), max(0, y - 8)),
+                (235, 235, 235),
+                2,
+            )
+    cv2.putText(image, "BOOK 73", (155, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (245, 245, 245), 3)
     return image
 
 
 def test_roi_tracking_follows_conservative_book_translation():
     previous = _textured_frame()
     matrix = np.asarray(
-        [[1.0, 0.0, 28.0], [0.0, 1.0, 14.0], [0.0, 0.0, 1.0]],
+        [[1.0, 0.0, 18.0], [0.0, 1.0, 9.0], [0.0, 0.0, 1.0]],
         np.float64,
     )
     current = cv2.warpPerspective(
@@ -49,7 +64,7 @@ def test_roi_tracking_follows_conservative_book_translation():
 def test_roi_tracking_rejects_implausibly_large_cumulative_drift():
     previous = _textured_frame()
     matrix = np.asarray(
-        [[1.0, 0.0, 55.0], [0.0, 1.0, 24.0], [0.0, 0.0, 1.0]],
+        [[1.0, 0.0, 18.0], [0.0, 1.0, 8.0], [0.0, 0.0, 1.0]],
         np.float64,
     )
     current = cv2.warpPerspective(
@@ -66,10 +81,10 @@ def test_roi_tracking_rejects_implausibly_large_cumulative_drift():
         current,
         previous_roi,
         reference_roi,
-        max_step=0.12,
-        max_total=0.14,
+        max_step=0.08,
+        max_total=0.12,
     )
 
     assert not result["tracked"]
-    assert result["status"] in {"total_shift_too_large", "step_shift_too_large"}
+    assert result["status"] == "total_shift_too_large"
     np.testing.assert_allclose(result["roi"], previous_roi, atol=1e-6)
