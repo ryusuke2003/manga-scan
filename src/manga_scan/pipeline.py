@@ -33,11 +33,11 @@ from .page_detect import refine_quad
 from .page_turns import analyze_page_turns
 from .perspective import pixel_quad, rotate_roi, validate_roi, warp_roi
 from .processing_control import ProcessingCancelled, clear_cancel_request, raise_if_cancelled
-from .roi_tracking import track_spread_roi
 from .quality_safety import (
     normalize_expected_page_count,
     refresh_review_safety,
 )
+from .roi_tracking import track_spread_roi
 from .score import score_frame, sharpness, suspect_reasons
 from .selection import choose_candidate_selection, score_candidate_pages
 from .split import (
