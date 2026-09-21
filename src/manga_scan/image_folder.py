@@ -4,8 +4,8 @@ from pathlib import Path
 import cv2
 
 from .config import Config
-from .input_validation import load_bounded_rgb_image
 from .final_quality import final_quality_checks
+from .input_validation import load_bounded_rgb_image
 from .manifest_migrations import CURRENT_MANIFEST_VERSION
 from .quality_safety import normalize_expected_page_count, refresh_review_safety
 from .split import enhance_page, rotate_image
