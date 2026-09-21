@@ -59,3 +59,16 @@ def test_create_image_folder_project_builds_reviewable_pages(tmp_path):
     assert manifest["page_count_check"]["status"] == "short"
     assert manifest["page_count_check"]["difference"] == -1
     assert read_manifest(project)["expected_page_count"] == 3
+
+
+
+def test_image_folder_rejects_excessive_file_count(tmp_path):
+    folder = tmp_path / "photos"
+    folder.mkdir()
+    _write_image(folder / "1.jpg", 100)
+    _write_image(folder / "2.jpg", 120)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Too many images"):
+        image_files(folder, max_files=1)

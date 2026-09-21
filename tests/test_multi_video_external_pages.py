@@ -2,7 +2,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
+import manga_scan.ingest as ingest_module
 import manga_scan.pipeline as pipeline
 from manga_scan.config import Config
 from manga_scan.ingest import _prepare_video_source
@@ -98,3 +100,51 @@ def test_external_page_can_be_added_replaced_and_undone(tmp_path, monkeypatch):
     restored = read_manifest(project)
     assert restored["pages"][0]["path"] == "pages/original.png"
     assert restored["pages"][0].get("source") != "external_image"
+
+
+
+def test_prepare_video_source_rejects_oversized_video_before_copy(tmp_path, monkeypatch):
+    video = tmp_path / "huge.mp4"
+    video.write_bytes(b"video")
+    cfg = Config(hand_backend="none", finger_repair=False)
+
+    monkeypatch.setattr(
+        ingest_module,
+        "probe",
+        lambda _path: {
+            "path": str(video),
+            "width": 9000,
+            "height": 4320,
+            "duration": 30,
+        },
+    )
+
+    with pytest.raises(ValueError, match="maximum dimension"):
+        _prepare_video_source(
+            video,
+            tmp_path / "project",
+            copy_source=True,
+            config=cfg,
+        )
+
+    assert not (tmp_path / "project" / "source" / "video_001.mp4").exists()
+
+
+
+def test_external_page_rejects_oversized_decoded_image(tmp_path):
+    project = tmp_path / "project-large-image"
+    manifest = _project_manifest(project)
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        max_image_pixels=1_000_000,
+    )
+    manifest["config"] = cfg.to_dict()
+    save_manifest(project, manifest)
+
+    external = tmp_path / "oversized.png"
+    image = np.zeros((1000, 1200, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(external), image)
+
+    with pytest.raises(ValueError, match="maximum is 1,000,000 pixels"):
+        pipeline.import_external_page(project, external)

@@ -57,6 +57,8 @@ node --version
 
 Node.jsは **22.12以上** が必要です。
 
+フロントエンド依存は `frontend/package-lock.json` で固定し、セットアップ/CIとも `npm ci` で同一バージョンを再現します。
+
 ### 3. Python環境を作る
 
 ```bash
@@ -70,7 +72,7 @@ python -m pip install -e '.[hands]'
 ### 4. React/Viteフロントをビルド
 
 ```bash
-npm --prefix frontend install --no-audit --no-fund --no-package-lock
+npm --prefix frontend ci --no-audit --no-fund
 npm --prefix frontend run build
 ```
 
@@ -94,6 +96,8 @@ manga-scan ui --config config.toml --projects projects
 ブラウザで **http://127.0.0.1:8765** を開けば準備完了です。
 
 サーバーは `127.0.0.1` のみで待ち受けます。外部CDN、解析タグ、クラウド通信はありません。
+
+入力によるメモリ/CPU枯渇を避けるため、デフォルトでは静止画を **60,000,000 pixels / 最大辺12,000px / 1フォルダ5,000枚**、動画を **40,000,000 pixels/frame / 最大辺8,192px / 合計4時間** までに制限します。必要なら `config.toml` の `max_image_*` / `max_video_*` でこれらの上限をさらに引き下げられます。安全上限を超える値は設定できません。
 
 ### 2回目以降
 
@@ -121,7 +125,7 @@ manga-scan ui --config config.toml --projects projects
 `frontend/package.json` が変更されている場合や `node_modules` がない場合は、buildの前に次も実行してください。
 
 ```bash
-npm --prefix frontend install --no-audit --no-fund --no-package-lock
+npm --prefix frontend ci --no-audit --no-fund
 ```
 
 フロントを継続的に開発するときのVite開発サーバーやテスト手順は、[開発・テストガイド](docs/development.md) を参照してください。
@@ -222,7 +226,7 @@ source .venv/bin/activate
 React/Viteの生成物がありません。
 
 ```bash
-npm --prefix frontend install --no-audit --no-fund --no-package-lock
+npm --prefix frontend ci --no-audit --no-fund
 npm --prefix frontend run build
 ```
 

@@ -87,7 +87,7 @@ def create_app(projects, config=None):
         index_file = Path(app.static_folder) / "index.html"
         if not index_file.is_file():
             return (
-                "Frontend build missing. Run: npm --prefix frontend install --no-package-lock && "
+                "Frontend build missing. Run: npm --prefix frontend ci --no-audit --no-fund && "
                 "npm --prefix frontend run build",
                 503,
                 {"Content-Type": "text/plain; charset=utf-8"},

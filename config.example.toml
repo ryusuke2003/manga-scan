@@ -1,5 +1,8 @@
 # Copy to config.toml. Relative model paths resolve against this file's directory.
 video_sample_fps = 10.0
+max_video_pixels = 40000000 # Reject video streams above this many pixels per frame
+max_video_dimension = 8192 # Reject unusual width/height even if total pixels are below the cap
+max_video_duration_seconds = 14400.0 # 4h maximum across all input video parts
 analysis_width = 768
 stable_frames = 5
 motion_threshold = 0.012
@@ -40,6 +43,9 @@ spine_ratio = 0.5
 gutter_fraction = 0.0 # Keep all pixels by default
 reading_order = "rtl"
 image_format = "png" # Or "jpeg"
+max_image_pixels = 60000000 # Validate dimensions before Pillow decodes the image
+max_image_dimension = 12000
+max_image_files = 5000 # Static-image folder input only
 jpeg_quality = 92
 grayscale = false
 contrast = 1.0
