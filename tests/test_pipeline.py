@@ -34,6 +34,49 @@ def video(tmp_path_factory):
     return module.make_demo(tmp_path / "video with spaces.mp4")
 
 
+def test_candidate_batch_preserves_input_order(monkeypatch, tmp_path):
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        processing_workers=3,
+    )
+    samples = [
+        pipeline.Sample(index, float(index), 0.0, 100.0)
+        for index in range(5)
+    ]
+    frames = [
+        cv2.UMat(8, 8, cv2.CV_8UC3).get()
+        for _ in samples
+    ]
+
+    def fake_candidate(
+        project,
+        manifest,
+        cfg,
+        detector,
+        spread_id,
+        number,
+        sample,
+        **kwargs,
+    ):
+        return {"id": number, "time": sample.time}
+
+    monkeypatch.setattr(pipeline, "candidate", fake_candidate)
+    records = pipeline._process_candidate_batch(
+        tmp_path,
+        {},
+        cfg,
+        object(),
+        "spread_0001",
+        samples,
+        frames,
+        start_id=7,
+    )
+
+    assert [record["id"] for record in records] == [7, 8, 9, 10, 11]
+    assert [record["time"] for record in records] == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+
 def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     project = tmp_path / "book"
     cfg = Config(output_layout="split", hand_backend="none", finger_repair=False,
