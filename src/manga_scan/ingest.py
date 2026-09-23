@@ -3,9 +3,11 @@ import shutil
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from .config import Config
 from .cover_detect import detect_cover_quad
+from .hand import HandDetector
 from .input_validation import (
     validate_manifest_video,
     validate_video_collection,
@@ -229,25 +231,56 @@ def _detect_cover_for_rotation(image, rotation):
 
 
 def _reference_consensus_frames(source, metadata, timestamp, image, cfg):
-    """Load the selected frame and its ±0.5s neighbors in display orientation."""
+    """Load nearby display-oriented frames in chronological order."""
 
     duration = float(metadata["duration"])
-    samples = [rotate_image(image, cfg.rotation)]
-    sample_times = [float(timestamp)]
-    for offset in (-0.5, 0.5):
+    samples = [
+        {
+            "time": float(timestamp),
+            "image": rotate_image(image, cfg.rotation),
+            "anchor": True,
+        }
+    ]
+    for offset in (-0.5, -0.25, 0.25, 0.5):
         sample_time = min(
             max(float(timestamp + offset), 0.0),
             max(0.0, duration - 0.001),
         )
-        if any(abs(sample_time - existing) < 0.001 for existing in sample_times):
+        if any(abs(sample_time - item["time"]) < 0.001 for item in samples):
             continue
         try:
             sample = extract_frame(source, sample_time, hwaccel=cfg.hwaccel)
         except (OSError, RuntimeError):
             continue
-        samples.append(rotate_image(sample, cfg.rotation))
-        sample_times.append(sample_time)
-    return samples, 0
+        samples.append(
+            {
+                "time": sample_time,
+                "image": rotate_image(sample, cfg.rotation),
+                "anchor": False,
+            }
+        )
+
+    samples.sort(key=lambda item: item["time"])
+    anchor_index = next(
+        index for index, item in enumerate(samples) if item["anchor"]
+    )
+    return [item["image"] for item in samples], anchor_index
+
+
+def _reference_hand_masks(frames, cfg):
+    if cfg.hand_backend == "none":
+        return [np.zeros(frame.shape[:2], np.uint8) for frame in frames]
+
+    detector = HandDetector(cfg)
+    full_frame = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+    masks = []
+    try:
+        for frame in frames:
+            _overlap, mask = detector.detect(frame, full_frame)
+            masks.append(mask)
+    finally:
+        detector.close()
+    return masks
 
 
 def set_setup_frame(project, kind, time, confirm=False):
@@ -305,10 +338,12 @@ def set_setup_frame(project, kind, time, confirm=False):
                     cfg,
                 )
                 displayed = consensus_frames[anchor_index]
+                hand_masks = _reference_hand_masks(consensus_frames, cfg)
                 reference_detection = detect_reference_spread_consensus(
                     consensus_frames,
                     min_confidence=cfg.page_contour_min_confidence,
                     anchor_index=anchor_index,
+                    hand_masks=hand_masks,
                 )
                 reference_detection["method"] = "auto_pages"
                 if reference_detection["detected"]:
@@ -342,15 +377,21 @@ def set_setup_frame(project, kind, time, confirm=False):
                         if not warning.startswith("画像向きの自動判定に自信がありません")
                     ]
             manifest["roi"] = raw_roi
-            manifest["message"] = (
-                (
-                    "見開き外周を自動検出しました。範囲を確認して抽出を開始してください"
-                    if reference_detection and reference_detection["detected"]
-                    else "見開き外周を自動検出できませんでした。4点で指定してください"
+            if not confirm:
+                manifest["message"] = "基準にする見開きフレームを選んでください"
+            elif not reference_detection or not reference_detection["detected"]:
+                manifest["message"] = (
+                    "見開き外周を自動検出できませんでした。4点で指定してください"
                 )
-                if confirm
-                else "基準にする見開きフレームを選んでください"
-            )
+            elif reference_detection.get("requires_confirmation"):
+                manifest["message"] = (
+                    "見開き外周を検出しましたが、一部が不確かです。"
+                    "赤い辺を確認してから抽出を開始してください"
+                )
+            else:
+                manifest["message"] = (
+                    "見開き外周を自動検出しました。範囲を確認して抽出を開始してください"
+                )
         save_manifest(project, manifest)
         return manifest
 

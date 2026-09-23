@@ -16,8 +16,12 @@ export default function RoiSelector({
   description = '左上 → 右上 → 右下 → 左下 の順にクリック。机が入らないよう、紙の外周に合わせてください。',
   actionLabel = '抽出を開始 →',
   rotation = 0,
+  uncertainEdges = [],
 }) {
   const [points, setPoints] = useState(() => initialPoints || []);
+  const [highlightedEdges, setHighlightedEdges] = useState(
+    () => initialPoints?.length === 4 ? uncertainEdges : [],
+  );
   const [image, setImage] = useState(null);
   const [imageError, setImageError] = useState(false);
   const canvas = useRef(null);
@@ -47,15 +51,39 @@ export default function RoiSelector({
     ctx.drawImage(image, -image.naturalWidth * scale / 2, -image.naturalHeight * scale / 2, image.naturalWidth * scale, image.naturalHeight * scale);
     ctx.restore();
     if (!points.length) return;
-    ctx.beginPath();
-    points.forEach(([x, y], index) => index ? ctx.lineTo(x * element.width, y * element.height) : ctx.moveTo(x * element.width, y * element.height));
-    if (points.length === 4) { ctx.closePath(); ctx.fillStyle = '#407c5228'; ctx.fill(); }
-    ctx.strokeStyle = '#9dffab'; ctx.lineWidth = 3; ctx.stroke();
+    if (points.length === 4) {
+      ctx.beginPath();
+      points.forEach(([x, y], index) => index
+        ? ctx.lineTo(x * element.width, y * element.height)
+        : ctx.moveTo(x * element.width, y * element.height));
+      ctx.closePath();
+      ctx.fillStyle = '#407c5228';
+      ctx.fill();
+
+      const names = ['top', 'right', 'bottom', 'left'];
+      names.forEach((name, index) => {
+        const next = (index + 1) % 4;
+        ctx.beginPath();
+        ctx.moveTo(points[index][0] * element.width, points[index][1] * element.height);
+        ctx.lineTo(points[next][0] * element.width, points[next][1] * element.height);
+        ctx.strokeStyle = highlightedEdges.includes(name) ? '#ff6b6b' : '#9dffab';
+        ctx.lineWidth = highlightedEdges.includes(name) ? 5 : 3;
+        ctx.stroke();
+      });
+    } else {
+      ctx.beginPath();
+      points.forEach(([x, y], index) => index
+        ? ctx.lineTo(x * element.width, y * element.height)
+        : ctx.moveTo(x * element.width, y * element.height));
+      ctx.strokeStyle = '#9dffab';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
     points.forEach(([x, y], index) => {
       ctx.fillStyle = '#24563d'; ctx.beginPath(); ctx.arc(x * element.width, y * element.height, 13, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(index + 1, x * element.width, y * element.height + 5);
     });
-  }, [image, points, rotation]);
+  }, [highlightedEdges, image, points, rotation]);
 
   return <section className="panel">
     <p className="step">{step}</p><h2>{title}</h2>
@@ -67,7 +95,10 @@ export default function RoiSelector({
       setPoints(current => [...current, point]);
     }} /></div>
     <div className="row"><p id="roi-count">{points.length} / 4 点</p>
-      <button disabled={busy} onClick={() => setPoints([])}>やり直す</button>
+      <button disabled={busy} onClick={() => {
+        setPoints([]);
+        setHighlightedEdges([]);
+      }}>やり直す</button>
       <button className="primary" disabled={busy || points.length !== 4 || !image || imageError} onClick={() => onStart(points)}>{actionLabel}</button></div>
     {metadata && <p className="muted">{metadata.display_width} × {metadata.display_height} · {metadata.fps.toFixed(2)} fps · {metadata.duration.toFixed(1)} 秒 · {metadata.codec}</p>}
   </section>;

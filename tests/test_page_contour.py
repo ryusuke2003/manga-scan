@@ -6,6 +6,7 @@ from manga_scan.page_contour import (
     consensus_page_quads,
     detect_page_quads,
     draw_page_quads,
+    quad_edge_evidence,
     spread_quad_from_page_quads,
 )
 
@@ -85,6 +86,23 @@ def test_min_confidence_can_force_reference_fallback():
     assert not fallback["detected"]
     assert fallback["left"]["confidence"] > 0
     assert fallback["right"]["confidence"] > 0
+
+
+def test_quad_edge_evidence_penalizes_hand_occlusion():
+    image = synthetic_spread()
+    detected = detect_page_quads(image, REFERENCE)
+    roi = spread_quad_from_page_quads(detected)
+    clear = quad_edge_evidence(image, roi)
+
+    mask = np.zeros(image.shape[:2], np.uint8)
+    points = np.rint(np.asarray(roi) * [image.shape[1] - 1, image.shape[0] - 1]).astype(int)
+    cv2.line(mask, tuple(points[1]), tuple(points[2]), 255, 80)
+    occluded = quad_edge_evidence(image, roi, mask)
+
+    assert clear["right"]["support"] > 0.5
+    assert occluded["right"]["occlusion"] > 0.8
+    assert occluded["right"]["support"] < clear["right"]["support"] * 0.25
+    assert occluded["left"]["support"] == pytest.approx(clear["left"]["support"], abs=0.05)
 
 
 def test_debug_overlay_marks_page_quads_without_modifying_input():
