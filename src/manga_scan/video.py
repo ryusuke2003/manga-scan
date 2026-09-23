@@ -157,6 +157,110 @@ def read_exact(stream, size):
     return b"".join(chunks)
 
 
+def extract_frames(path, times, size, hwaccel="none"):
+    """Extract several presentation timestamps through one FFmpeg decode process.
+
+    Requests are decoded in timestamp order from the earliest requested frame.
+    The selected frames are returned in the caller's original order. Hardware
+    failures retry once on CPU, and an incomplete batch falls back to the
+    existing per-frame seek path for correctness.
+    """
+    path = local_video(path)
+    requested = []
+    for value in times:
+        timestamp = float(value)
+        if not math.isfinite(timestamp) or timestamp < 0:
+            raise ValueError("Timestamps must be finite and >= 0")
+        requested.append(timestamp)
+    if not requested:
+        return []
+
+    try:
+        width, height = (int(size[0]), int(size[1]))
+    except (TypeError, ValueError, IndexError):
+        raise ValueError("size must be a (width, height) pair") from None
+    if width <= 0 or height <= 0:
+        raise ValueError("size must contain positive dimensions")
+
+    unique_times = sorted(set(requested))
+    start_time = unique_times[0]
+    offsets = [timestamp - start_time for timestamp in unique_times]
+    select_terms = ["isnan(prev_selected_t)"]
+    select_terms.extend(
+        f"gte(t\\,{offset:.8f})*lt(prev_selected_t\\,{offset:.8f})"
+        for offset in offsets[1:]
+    )
+    filters = (
+        "setpts=PTS-STARTPTS,"
+        f"select={'+'.join(select_terms)},"
+        f"scale={width}:{height}"
+    )
+    args = input_args(path, hwaccel, start_time if start_time else None)
+    args += [
+        "-vf",
+        filters,
+        "-frames:v",
+        str(len(unique_times)),
+        "-fps_mode",
+        "passthrough",
+        "-pix_fmt",
+        "bgr24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    ]
+
+    frame_size = width * height * 3
+    frames = []
+    code = 0
+    message = ""
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=err)
+        try:
+            for _ in unique_times:
+                data = read_exact(proc.stdout, frame_size)
+                if not data:
+                    break
+                if len(data) != frame_size:
+                    break
+                frames.append(
+                    np.frombuffer(data, np.uint8).reshape(height, width, 3)
+                )
+            code = proc.wait(timeout=30)
+            err.seek(0)
+            message = err.read().decode(errors="replace")[-2000:]
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            proc.stdout.close()
+
+    if code or len(frames) != len(unique_times):
+        if hwaccel != "none":
+            LOG.warning("Hardware batch decode failed; retrying frames on CPU")
+            return extract_frames(path, requested, size, "none")
+
+        LOG.warning(
+            "Batch frame extraction returned %d/%d frames; falling back to individual seeks: %s",
+            len(frames),
+            len(unique_times),
+            message,
+        )
+        frames = []
+        for timestamp in unique_times:
+            frame = extract_frame(path, timestamp, width, "none")
+            if frame.shape[:2] != (height, width):
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+            frames.append(frame)
+
+    by_time = dict(zip(unique_times, frames))
+    return [by_time[timestamp] for timestamp in requested]
+
+
 def sample_frames(path, fps, size, hwaccel="none", start_time=0.0):
     """Bounded rawvideo pipe. Samples on the presentation timeline, not frame indices.
 

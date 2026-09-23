@@ -425,7 +425,9 @@ dewarp_strength = 0.15
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
-| decodeが遅い | Macでは `hwaccel="videotoolbox"` を試す |
+| decodeが遅い | macOSではVideoToolboxをデフォルト利用。初期化失敗時はCPUへ自動フォールバック |
+
+処理時間の内訳は `debug/performance.json` に保存され、`debug/process.log` にも `PERF` 行として記録されます。通常候補とhigh-fps再スキャン候補は、複数timestampを1回のFFmpegプロセスでまとめてdecodeします。
 
 候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
 

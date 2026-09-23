@@ -15,7 +15,7 @@ from manga_scan.ingest import create_project, reopen_cover_roi, set_cover_roi, s
 from manga_scan.pipeline import edit, run
 from manga_scan.processing_control import request_cancel
 from manga_scan.storage import read_manifest
-from manga_scan.video import extract_frame, probe, sample_frames
+from manga_scan.video import extract_frame, extract_frames, probe, sample_frames
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg required"
@@ -57,6 +57,10 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert (project / "debug/motion.csv").is_file()
     assert (project / "debug/scores.csv").is_file()
     assert (project / "debug/contact_sheet.jpg").is_file()
+    performance = json.loads((project / "debug/performance.json").read_text())
+    assert performance == manifest["performance"]
+    assert performance["candidate_decode"]["calls"] > 0
+    assert "PERF candidate_decode" in (project / "debug/process.log").read_text()
     assert not list((project / "frames_lowres").iterdir())
     page = manifest["pages"][0]["id"]
     manifest = edit(project, "toggle_page", page_id=page)
@@ -350,6 +354,17 @@ def test_sampling_and_seeking_use_presentation_time(video):
     assert late[0][1] == pytest.approx(1.6)
     assert late[-1][1] == pytest.approx(5.9)
     assert extract_frame(video, 1.8).shape == (320, 480, 3)
+
+
+def test_batch_candidate_extraction_preserves_requested_order(video):
+    frames = extract_frames(video, [1.8, 2.4, 1.8], (240, 160), "none")
+    assert len(frames) == 3
+    assert all(frame.shape == (160, 240, 3) for frame in frames)
+    assert cv2.norm(frames[0], frames[2], cv2.NORM_INF) == 0
+
+    individual = extract_frame(video, 1.8, 240, "none")
+    assert individual.shape == frames[0].shape
+    assert cv2.norm(frames[0], individual, cv2.NORM_INF) == 0
 
 
 def test_optional_cover_and_reference_time(video, tmp_path):

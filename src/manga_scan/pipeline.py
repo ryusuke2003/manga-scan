@@ -50,7 +50,7 @@ from .split import (
 from .spread_boundary import refine_spread_boundary
 from .spread_render import render_whole_spread as _render_whole_spread_impl
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
-from .video import extract_frame, sample_frames
+from .video import extract_frame, extract_frames, sample_frames
 
 _finger_donor_candidates = render_helpers._finger_donor_candidates
 _page_override = render_helpers._page_override
@@ -73,18 +73,104 @@ def update(project, manifest, progress, message):
     LOG.info("%3.0f%% %s", progress * 100, message)
 
 
-def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_roi=None):
-    # Only candidate timestamps seek back to the original video.
-    image = extract_frame(manifest["source"], sample.time, cfg.analysis_width, cfg.hwaccel)
+def _record_timing(timings, name, started, calls=1):
+    if timings is None:
+        return
+    entry = timings.setdefault(name, {"seconds": 0.0, "calls": 0})
+    entry["seconds"] += time.monotonic() - started
+    entry["calls"] += calls
+
+
+def _performance_snapshot(timings):
+    result = {}
+    for name, entry in sorted(timings.items()):
+        seconds = float(entry.get("seconds", 0.0))
+        calls = int(entry.get("calls", 0))
+        result[name] = {
+            "seconds": round(seconds, 4),
+            "calls": calls,
+            "avg_ms": round(1000.0 * seconds / max(calls, 1), 3),
+        }
+    return result
+
+
+def _write_performance(project, timings):
+    snapshot = _performance_snapshot(timings)
+    write_json(project / "debug/performance.json", snapshot)
+    for name, entry in snapshot.items():
+        LOG.info(
+            "PERF %-24s %8.3fs  calls=%d avg=%7.2fms",
+            name,
+            entry["seconds"],
+            entry["calls"],
+            entry["avg_ms"],
+        )
+    return snapshot
+
+
+def _candidate_frame_size(manifest, cfg):
+    width = min(int(cfg.analysis_width), int(manifest["metadata"]["display_width"]))
+    height = max(
+        2,
+        round(
+            int(manifest["metadata"]["display_height"])
+            * width
+            / int(manifest["metadata"]["display_width"])
+        ),
+    )
+    return width, height
+
+
+def _decode_candidate_frames(manifest, cfg, samples, timings=None):
+    samples = list(samples)
+    if not samples:
+        return []
+    started = time.monotonic()
+    frames = extract_frames(
+        manifest["source"],
+        [sample.time for sample in samples],
+        _candidate_frame_size(manifest, cfg),
+        cfg.hwaccel,
+    )
+    _record_timing(timings, "candidate_decode", started, len(frames))
+    return frames
+
+
+def candidate(
+    project,
+    manifest,
+    cfg,
+    detector,
+    spread_id,
+    number,
+    sample,
+    base_roi=None,
+    image=None,
+    timings=None,
+):
+    if image is None:
+        started = time.monotonic()
+        image = extract_frame(manifest["source"], sample.time, cfg.analysis_width, cfg.hwaccel)
+        _record_timing(timings, "candidate_decode", started)
     roi, quad_ok = (base_roi if base_roi is not None else manifest["roi"]), True
     boundary_refinement = None
+    started = time.monotonic()
     if cfg.refine_quad:
         roi, quad_ok = refine_quad(image, roi, cfg.quad_max_shift)
         roi, boundary_refinement = refine_spread_boundary(image, roi)
         quad_ok = quad_ok or boundary_refinement["refined"]
+    _record_timing(timings, "candidate_refine", started)
+
+    started = time.monotonic()
     overlap, mask = detector.detect(image, roi)
+    _record_timing(timings, "hand_detection", started)
+
+    started = time.monotonic()
     glare_mask = detect_glare_mask(image, roi)
     glare_overlap = glare_overlap_fraction(glare_mask, roi)
+    _record_timing(timings, "glare_detection", started)
+
+    started = time.monotonic()
     metrics = score_frame(
         image,
         roi,
@@ -93,6 +179,9 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_
         cfg,
         glare_overlap=glare_overlap,
     )
+    _record_timing(timings, "candidate_scoring", started)
+
+    started = time.monotonic()
     base = f"candidates/{spread_id}/candidate_{number:02d}"
     save_image(project / f"{base}.png", image)
     save_image(project / f"{base}_hand_mask.png", mask)
@@ -156,6 +245,7 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_
         "suspect": suspect_reasons(metrics, cfg, quad_ok),
     }
     write_json(project / f"{base}.json", record)
+    _record_timing(timings, "candidate_io", started)
     return record
 
 
@@ -1188,6 +1278,7 @@ def _add_auto_high_fps_candidates(
     end,
     reasons,
     base_roi=None,
+    timings=None,
 ):
     samples, effective_fps = _high_fps_window_samples(
         manifest,
@@ -1216,8 +1307,9 @@ def _add_auto_high_fps_candidates(
         return [], effective_fps
 
     next_id = max((int(item["id"]) for item in records), default=-1) + 1
+    frames = _decode_candidate_frames(manifest, cfg, picked, timings)
     added = []
-    for offset, sample in enumerate(picked):
+    for offset, (sample, image) in enumerate(zip(picked, frames)):
         raise_if_cancelled(project)
         record = candidate(
             project,
@@ -1228,6 +1320,8 @@ def _add_auto_high_fps_candidates(
             next_id + offset,
             sample,
             base_roi=base_roi,
+            image=image,
+            timings=timings,
         )
         record["rescan"] = {
             "automatic": True,
@@ -1375,6 +1469,7 @@ def run(project, roi=None):
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         LOG.addHandler(handler)
         LOG.setLevel(logging.INFO)
+        timings = {}
         started = time.monotonic()
         try:
             manifest.pop("error", None)
@@ -1433,6 +1528,7 @@ def run(project, roi=None):
                 if cover_page:
                     manifest["pages"].append(cover_page)
                 update(project, manifest, 0, "低解像度で動きを解析中")
+                motion_started = time.monotonic()
                 h = manifest["metadata"]["display_height"]
                 w = manifest["metadata"]["display_width"]
                 width = min(cfg.analysis_width, w)
@@ -1540,6 +1636,7 @@ def run(project, roi=None):
                     for segment in segments
                 ]
                 write_json(interval_path, interval_records)
+                _record_timing(timings, "motion_analysis", motion_started)
                 manifest["processing_checkpoint"] = {
                     "motion_analysis_complete": True,
                     "completed_spreads": 0,
@@ -1577,13 +1674,15 @@ def run(project, roi=None):
                         )
                     ),
                 }
-                if cfg.roi_tracking and tracking_image is not None and candidate_samples:
-                    tracking_probe = extract_frame(
-                        manifest["source"],
-                        candidate_samples[0].time,
-                        cfg.analysis_width,
-                        cfg.hwaccel,
-                    )
+                candidate_frames = _decode_candidate_frames(
+                    manifest,
+                    cfg,
+                    candidate_samples,
+                    timings,
+                )
+                if cfg.roi_tracking and tracking_image is not None and candidate_frames:
+                    roi_tracking_started = time.monotonic()
+                    tracking_probe = candidate_frames[0]
                     roi_tracking = track_spread_roi(
                         tracking_image,
                         tracking_probe,
@@ -1592,10 +1691,11 @@ def run(project, roi=None):
                         max_step=cfg.roi_tracking_max_step,
                         max_total=cfg.roi_tracking_max_total,
                     )
+                    _record_timing(timings, "roi_tracking", roi_tracking_started)
                     spread_roi = roi_tracking["roi"]
 
                 records = []
-                for j, sample in enumerate(candidate_samples):
+                for j, (sample, image) in enumerate(zip(candidate_samples, candidate_frames)):
                     raise_if_cancelled(project)
                     records.append(
                         candidate(
@@ -1607,9 +1707,13 @@ def run(project, roi=None):
                             j,
                             sample,
                             base_roi=spread_roi,
+                            image=image,
+                            timings=timings,
                         )
                     )
+                temporal_started = time.monotonic()
                 _augment_temporal_hand_masks(project, records, cfg)
+                _record_timing(timings, "temporal_hand_masks", temporal_started)
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
                 initial_selected = selected
@@ -1632,6 +1736,7 @@ def run(project, roi=None):
                         interval["end"],
                         reasons,
                         base_roi=spread_roi,
+                        timings=timings,
                     )
                     if added:
                         selected, selected_pages = choose_candidate_selection(
@@ -1684,7 +1789,9 @@ def run(project, roi=None):
                     previous_spreads.append((spread_id, thumbnail))
                     previous_spreads = previous_spreads[-cfg.dedupe_window :]
                 raise_if_cancelled(project)
+                render_started = time.monotonic()
                 pages = render_spread(project, manifest, spread)
+                _record_timing(timings, "render_spread", render_started)
                 selected_tracking = _candidate_by_id(spread, spread["selected"])
                 next_tracking = cv2.imread(
                     str(project / selected_tracking["path"]),
@@ -1716,7 +1823,11 @@ def run(project, roi=None):
 
             raise_if_cancelled(project)
             update(project, manifest, 0.97, "PDF / CBZを生成中")
+            export_started = time.monotonic()
             build_exports(project, manifest)
+            _record_timing(timings, "export", export_started)
+            _record_timing(timings, "total", started)
+            manifest["performance"] = _write_performance(project, timings)
             manifest.pop("processing_checkpoint", None)
             clear_cancel_request(project)
             manifest.update(
@@ -1890,7 +2001,8 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
         next_id = max((int(item["id"]) for item in spread.get("candidates", [])), default=-1) + 1
         detector = HandDetector(cfg)
         try:
-            for offset, sample in enumerate(picked):
+            frames = _decode_candidate_frames(manifest, cfg, picked)
+            for offset, (sample, image) in enumerate(zip(picked, frames)):
                 record = candidate(
                     project,
                     manifest,
@@ -1900,6 +2012,7 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
                     next_id + offset,
                     sample,
                     base_roi=spread.get("tracked_roi"),
+                    image=image,
                 )
                 record["rescan"] = {
                     "center_time": center,
