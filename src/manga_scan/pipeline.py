@@ -50,7 +50,7 @@ from .split import (
 from .spread_boundary import refine_spread_boundary
 from .spread_render import render_whole_spread as _render_whole_spread_impl
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
-from .video import extract_frame, sample_frames
+from .video import extract_frame, extract_frames, sample_frames
 
 _finger_donor_candidates = render_helpers._finger_donor_candidates
 _page_override = render_helpers._page_override
@@ -73,18 +73,104 @@ def update(project, manifest, progress, message):
     LOG.info("%3.0f%% %s", progress * 100, message)
 
 
-def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_roi=None):
-    # Only candidate timestamps seek back to the original video.
-    image = extract_frame(manifest["source"], sample.time, cfg.analysis_width, cfg.hwaccel)
+def _record_timing(timings, name, started, calls=1):
+    if timings is None:
+        return
+    entry = timings.setdefault(name, {"seconds": 0.0, "calls": 0})
+    entry["seconds"] += time.monotonic() - started
+    entry["calls"] += calls
+
+
+def _performance_snapshot(timings):
+    result = {}
+    for name, entry in sorted(timings.items()):
+        seconds = float(entry.get("seconds", 0.0))
+        calls = int(entry.get("calls", 0))
+        result[name] = {
+            "seconds": round(seconds, 4),
+            "calls": calls,
+            "avg_ms": round(1000.0 * seconds / max(calls, 1), 3),
+        }
+    return result
+
+
+def _write_performance(project, timings):
+    snapshot = _performance_snapshot(timings)
+    write_json(project / "debug/performance.json", snapshot)
+    for name, entry in snapshot.items():
+        LOG.info(
+            "PERF %-24s %8.3fs  calls=%d avg=%7.2fms",
+            name,
+            entry["seconds"],
+            entry["calls"],
+            entry["avg_ms"],
+        )
+    return snapshot
+
+
+def _candidate_frame_size(manifest, cfg):
+    width = min(int(cfg.analysis_width), int(manifest["metadata"]["display_width"]))
+    height = max(
+        2,
+        round(
+            int(manifest["metadata"]["display_height"])
+            * width
+            / int(manifest["metadata"]["display_width"])
+        ),
+    )
+    return width, height
+
+
+def _decode_candidate_frames(manifest, cfg, samples, timings=None):
+    samples = list(samples)
+    if not samples:
+        return []
+    started = time.monotonic()
+    frames = extract_frames(
+        manifest["source"],
+        [sample.time for sample in samples],
+        _candidate_frame_size(manifest, cfg),
+        cfg.hwaccel,
+    )
+    _record_timing(timings, "candidate_decode", started, len(frames))
+    return frames
+
+
+def candidate(
+    project,
+    manifest,
+    cfg,
+    detector,
+    spread_id,
+    number,
+    sample,
+    base_roi=None,
+    image=None,
+    timings=None,
+):
+    if image is None:
+        started = time.monotonic()
+        image = extract_frame(manifest["source"], sample.time, cfg.analysis_width, cfg.hwaccel)
+        _record_timing(timings, "candidate_decode", started)
     roi, quad_ok = (base_roi if base_roi is not None else manifest["roi"]), True
     boundary_refinement = None
+    started = time.monotonic()
     if cfg.refine_quad:
         roi, quad_ok = refine_quad(image, roi, cfg.quad_max_shift)
         roi, boundary_refinement = refine_spread_boundary(image, roi)
         quad_ok = quad_ok or boundary_refinement["refined"]
+    _record_timing(timings, "candidate_refine", started)
+
+    started = time.monotonic()
     overlap, mask = detector.detect(image, roi)
+    _record_timing(timings, "hand_detection", started)
+
+    started = time.monotonic()
     glare_mask = detect_glare_mask(image, roi)
     glare_overlap = glare_overlap_fraction(glare_mask, roi)
+    _record_timing(timings, "glare_detection", started)
+
+    started = time.monotonic()
     metrics = score_frame(
         image,
         roi,
@@ -93,6 +179,9 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_
         cfg,
         glare_overlap=glare_overlap,
     )
+    _record_timing(timings, "candidate_scoring", started)
+
+    started = time.monotonic()
     base = f"candidates/{spread_id}/candidate_{number:02d}"
     save_image(project / f"{base}.png", image)
     save_image(project / f"{base}_hand_mask.png", mask)
@@ -156,6 +245,7 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_
         "suspect": suspect_reasons(metrics, cfg, quad_ok),
     }
     write_json(project / f"{base}.json", record)
+    _record_timing(timings, "candidate_io", started)
     return record
 
 
