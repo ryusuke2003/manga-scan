@@ -487,24 +487,27 @@ def _join_physical_pages(physical_pages):
     return np.concatenate(normalized, axis=1)
 
 
-def selected_spread_preview(project, spread, cfg):
+def selected_spread_preview(project, spread, cfg, runtime_cache=None):
     selected = [_selected_candidate_id(spread, side) for side in ("left", "right")]
     if spread.get("output_layout", cfg.output_layout) == "spread":
         selected = [spread["selected"]] * 2
-    if selected[0] == selected[1]:
-        candidate_record = _candidate_by_id(spread, selected[0])
+
+    def preview_for(candidate_id):
+        cached = (runtime_cache or {}).get(candidate_id)
+        if cached is not None and cached.get("rectified") is not None:
+            return cached["rectified"]
+        candidate_record = _candidate_by_id(spread, candidate_id)
         preview = cv2.imread(str(project / candidate_record["preview"]))
         if preview is None:
             raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
-        return rotate_image(preview, cfg.rotation)
+        return preview
+
+    if selected[0] == selected[1]:
+        return rotate_image(preview_for(selected[0]), cfg.rotation)
 
     physical_pages = []
     for side, candidate_id in zip(("left", "right"), selected):
-        candidate_record = _candidate_by_id(spread, candidate_id)
-        rectified = cv2.imread(str(project / candidate_record["preview"]))
-        if rectified is None:
-            raise ValueError(f"Candidate preview missing: {candidate_record['preview']}")
-        rectified = rotate_image(rectified, cfg.rotation)
+        rectified = rotate_image(preview_for(candidate_id), cfg.rotation)
         sides, _ = split_spread(
             rectified,
             spread.get("spine_ratio", cfg.spine_ratio),
@@ -1368,6 +1371,7 @@ def _add_auto_high_fps_candidates(
     reasons,
     base_roi=None,
     timings=None,
+    runtime_cache=None,
 ):
     samples, effective_fps = _high_fps_window_samples(
         manifest,
@@ -1397,21 +1401,22 @@ def _add_auto_high_fps_candidates(
 
     next_id = max((int(item["id"]) for item in records), default=-1) + 1
     frames = _decode_candidate_frames(manifest, cfg, picked, timings)
-    added = []
-    for offset, (sample, image) in enumerate(zip(picked, frames)):
-        raise_if_cancelled(project)
-        record = candidate(
-            project,
-            manifest,
-            cfg,
-            detector,
-            spread_id,
-            next_id + offset,
-            sample,
-            base_roi=base_roi,
-            image=image,
-            timings=timings,
-        )
+    batch_started = time.monotonic()
+    added = _process_candidate_batch(
+        project,
+        manifest,
+        cfg,
+        detector,
+        spread_id,
+        picked,
+        frames,
+        start_id=next_id,
+        base_roi=base_roi,
+        timings=timings,
+        runtime_cache=runtime_cache,
+    )
+    _record_timing(timings, "candidate_batch", batch_started)
+    for record in added:
         record["rescan"] = {
             "automatic": True,
             "trigger_reasons": list(reasons),
@@ -1420,9 +1425,8 @@ def _add_auto_high_fps_candidates(
             "requested_fps": float(cfg.auto_high_fps_fallback_fps),
             "effective_fps": float(effective_fps),
         }
-        added.append(record)
     records.extend(added)
-    _augment_temporal_hand_masks(project, records, cfg)
+    _augment_temporal_hand_masks(project, records, cfg, runtime_cache=runtime_cache)
     return added, effective_fps
 
 
@@ -1783,25 +1787,28 @@ def run(project, roi=None):
                     _record_timing(timings, "roi_tracking", roi_tracking_started)
                     spread_roi = roi_tracking["roi"]
 
-                records = []
-                for j, (sample, image) in enumerate(zip(candidate_samples, candidate_frames)):
-                    raise_if_cancelled(project)
-                    records.append(
-                        candidate(
-                            project,
-                            manifest,
-                            cfg,
-                            detector,
-                            spread_id,
-                            j,
-                            sample,
-                            base_roi=spread_roi,
-                            image=image,
-                            timings=timings,
-                        )
-                    )
+                runtime_cache = {}
+                batch_started = time.monotonic()
+                records = _process_candidate_batch(
+                    project,
+                    manifest,
+                    cfg,
+                    detector,
+                    spread_id,
+                    candidate_samples,
+                    candidate_frames,
+                    base_roi=spread_roi,
+                    timings=timings,
+                    runtime_cache=runtime_cache,
+                )
+                _record_timing(timings, "candidate_batch", batch_started)
                 temporal_started = time.monotonic()
-                _augment_temporal_hand_masks(project, records, cfg)
+                _augment_temporal_hand_masks(
+                    project,
+                    records,
+                    cfg,
+                    runtime_cache=runtime_cache,
+                )
                 _record_timing(timings, "temporal_hand_masks", temporal_started)
                 selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
@@ -1826,6 +1833,7 @@ def run(project, roi=None):
                         reasons,
                         base_roi=spread_roi,
                         timings=timings,
+                        runtime_cache=runtime_cache,
                     )
                     if added:
                         selected, selected_pages = choose_candidate_selection(
@@ -1865,7 +1873,12 @@ def run(project, roi=None):
                     }
                 if i and typical_gap and gaps[i - 1] > typical_gap * cfg.interval_gap_factor:
                     spread["extra_suspect"].append("interval_gap")
-                thumbnail = selected_spread_preview(project, spread, cfg)
+                thumbnail = selected_spread_preview(
+                    project,
+                    spread,
+                    cfg,
+                    runtime_cache=runtime_cache,
+                )
                 for prev_id, prev_thumb in reversed(previous_spreads[-cfg.dedupe_window :]):
                     match = compare(thumbnail, prev_thumb, cfg)
                     if match["suspect"]:
@@ -1882,10 +1895,13 @@ def run(project, roi=None):
                 pages = render_spread(project, manifest, spread)
                 _record_timing(timings, "render_spread", render_started)
                 selected_tracking = _candidate_by_id(spread, spread["selected"])
-                next_tracking = cv2.imread(
-                    str(project / selected_tracking["path"]),
-                    cv2.IMREAD_COLOR,
-                )
+                cached_tracking = runtime_cache.get(spread["selected"])
+                next_tracking = cached_tracking.get("image") if cached_tracking else None
+                if next_tracking is None:
+                    next_tracking = cv2.imread(
+                        str(project / selected_tracking["path"]),
+                        cv2.IMREAD_COLOR,
+                    )
                 if next_tracking is not None:
                     tracking_image = next_tracking
                     # Keep temporal tracking independent from candidate-local
