@@ -234,12 +234,14 @@ def rectify_spread_pages(
 
 def candidate_page_hand_mask(project, data, side, cfg, boundary_finger_mask_fn=boundary_finger_mask):
     chosen = data["chosen"]
-    mask_path = chosen.get("hand_mask")
-    if not mask_path:
-        return None
-    mask = cv2.imread(str(project / mask_path), cv2.IMREAD_GRAYSCALE)
+    mask = data.get("hand_mask_raw")
     if mask is None:
-        return None
+        mask_path = chosen.get("hand_mask")
+        if not mask_path:
+            return None
+        mask = cv2.imread(str(project / mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            return None
 
     source_height, source_width = data["source_frame_shape"][:2]
     full_mask = cv2.resize(
