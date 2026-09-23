@@ -21,11 +21,11 @@ Macで撮影した漫画の動画から、**見開き画像・PDF・CBZ**を作�
 
 ## 最短セットアップ
 
-主な対象環境は **Mac Apple Silicon** です。
+対応環境は **Apple Silicon搭載Mac（macOS）のみ** です。Linux / Windowsはサポートしません。
 
 | 必要なもの | 目安 | 用途 |
 |---|---|---|
-| macOS arm64 | Apple Silicon | 主な検証環境 |
+| macOS arm64 | Apple Silicon | 対応環境 |
 | Python | 3.11以上。推奨3.12〜3.14 | 画像処理・ローカルAPI |
 | FFmpeg / ffprobe | Homebrew版で可 | 動画解析 |
 | Node.js | 22.12以上 | React/Viteの初回ビルド |
@@ -425,7 +425,7 @@ dewarp_strength = 0.15
 | 紙が黄ばみ/グレーに見える | `white_normalization=true`。まず `white_strength=0.6`, `white_target=245` から |
 | 黒ベタや網点が変わる | `illumination_correction=false`, `white_normalization=false`, `contrast=1.0`, `dewarp_mode="off"`, PNG |
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
-| decodeが遅い | macOSではVideoToolboxをデフォルト利用。初期化失敗時はCPUへ自動フォールバック |
+| decodeが遅い | VideoToolboxをデフォルト利用。初期化失敗時はMac上でCPUへ自動フォールバック |
 
 処理時間の内訳は `debug/performance.json` に保存され、`debug/process.log` にも `PERF` 行として記録されます。通常候補とhigh-fps再スキャン候補は、複数timestampを1回のFFmpegプロセスでまとめてdecodeします。候補解析と指補修のdonor alignmentは `processing_workers`（デフォルト3、最大4）で並列化し、分割出力の左右ページは最大2並列でrenderします。候補画像・手/グレアmask・previewは同一処理中はメモリから再利用し、保存直後の不要なPNG再読込を避けます。
 
