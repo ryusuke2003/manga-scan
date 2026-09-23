@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytest
 from pypdf import PdfReader
 
@@ -45,7 +46,7 @@ def test_candidate_batch_preserves_input_order(monkeypatch, tmp_path):
         for index in range(5)
     ]
     frames = [
-        cv2.UMat(8, 8, cv2.CV_8UC3).get()
+        np.zeros((8, 8, 3), np.uint8)
         for _ in samples
     ]
 
