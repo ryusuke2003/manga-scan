@@ -362,15 +362,21 @@ def set_setup_frame(project, kind, time, confirm=False):
                         if not warning.startswith("画像向きの自動判定に自信がありません")
                     ]
             manifest["roi"] = raw_roi
-            manifest["message"] = (
-                (
-                    "見開き外周を自動検出しました。範囲を確認して抽出を開始してください"
-                    if reference_detection and reference_detection["detected"]
-                    else "見開き外周を自動検出できませんでした。4点で指定してください"
+            if not confirm:
+                manifest["message"] = "基準にする見開きフレームを選んでください"
+            elif not reference_detection or not reference_detection["detected"]:
+                manifest["message"] = (
+                    "見開き外周を自動検出できませんでした。4点で指定してください"
                 )
-                if confirm
-                else "基準にする見開きフレームを選んでください"
-            )
+            elif reference_detection.get("requires_confirmation"):
+                manifest["message"] = (
+                    "見開き外周を検出しましたが、一部が不確かです。"
+                    "赤い辺を確認してから抽出を開始してください"
+                )
+            else:
+                manifest["message"] = (
+                    "見開き外周を自動検出しました。範囲を確認して抽出を開始してください"
+                )
         save_manifest(project, manifest)
         return manifest
 
