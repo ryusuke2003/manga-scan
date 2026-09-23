@@ -205,35 +205,67 @@ def _outline_to_anchor(outline, search_index, anchor_index, alignments, frames):
     return result
 
 
-def _boundary_evidence(working_frames, roi, alignments, anchor_index, hand_masks):
-    """Aggregate outer-edge evidence across aligned nearby frames."""
+def _boundary_evidence(working_frames, pages, alignments, anchor_index, hand_masks):
+    """Aggregate real outer-page edge evidence across aligned nearby frames."""
 
+    anchor_quads = {
+        side: np.asarray(pages[side]["quad"], dtype=np.float32)
+        for side in ("left", "right")
+    }
     per_frame = []
     for frame_index, frame in enumerate(working_frames):
-        frame_roi = np.asarray(roi, dtype=np.float32)
+        frame_quads = {
+            side: quad.copy()
+            for side, quad in anchor_quads.items()
+        }
         alignment = alignments[frame_index]
         if frame_index != anchor_index:
             if alignment.get("status") != "aligned":
                 continue
             try:
                 anchor_to_frame = np.linalg.inv(alignment["matrix"])
-                frame_roi = transform_normalized_quad(
-                    frame_roi,
-                    anchor_to_frame,
-                    working_frames[anchor_index].shape,
-                    frame.shape,
-                )
+                frame_quads = {
+                    side: transform_normalized_quad(
+                        quad,
+                        anchor_to_frame,
+                        working_frames[anchor_index].shape,
+                        frame.shape,
+                    )
+                    for side, quad in anchor_quads.items()
+                }
             except (ValueError, np.linalg.LinAlgError, cv2.error):
                 continue
         try:
-            evidence = quad_edge_evidence(
+            left = quad_edge_evidence(
                 frame,
-                frame_roi,
+                frame_quads["left"],
+                hand_masks[frame_index],
+            )
+            right = quad_edge_evidence(
+                frame,
+                frame_quads["right"],
                 hand_masks[frame_index],
             )
         except ValueError:
             continue
-        per_frame.append({"index": frame_index, "edges": evidence})
+
+        def combine(first, second):
+            return {
+                "support": min(first["support"], second["support"]),
+                "visible_support": min(
+                    first["visible_support"],
+                    second["visible_support"],
+                ),
+                "occlusion": max(first["occlusion"], second["occlusion"]),
+            }
+
+        frame_edges = {
+            "top": combine(left["top"], right["top"]),
+            "right": right["right"],
+            "bottom": combine(left["bottom"], right["bottom"]),
+            "left": left["left"],
+        }
+        per_frame.append({"index": frame_index, "edges": frame_edges})
 
     edge_names = ("top", "right", "bottom", "left")
     aggregated = {}
@@ -529,7 +561,7 @@ def _proposal_from_prior_set(
     ]
     boundary = _boundary_evidence(
         working_frames,
-        roi,
+        pages,
         alignments,
         anchor_index,
         masks,
