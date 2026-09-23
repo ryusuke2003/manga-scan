@@ -35,6 +35,19 @@ it('shows when the whole-spread crop was corrected from the page boundary', () =
   expect(screen.getByText(/紙面と机の境界から外周を自動補正/)).toBeTruthy();
 });
 
+it('shows when a page edge inside an underlying cover was selected', () => {
+  const corrected = {
+    ...manifest,
+    spreads: [{ ...manifest.spreads[0], whole_spread_crop: {
+      ...manifest.spreads[0].whole_spread_crop,
+      status: 'auto_boundary',
+      boundary_refinement: { layered_sheets: [{ side: 'right' }] },
+    } }],
+  };
+  render(<Review manifest={corrected} file={path => path} busy={false} onEdit={vi.fn()} />);
+  expect(screen.getByText(/重なった紙の内側の外周を自動補正/)).toBeTruthy();
+});
+
 it('keeps the long missing-candidate list collapsed by default', () => {
   const timelineManifest = {
     metadata: { duration: 40 },

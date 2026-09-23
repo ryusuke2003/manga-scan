@@ -517,7 +517,7 @@ def _whole_spread_geometry(source, record, spread, cfg, page_detection=None, det
         )
     if (record.get("boundary_refinement") or {}).get("refined"):
         boundary_roi = reference
-        boundary_info = {"refined": True, "status": "candidate_refined"}
+        boundary_info = {**record["boundary_refinement"], "status": "candidate_refined"}
     else:
         boundary_roi, boundary_info = refine_spread_boundary(detection_image, reference)
     crop["boundary_refinement"] = boundary_info
@@ -536,9 +536,22 @@ def _whole_spread_geometry(source, record, spread, cfg, page_detection=None, det
     crop["confidence"] = detection["confidence"]
     if detection["detected"]:
         try:
-            crop["roi"] = spread_quad_from_page_quads(detection)
+            page_roi = spread_quad_from_page_quads(detection)
         except ValueError:
-            crop["status"] = "fallback"
+            pass
         else:
-            crop["status"] = "auto_pages"
+            boundary = np.asarray(crop["roi"], np.float32)
+            pages = np.asarray(page_roi, np.float32)
+            layered_sides = {
+                finding["side"] for finding in boundary_info.get("layered_sheets", [])
+            }
+            left_expansion = float(np.max(boundary[[0, 3], 0] - pages[[0, 3], 0]))
+            right_expansion = float(np.max(pages[[1, 2], 0] - boundary[[1, 2], 0]))
+            includes_underlying_sheet = (
+                ("left" in layered_sides and left_expansion > .025)
+                or ("right" in layered_sides and right_expansion > .025)
+            )
+            if not includes_underlying_sheet:
+                crop["roi"] = page_roi
+                crop["status"] = "auto_pages"
     return upright, crop["roi"], crop

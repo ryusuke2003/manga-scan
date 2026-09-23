@@ -88,3 +88,59 @@ def test_whole_spread_fallback_uses_boundary_but_manual_override_wins():
     )
     assert crop["status"] == "manual"
     np.testing.assert_allclose(roi, CLIPPED_CROP)
+
+
+def _layered_image():
+    image = np.full((700, 400, 3), (40, 70, 100), np.uint8)
+    cover = np.asarray([[0, 30], [310, 20], [245, 650], [0, 665]], np.float32)
+    page = np.asarray([[0, 30], [255, 20], [190, 650], [0, 665]], np.float32)
+    cv2.fillConvexPoly(image, cover.astype(np.int32), (236, 234, 229))
+    cv2.fillConvexPoly(image, page.astype(np.int32), (210, 220, 218))
+    cv2.rectangle(image, (40, 100), (175, 135), (60, 70, 70), 3)
+    cv2.rectangle(image, (65, 350), (140, 425), (50, 55, 55), 3)
+    cv2.ellipse(image, (290, 430), (45, 115), -15, 0, 360, (110, 155, 193), -1)
+    return image, cover / [399, 699], page / [399, 699]
+
+
+def test_page_on_pale_cover_uses_inner_sheet_edge():
+    image, cover, page = _layered_image()
+
+    result, info = refine_spread_boundary(image, cover.tolist())
+
+    assert info["refined"]
+    assert info["layered_sheets"][0]["side"] == "right"
+    assert _iou(result, page) > .99
+
+
+def test_outer_page_contour_cannot_replace_inner_sheet_edge():
+    image, cover, page = _layered_image()
+    detection = {
+        "detected": True,
+        "confidence": .9,
+        "left": {"quad": [[0, .05], [.3, .05], [.3, .95], [0, .95]]},
+        "right": {"quad": [[.3, .05], cover[1].tolist(), cover[2].tolist(), [.3, .95]]},
+    }
+
+    _, roi, crop = _whole_spread_geometry(
+        image,
+        {"id": 0, "roi": cover.tolist()},
+        {},
+        Config(refine_quad=True),
+        page_detection=detection,
+    )
+
+    assert crop["status"] == "auto_boundary"
+    assert _iou(roi, page) > .99
+
+
+def test_panel_rule_does_not_masquerade_as_second_sheet():
+    image = np.full((700, 400, 3), (40, 70, 100), np.uint8)
+    page = np.asarray([[0, 30], [255, 20], [190, 650], [0, 665]], np.float32)
+    cv2.fillConvexPoly(image, page.astype(np.int32), (210, 220, 218))
+    cv2.rectangle(image, (40, 100), (200, 560), (35, 40, 40), 4)
+
+    result, info = refine_spread_boundary(image, (page / [399, 699]).tolist())
+
+    assert info["refined"]
+    assert "layered_sheets" not in info
+    assert _iou(result, page / [399, 699]) > .99

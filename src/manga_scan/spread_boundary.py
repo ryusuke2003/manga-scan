@@ -54,6 +54,113 @@ def _ordered_quad(points):
     return points
 
 
+def _nested_sheet_boundary(image, quad):
+    """Find a pale sheet edge inside a second pale book edge.
+
+    GrabCut treats stacked pages and covers as one foreground object. A long,
+    nearly parallel inner edge with different pale material on both sides is
+    evidence that the outer foreground edge belongs to the sheet underneath.
+    Dark artwork or a panel rule alone cannot satisfy the pale-strip check.
+    """
+
+    height, width = image.shape[:2]
+    pixels = np.asarray(quad, np.float32) * [width - 1, height - 1]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 8, 24)
+    lines = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 360,
+        20,
+        minLineLength=round(height * 0.25),
+        maxLineGap=round(height * 0.07),
+    )
+    if lines is None:
+        return quad, None
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    adjusted = pixels.copy()
+    findings = []
+    for side, indices, direction in (("left", (0, 3), 1), ("right", (1, 2), -1)):
+        top, bottom = pixels[list(indices)]
+        side_height = float(bottom[1] - top[1])
+        if side_height < height * 0.25:
+            continue
+        side_angle = float(np.arctan2(bottom[0] - top[0], side_height))
+        best = None
+        for raw in lines[:, 0]:
+            x1, y1, x2, y2 = (float(value) for value in raw)
+            if y2 < y1:
+                x1, y1, x2, y2 = x2, y2, x1, y1
+            line_height = y2 - y1
+            if line_height < side_height * 0.55:
+                continue
+            line_angle = float(np.arctan2(x2 - x1, line_height))
+            if abs(line_angle - side_angle) > 0.18:
+                continue
+            low = max(y1, top[1] + side_height * 0.08)
+            high = min(y2, bottom[1] - side_height * 0.08)
+            if high - low < side_height * 0.45:
+                continue
+            ys = np.linspace(low, high, 25)
+            xs = x1 + (x2 - x1) * (ys - y1) / line_height
+            outer_xs = np.interp(ys, [top[1], bottom[1]], [top[0], bottom[0]])
+            offsets = direction * (xs - outer_xs)
+            if not 0.06 * width <= float(np.median(offsets)) <= 0.23 * width:
+                continue
+            if float(np.mean((offsets > 0.05 * width) & (offsets < 0.25 * width))) < 0.8:
+                continue
+
+            inner_colors = []
+            outer_colors = []
+            strip_colors = []
+            for x, y, outer_x in zip(xs, ys, outer_xs):
+                row = int(np.clip(round(y), 2, height - 3))
+                column = int(np.clip(round(x), 12, width - 13))
+                inside = column + direction * 8
+                outside = column - direction * 8
+                strip = int(np.clip(round((x + outer_x) / 2), 0, width - 1))
+                inner_patch = lab[row - 2 : row + 3, inside - 3 : inside + 3]
+                outer_patch = lab[row - 2 : row + 3, outside - 3 : outside + 3]
+                inner_colors.append(np.median(inner_patch.reshape(-1, 3), axis=0))
+                outer_colors.append(np.median(outer_patch.reshape(-1, 3), axis=0))
+                strip_colors.append(lab[row, strip])
+            inner_colors = np.asarray(inner_colors)
+            outer_colors = np.asarray(outer_colors)
+            strip_colors = np.asarray(strip_colors)
+            contrast = float(np.linalg.norm(np.median(outer_colors - inner_colors, axis=0)))
+            pale_fraction = float(
+                np.mean(
+                    (inner_colors[:, 0] > 180)
+                    & (outer_colors[:, 0] > 180)
+                    & (strip_colors[:, 0] > 180)
+                )
+            )
+            if contrast < 12.5 or pale_fraction < 0.75:
+                continue
+            score = contrast * pale_fraction * (high - low) / side_height
+            if best is None or score > best[0]:
+                best = (score, x1, y1, x2, y2, contrast, pale_fraction, float(np.median(offsets)))
+        if best is None:
+            continue
+        _, x1, y1, x2, y2, contrast, pale_fraction, offset = best
+        for index in indices:
+            y = pixels[index, 1]
+            adjusted[index, 0] = np.clip(x1 + (x2 - x1) * (y - y1) / (y2 - y1), 0, width - 1)
+        findings.append({
+            "side": side,
+            "contrast": round(contrast, 2),
+            "pale_fraction": round(pale_fraction, 3),
+            "offset_fraction": round(offset / width, 4),
+        })
+    if not findings:
+        return quad, None
+    refined = adjusted / [width - 1, height - 1]
+    try:
+        return validate_roi(refined), findings
+    except ValueError:
+        return quad, None
+
+
 def refine_spread_boundary(image, roi):
     """Return a page-aligned ROI only when image evidence supports the change.
 
@@ -97,6 +204,8 @@ def refine_spread_boundary(image, roi):
         return original.tolist(), info
 
     try:
+        # Keep the GMM initialization stable across re-renders of one frame.
+        cv2.setRNGSeed(0)
         cv2.grabCut(
             working,
             labels,
@@ -134,11 +243,14 @@ def refine_spread_boundary(image, roi):
     except ValueError:
         return original.tolist(), info
 
+    candidate, layered_sheets = _nested_sheet_boundary(working, candidate)
+
     initial_area = float(cv2.contourArea(original))
     candidate_area = float(cv2.contourArea(candidate))
     area_ratio = candidate_area / initial_area
     corner_shift = float(np.max(np.linalg.norm(candidate - original, axis=1)))
-    if not 0.65 <= area_ratio <= 1.45 or corner_shift > 0.12:
+    max_corner_shift = 0.18 if layered_sheets else 0.12
+    if not 0.65 <= area_ratio <= 1.45 or corner_shift > max_corner_shift:
         return original.tolist(), {**info, "status": "geometry_rejected"}
 
     outline = np.zeros((height, width), np.uint8)
@@ -152,10 +264,16 @@ def refine_spread_boundary(image, roi):
     # Shrinking an edge already occupied by the book can clip artwork; growing
     # into an edge classified as desk can add background. Mixed-side errors
     # are common, so use the observed outline rather than area alone.
-    if (area_ratio < 0.98 and edge_occupancy > 0.55) or (
+    if (area_ratio < 0.98 and edge_occupancy > 0.55 and not layered_sheets) or (
         area_ratio > 1.02 and edge_occupancy < 0.55
     ):
         return original.tolist(), {**info, **evidence, "status": "edge_evidence_rejected"}
+    if layered_sheets and area_ratio < 0.98 and edge_occupancy > 0.55:
+        corrected_sides = {finding["side"] for finding in layered_sheets}
+        for side, indices in (("left", (0, 3)), ("right", (1, 2))):
+            moved = np.linalg.norm(candidate[list(indices)] - original[list(indices)], axis=1)
+            if side not in corrected_sides and np.max(moved) > 0.025:
+                return original.tolist(), {**info, **evidence, "status": "edge_evidence_rejected"}
 
     candidate_mask = np.zeros((height, width), np.uint8)
     cv2.fillConvexPoly(candidate_mask, np.rint(candidate * scale).astype(np.int32), 255)
@@ -167,4 +285,5 @@ def refine_spread_boundary(image, roi):
         "refined": True,
         "status": "refined",
         **evidence,
+        **({"layered_sheets": layered_sheets} if layered_sheets else {}),
     }

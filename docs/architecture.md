@@ -25,7 +25,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py`: ユーザー指定の見開きROIを外側へ広げない保守的な外周微調整。
-- `spread_boundary.py`: GrabCutで見開きと机の境界を推定し、ROIを内外両方向へ補正。変化量・元ROI外周の前景率で危険な変更を棄却する。
+- `spread_boundary.py`: GrabCutで見開きと机の境界を推定し、ROIを内外両方向へ補正。重なった明るい紙の内側に長い平行な境界がある場合は、色差と明るい帯の連続性を確認して内側の紙面を選ぶ。変化量・元ROI外周の前景率で危険な変更を棄却する。
 - `page_contour.py`: 見開き内の左右ページ外周を各候補フレームで個別検出し、外れ値を除いたconfidence加重consensus quadを返す。片側が指や影で欠けたフレームも別候補で補完し、低confidence時は既存ROI分割へfallback。
 - `page_warp.py`: 左右ページquadを独立した `warpPerspective` で長方形化する。
 - `perspective.py`: ROI検証、見開き射影変換、90°単位のROI回転。
@@ -170,6 +170,7 @@ RANSAC homographyのinlier率・再投影誤差・ROI内特徴点coverageを満�
 `page_contour_min_confidence` を満たした場合は、左quadの左上・左下と右quadの右上・右下を
 見開き外周として1回だけ射影変換する。内側4点は使わないため、中央の綴じ目を分割・再結合しない。
 片側でもconfidence不足なら見開き境界の補正結果へfallbackし、`page_contour_low_confidence` を残す。旧プロジェクトの候補に補正情報がない場合は再出力時に境界補正を試す。手動ROI overrideは変更しない。
+重なった紙の内側を選んだとき、左右ページ輪郭の外側4点がさらに外側の表紙を指す場合は、その輪郭で内側の補正を上書きしない。
 `page_background_fill` はこの `auto_pages` が成功した見開き出力だけを対象にする。左右ページquadと内側エッジ間のノドをunionした保護maskを同じ射影変換で出力座標へ写し、mask外だけを `paper / white` で埋める。ページ境界には小さな保護marginと外向きfeatherを設け、ページ画素や中央の綴じ目を変更しない。`paper` はページ内縁の明るい低彩度画素から紙色を推定し、十分な候補がなければ `white_target` を使う。輪郭fallback・手動crop・`preserve` では背景を変更しない。
 `perspective_mode="per_page"` では、回転後の元フレーム上で左右ページの外周を別々に検出し、
 両方が `page_contour_min_confidence` を満たした場合だけ各ページを独立して射影変換する。
