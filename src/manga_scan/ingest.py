@@ -503,7 +503,13 @@ def set_cover_roi(project, roi):
             raise ValueError("Select a cover frame first")
         cover["roi"] = validate_roi(roi).tolist()
         cover["status"] = "ready"
-        cover["detection"] = {"detected": False, "confidence": 0.0, "source": "manual"}
+        face_refined = (cover.get("detection") or {}).get("face_refined", False)
+        cover["detection"] = {
+            "detected": False,
+            "confidence": 0.0,
+            "source": "manual",
+            **({"face_refined": True} if face_refined else {}),
+        }
         cfg = Config.from_dict(manifest["config"])
         _refresh_reference_candidates(project, manifest, cfg)
         manifest["message"] = "基準にする見開きフレームを選んでください"

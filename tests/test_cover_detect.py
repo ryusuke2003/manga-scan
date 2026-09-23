@@ -4,6 +4,7 @@ import numpy as np
 from manga_scan.cover_detect import (
     _boundary_line_count,
     _long_line_segments,
+    _refine_cover_face_bottom,
     detect_cover_quad,
 )
 
@@ -70,3 +71,30 @@ def test_lsd_candidates_keep_long_segments_and_filter_short_content_lines():
     assert segments
     assert max(segment[3] for segment in segments) > 0.8
     assert all(segment[3] * 500 >= 54 for segment in segments)
+
+
+def test_slanted_cover_face_replaces_book_block_edges():
+    image = np.full((562, 1000, 3), (85, 145, 190), np.uint8)
+    outer = np.asarray([[373, 27], [636, 47], [697, 486], [300, 492]], np.int32)
+    face = np.asarray([[373, 20], [639, 73], [693, 450], [315, 399]], np.int32)
+    cv2.fillConvexPoly(image, outer, (45, 65, 80))
+    cv2.fillConvexPoly(image, face, (45, 50, 175))
+    cv2.polylines(image, [face], True, (210, 210, 220), 4, cv2.LINE_AA)
+    for start, end in ((outer[0], outer[3]), (outer[1], outer[2]), (outer[3], outer[2])):
+        cv2.line(image, tuple(start), tuple(end), (20, 30, 40), 3, cv2.LINE_AA)
+    initial = (outer / [999, 561]).tolist()
+
+    refined = np.asarray(_refine_cover_face_bottom(image, initial)) * [999, 561]
+
+    np.testing.assert_allclose(refined[:2], face[:2], atol=12)
+    np.testing.assert_allclose(refined[2:], face[2:], atol=12)
+
+
+def test_cover_face_refinement_preserves_correct_bottom():
+    image = np.full((562, 1000, 3), 180, np.uint8)
+    quad = np.asarray([[373, 27], [636, 47], [693, 450], [315, 399]], np.int32)
+    cv2.fillConvexPoly(image, quad, (40, 45, 170))
+    cv2.polylines(image, [quad], True, (230, 230, 230), 4, cv2.LINE_AA)
+    initial = (quad / [999, 561]).tolist()
+
+    assert _refine_cover_face_bottom(image, initial) == initial

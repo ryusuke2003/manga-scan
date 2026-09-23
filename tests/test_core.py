@@ -266,6 +266,16 @@ def test_roi_crop_removes_desk_and_preserves_corners():
     np.testing.assert_array_equal(warp_roi(image, ROI), image)
 
 
+def test_roi_warp_can_restore_known_cover_aspect():
+    image = np.full((201, 301, 3), 120, np.uint8)
+    roi = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+
+    corrected = warp_roi(image, roi, output_aspect=0.72)
+
+    assert corrected.shape == (121, 87, 3)
+    np.testing.assert_array_equal(corrected[60, 40], [120, 120, 120])
+
+
 @pytest.mark.parametrize(
     "roi",
     [

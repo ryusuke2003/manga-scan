@@ -524,7 +524,11 @@ def render_cover(project, manifest):
         return None
     cfg = Config.from_dict(manifest["config"])
     image = extract_frame(manifest["source"], cover["time"], hwaccel=cfg.hwaccel)
-    rectified = warp_roi(image, cover["roi"])
+    # An oblique cover has no reliable physical aspect in its pixel edge
+    # lengths. When its front face was found, restore the book's portrait ratio.
+    face_refined = (cover.get("detection") or {}).get("face_refined", False)
+    output_aspect = (0.72 if cfg.rotation in (0, 180) else 1 / 0.72) if face_refined else None
+    rectified = warp_roi(image, cover["roi"], output_aspect=output_aspect)
     manual_dewarp = cfg.dewarp_strength if cfg.dewarp_mode == "manual" else 0.0
     page_image = enhance_page(
         rectified,
@@ -2389,10 +2393,12 @@ def edit(project, action, **params):
                 params["roi"], (360 - cfg.rotation) % 360
             ).tolist()
             cover["roi"] = raw_roi
+            face_refined = (cover.get("detection") or {}).get("face_refined", False)
             cover["detection"] = {
                 "detected": False,
                 "confidence": 0.0,
                 "source": "manual",
+                **({"face_refined": True} if face_refined else {}),
             }
             page = render_cover(project, manifest)
             page["enabled"] = manifest["pages"][index]["enabled"]

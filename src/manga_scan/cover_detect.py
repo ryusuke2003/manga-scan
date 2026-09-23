@@ -128,6 +128,159 @@ def _boundary_line_count(quad, width, height):
     )
 
 
+def _intersection_with_side(start, end, side_start, side_end):
+    """Return the crossing point and its position along a side."""
+
+    direction = end - start
+    side = side_end - side_start
+    matrix = np.column_stack((direction, -side))
+    if abs(float(np.linalg.det(matrix))) < 1e-5:
+        return None
+    _, fraction = np.linalg.solve(matrix, side_start - start)
+    return side_start + fraction * side, float(fraction)
+
+
+def _refine_cover_face_bottom(image, roi):
+    """Follow the front cover when Hough selected the book block below it.
+
+    A thick book can expose its page block below the front cover. Its straight
+    bottom edge often outranks the cover edge in Hough voting. Require a long
+    line anchored at the side of the existing detection and a perspective
+    slope consistent with the top edge before moving either bottom corner.
+    A strong color boundary can also correct the upper edge in this case.
+    """
+
+    scale = min(1.0, 1000 / max(image.shape[:2]))
+    working = (
+        cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        if scale < 1
+        else image
+    )
+    height, width = working.shape[:2]
+    quad = np.asarray(roi, dtype=np.float32) * [width - 1, height - 1]
+    top_angle = math.degrees(
+        math.atan2(quad[1, 1] - quad[0, 1], quad[1, 0] - quad[0, 0])
+    )
+    bottom_angle = math.degrees(
+        math.atan2(quad[2, 1] - quad[3, 1], quad[2, 0] - quad[3, 0])
+    )
+    if abs(top_angle) < 2 or abs(top_angle - bottom_angle) < 4:
+        return roi
+
+    gray = (
+        working
+        if working.ndim == 2
+        else cv2.cvtColor(
+            working,
+            cv2.COLOR_BGRA2GRAY if working.shape[2] == 4 else cv2.COLOR_BGR2GRAY,
+        )
+    )
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+    segments = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 720,
+        threshold=max(35, round(width * 0.045)),
+        minLineLength=max(65, round(width * 0.13)),
+        maxLineGap=max(12, round(width * 0.03)),
+    )
+    if segments is None:
+        return roi
+
+    page_width = float(np.linalg.norm(quad[2] - quad[3]))
+    best = None
+    for x1, y1, x2, y2 in segments[:, 0]:
+        start = np.asarray([x1, y1], dtype=np.float64)
+        end = np.asarray([x2, y2], dtype=np.float64)
+        if start[0] > end[0]:
+            start, end = end, start
+        if np.linalg.norm(end - start) < page_width * 0.45:
+            continue
+        angle = math.degrees(math.atan2(end[1] - start[1], end[0] - start[0]))
+        if angle * top_angle <= 0 or not 5 <= abs(angle) <= 20:
+            continue
+        if abs(angle - top_angle) > 7:
+            continue
+
+        left = _intersection_with_side(start, end, quad[0], quad[3])
+        right = _intersection_with_side(start, end, quad[1], quad[2])
+        if left is None or right is None:
+            continue
+        left_point, left_fraction = left
+        right_point, right_fraction = right
+        if not (0.72 <= left_fraction <= 0.94 and 0.72 <= right_fraction <= 0.94):
+            continue
+        if abs(left_fraction - right_fraction) > 0.18:
+            continue
+        span = right_point[0] - left_point[0]
+        if span <= 0 or abs(start[0] - left_point[0]) > span * 0.10:
+            continue
+        if end[0] < left_point[0] + span * 0.55:
+            continue
+        # Prefer the lowest supported cover edge when artwork supplies several
+        # long, roughly parallel interior lines.
+        score = (left_fraction + right_fraction) / 2
+        if best is None or score > best[0]:
+            best = (score, left_point, right_point)
+
+    if best is None:
+        return roi
+    refined = quad.copy()
+    refined[3], refined[2] = best[1:]
+
+    if working.ndim == 3 and working.shape[2] == 3:
+        lab = cv2.cvtColor(
+            cv2.GaussianBlur(working, (11, 11), 0), cv2.COLOR_BGR2LAB
+        )
+        top_width = float(np.linalg.norm(quad[1] - quad[0]))
+        best_top = None
+        for x1, y1, x2, y2 in segments[:, 0]:
+            start = np.asarray([x1, y1], dtype=np.float64)
+            end = np.asarray([x2, y2], dtype=np.float64)
+            if start[0] > end[0]:
+                start, end = end, start
+            if np.linalg.norm(end - start) < top_width * 0.40:
+                continue
+            angle = math.degrees(math.atan2(end[1] - start[1], end[0] - start[0]))
+            if angle * top_angle <= 0 or not 5 <= abs(angle) <= 20:
+                continue
+            if abs(angle - top_angle) < 4:
+                continue
+            left = _intersection_with_side(start, end, quad[0], quad[3])
+            right = _intersection_with_side(start, end, quad[1], quad[2])
+            if left is None or right is None:
+                continue
+            left_point, left_fraction = left
+            right_point, right_fraction = right
+            if not (-0.03 <= left_fraction <= 0.18 and -0.03 <= right_fraction <= 0.18):
+                continue
+            span = right_point[0] - left_point[0]
+            if span <= 0 or abs(start[0] - left_point[0]) > span * 0.10:
+                continue
+            if end[0] < left_point[0] + span * 0.55:
+                continue
+            xx = np.linspace(left_point[0] + span * 0.08, right_point[0] - span * 0.08, 40)
+            yy = left_point[1] + (xx - left_point[0]) * (
+                (right_point[1] - left_point[1]) / span
+            )
+            indices_x = np.clip(np.rint(xx).astype(int), 0, width - 1)
+            above = lab[np.clip(np.rint(yy - 6).astype(int), 0, height - 1), indices_x]
+            below = lab[np.clip(np.rint(yy + 6).astype(int), 0, height - 1), indices_x]
+            contrast = float(
+                np.mean(np.linalg.norm(above.astype(float) - below.astype(float), axis=1))
+            )
+            if contrast >= 35 and (best_top is None or contrast > best_top[0]):
+                best_top = (contrast, left_point, right_point)
+        if best_top is not None:
+            refined[0], refined[1] = best_top[1:]
+
+    normalized = refined / [width - 1, height - 1]
+    try:
+        return validate_roi(normalized).tolist()
+    except ValueError:
+        return roi
+
+
 def detect_cover_quad_candidates(
     image,
     min_confidence=0.62,
@@ -305,4 +458,8 @@ def detect_cover_quad(
     best = candidates[0]
     if not best["detected"]:
         return {"detected": False, "confidence": best["confidence"], "roi": None}
+    refined_roi = _refine_cover_face_bottom(image, best["roi"])
+    if refined_roi != best["roi"]:
+        best["roi"] = refined_roi
+        best["face_refined"] = True
     return best
