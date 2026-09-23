@@ -37,6 +37,7 @@ const repairTitle = repair => repair?.occlusion_kinds?.includes('glare') ? '遮�
 const repairCleanLabel = repair => repair?.occlusion_kinds?.includes('glare') ? '遮蔽なし' : '指を未検出';
 const cropStatusLabel = crop => ({
   auto_pages: `左右ページから外周を自動検出${crop.confidence !== undefined ? ` · 信頼度 ${Math.round(crop.confidence * 100)}%` : ''}`,
+  auto_boundary: '紙面と机の境界から外周を自動補正',
   fallback: '外周を自動検出できず、基準範囲を使用',
   reference: '外周の自動検出はOFF',
   manual: '外周を手動指定',

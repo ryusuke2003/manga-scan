@@ -43,6 +43,32 @@ def polygon_iou(a, b) -> float:
     return 0.0 if union <= 0 else float(np.clip(intersection / union, 0.0, 1.0))
 
 
+def _perturb_quad(quad, fraction):
+    """Construct a reproducible coarse user ROI from an annotated page boundary."""
+    q = np.asarray(quad, dtype=np.float32)
+    center = q.mean(axis=0)
+    return np.clip(center + (q - center) * (1 + 2 * fraction), 0, 1).tolist()
+
+
+def _boundary_result(displayed, expected):
+    from manga_scan.spread_boundary import refine_spread_boundary
+
+    checks = {}
+    for name, fraction in (("desk", .07), ("clipped", -.07)):
+        prior = _perturb_quad(expected, fraction)
+        result, info = refine_spread_boundary(displayed, prior)
+        before = polygon_iou(prior, expected)
+        after = polygon_iou(result, expected)
+        checks[f"spread_boundary_{name}"] = {
+            "prior_iou": round(before, 4),
+            "iou": round(after, 4),
+            "refined": info["refined"],
+            "status": info["status"],
+            "passed": bool(after >= before - .005),
+        }
+    return checks
+
+
 def _validate_quad(quad, label: str) -> None:
     points = np.asarray(quad, dtype=np.float32)
     if points.shape != (4, 2) or not np.isfinite(points).all():
@@ -203,6 +229,7 @@ def _sample_result(video_id, sample, displayed):
         return result, reference.get("roi"), None
 
     expected_quad = sample["spread_quad"]
+    result["checks"].update(_boundary_result(displayed, expected_quad))
     reference_iou = polygon_iou(reference["roi"], expected_quad) if reference.get("roi") else 0.0
     reference_check.update(
         iou=round(reference_iou, 4),

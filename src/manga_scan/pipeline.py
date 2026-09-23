@@ -47,6 +47,7 @@ from .split import (
     rotate_image,
     split_spread,
 )
+from .spread_boundary import refine_spread_boundary
 from .spread_render import render_whole_spread as _render_whole_spread_impl
 from .storage import project_lock, read_manifest, save_image, save_manifest, write_json
 from .video import extract_frame, sample_frames
@@ -76,8 +77,11 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_
     # Only candidate timestamps seek back to the original video.
     image = extract_frame(manifest["source"], sample.time, cfg.analysis_width, cfg.hwaccel)
     roi, quad_ok = (base_roi if base_roi is not None else manifest["roi"]), True
+    boundary_refinement = None
     if cfg.refine_quad:
         roi, quad_ok = refine_quad(image, roi, cfg.quad_max_shift)
+        roi, boundary_refinement = refine_spread_boundary(image, roi)
+        quad_ok = quad_ok or boundary_refinement["refined"]
     overlap, mask = detector.detect(image, roi)
     glare_mask = detect_glare_mask(image, roi)
     glare_overlap = glare_overlap_fraction(glare_mask, roi)
@@ -145,6 +149,7 @@ def candidate(project, manifest, cfg, detector, spread_id, number, sample, base_
             if base_roi is not None
             else validate_roi(manifest["roi"]).tolist()
         ),
+        "boundary_refinement": boundary_refinement,
         "metrics": metrics,
         "page_metrics": page_metrics,
         "page_suspect": page_suspect,

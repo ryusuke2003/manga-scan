@@ -25,6 +25,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py`: ユーザー指定の見開きROIを外側へ広げない保守的な外周微調整。
+- `spread_boundary.py`: GrabCutで見開きと机の境界を推定し、ROIを内外両方向へ補正。変化量・元ROI外周の前景率で危険な変更を棄却する。
 - `page_contour.py`: 見開き内の左右ページ外周を各候補フレームで個別検出し、外れ値を除いたconfidence加重consensus quadを返す。片側が指や影で欠けたフレームも別候補で補完し、低confidence時は既存ROI分割へfallback。
 - `page_warp.py`: 左右ページquadを独立した `warpPerspective` で長方形化する。
 - `perspective.py`: ROI検証、見開き射影変換、90°単位のROI回転。
@@ -164,17 +165,17 @@ RANSAC homographyのinlier率・再投影誤差・ROI内特徴点coverageを満�
 その見開きのtracking base ROIとして使う。1見開きのcorner移動は `roi_tracking_max_step`（既定0.08）、
 確定した基準ROIからの累積移動は `roi_tracking_max_total`（既定0.16）で制限する。
 追跡失敗や上限超過では直前のtrusted ROIを維持し、机の静止特徴を本の移動と誤認しないよう
-特徴点探索を本ROI内部へ限定する。そのtracking base ROIに対して、従来の保守的な自動外周微調整を各点最大2.5%まで行う。
+特徴点探索を本ROI内部へ限定する。そのtracking base ROIに対して輪郭を各点最大2.5%まで微調整し、GrabCutの前景境界が十分明確なら机を除く内向き補正または見切れを戻す外向き補正を行う。補正結果と採否理由は候補に保存する。
 `output_layout="spread"` では、採用候補の回転後元フレームから左右ページのquadを検出する。両方が
 `page_contour_min_confidence` を満たした場合は、左quadの左上・左下と右quadの右上・右下を
 見開き外周として1回だけ射影変換する。内側4点は使わないため、中央の綴じ目を分割・再結合しない。
-片側でもconfidence不足なら基準ROIへfallbackし、`page_contour_low_confidence` を残す。
+片側でもconfidence不足なら見開き境界の補正結果へfallbackし、`page_contour_low_confidence` を残す。旧プロジェクトの候補に補正情報がない場合は再出力時に境界補正を試す。手動ROI overrideは変更しない。
 `page_background_fill` はこの `auto_pages` が成功した見開き出力だけを対象にする。左右ページquadと内側エッジ間のノドをunionした保護maskを同じ射影変換で出力座標へ写し、mask外だけを `paper / white` で埋める。ページ境界には小さな保護marginと外向きfeatherを設け、ページ画素や中央の綴じ目を変更しない。`paper` はページ内縁の明るい低彩度画素から紙色を推定し、十分な候補がなければ `white_target` を使う。輪郭fallback・手動crop・`preserve` では背景を変更しない。
 `perspective_mode="per_page"` では、回転後の元フレーム上で左右ページの外周を別々に検出し、
 両方が `page_contour_min_confidence` を満たした場合だけ各ページを独立して射影変換する。
 片側でもconfidence不足なら、その見開きは従来の「見開き全体を射影変換 → 左右分割」へfallbackし、
 `page_contour_low_confidence` を要確認理由として残す。検出quadとdebug overlayはmanifest / `debug/page_contours/` に保存する。
-新規設定の既定は `refine_quad=true` + `perspective_mode="per_page"`。見開きROIの保守的な微調整と左右ページ別の輪郭検出を試し、検出に十分なconfidenceがない場合は元ROI / spread方式へfallbackする。自動補正は元ROIの外側を描き足さないが、漫画が大きく移動した場合の背景除去を完全には保証しない。
+新規設定の既定は `refine_quad=true` + `perspective_mode="per_page"`。見開きROIの境界補正と左右ページ別の輪郭検出を試し、検出に十分なconfidenceがない場合は補正済みまたは元のROIへfallbackする。手で隠された外周や背景と紙面が似たケースは安全のため補正を見送る場合がある。
 
 湾曲補正は `off / manual / auto` を選べ、新規設定の既定は `auto`。manualは従来の対称cylindrical remapを維持する。
 autoは左右ページを分割した後、ページ高の9地点を中心にした複数scanline帯でSobel-x由来の

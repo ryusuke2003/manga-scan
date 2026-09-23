@@ -23,6 +23,18 @@ const manifest = {
     roi: [[0, 0], [1, 0], [1, 1], [0, 1]], metrics: { score: 1, sharpness: 100, hand_overlap: 0 } }] }],
 };
 
+it('shows when the whole-spread crop was corrected from the page boundary', () => {
+  const corrected = {
+    ...manifest,
+    spreads: [{ ...manifest.spreads[0], whole_spread_crop: {
+      ...manifest.spreads[0].whole_spread_crop,
+      status: 'auto_boundary',
+    } }],
+  };
+  render(<Review manifest={corrected} file={path => path} busy={false} onEdit={vi.fn()} />);
+  expect(screen.getByText(/紙面と机の境界から外周を自動補正/)).toBeTruthy();
+});
+
 it('keeps the long missing-candidate list collapsed by default', () => {
   const timelineManifest = {
     metadata: { duration: 40 },

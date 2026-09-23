@@ -21,6 +21,7 @@ from .page_contour import (
 from .page_warp import warp_detected_pages
 from .perspective import rotate_roi, validate_roi, warp_roi
 from .split import rotate_image, spine_position, split_spread
+from .spread_boundary import refine_spread_boundary
 from .storage import save_image, write_json
 from .temporal_alignment import (
     align_page_detection,
@@ -514,11 +515,20 @@ def _whole_spread_geometry(source, record, spread, cfg, page_detection=None, det
             (cfg.analysis_width, max(2, round(upright.shape[0] * scale))),
             interpolation=cv2.INTER_AREA,
         )
+    if (record.get("boundary_refinement") or {}).get("refined"):
+        boundary_roi = reference
+        boundary_info = {"refined": True, "status": "candidate_refined"}
+    else:
+        boundary_roi, boundary_info = refine_spread_boundary(detection_image, reference)
+    crop["boundary_refinement"] = boundary_info
+    if boundary_info["refined"]:
+        crop["roi"] = boundary_roi
+        crop["status"] = "auto_boundary"
     detection = page_detection
     if detection is None:
         detection = detect_page_quads_fn(
             detection_image,
-            reference,
+            crop["roi"],
             spine_ratio=spread.get("spine_ratio", cfg.spine_ratio),
             min_confidence=cfg.page_contour_min_confidence,
         )
