@@ -162,6 +162,10 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.white_normalization is True
     assert cfg.auto_rotation is True
     assert cfg.hwaccel == ("videotoolbox" if sys.platform == "darwin" else "none")
+    assert cfg.processing_workers == 3
+
+    with pytest.raises(ValueError, match="processing_workers"):
+        Config(processing_workers=5).validate()
 
     disabled = Config.from_dict({"hand_backend": "none"})
     assert disabled.hand_backend == "none"

@@ -8,6 +8,7 @@ stable_frames = 5
 motion_threshold = 0.012
 turn_threshold = 0.025
 candidates_per_spread = 7
+processing_workers = 3 # 1..4; candidate analysis/finger alignment, split page render uses at most 2
 output_layout = "spread" # "spread": one image/PDF page per spread (default); "split": left/right pages
 candidate_selection_mode = "spread" # "spread" / "per_page"; per_page selects left/right independently
 

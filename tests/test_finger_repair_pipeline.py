@@ -217,16 +217,35 @@ def test_temporal_mask_augments_candidate_hand_score(tmp_path, monkeypatch):
 
 
 def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monkeypatch):
-    _, _, manifest, spread = _fixture(tmp_path, monkeypatch, output_layout="spread")
+    _, target_mask, manifest, spread = _fixture(
+        tmp_path,
+        monkeypatch,
+        output_layout="spread",
+    )
+    manifest["config"]["processing_workers"] = 1
+    clean_mask = np.zeros_like(target_mask)
+    runtime_cache = {
+        0: {"hand_mask": target_mask},
+        1: {"hand_mask": clean_mask},
+        2: {"hand_mask": clean_mask},
+    }
+    for candidate_id in (0, 1, 2):
+        (tmp_path / f"candidate_{candidate_id}_mask.png").unlink()
 
     def fake_repair(target, _target_mask, donors, **_kwargs):
         donor_ids = [donor["candidate_id"] for donor in donors]
         assert donor_ids == [1, 2]
+        assert _kwargs["alignment_workers"] == 1
         return target.copy(), _repair_metadata(), np.zeros(target.shape[:2], np.uint8)
 
     monkeypatch.setattr(pipeline, "repair_finger_regions", fake_repair)
 
-    page = pipeline.render_spread(tmp_path, manifest, spread)[0]
+    page = pipeline.render_spread(
+        tmp_path,
+        manifest,
+        spread,
+        runtime_cache=runtime_cache,
+    )[0]
     repair = page["finger_repair"]
 
     assert page["side"] == "spread"
@@ -257,14 +276,13 @@ def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monke
 def test_split_output_keeps_components_unresolved_and_multiple_donors(tmp_path, monkeypatch):
     _, _, manifest, spread = _fixture(tmp_path, monkeypatch, output_layout="split")
     _install_split_geometry(monkeypatch)
-    calls = 0
+    image = _image()
+    right_source = image[:, image.shape[1] // 2 :]
 
     def fake_repair(target, _target_mask, donors, **_kwargs):
-        nonlocal calls
-        calls += 1
         donor_ids = [donor["candidate_id"] for donor in donors]
         assert donor_ids == [1, 2]
-        if calls == 1:
+        if np.array_equal(target, right_source):
             unresolved = np.zeros(target.shape[:2], np.uint8)
             unresolved[12:24, 20:32] = 255
             return (
