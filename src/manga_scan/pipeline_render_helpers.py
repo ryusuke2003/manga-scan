@@ -545,13 +545,22 @@ def _whole_spread_geometry(source, record, spread, cfg, page_detection=None, det
             layered_sides = {
                 finding["side"] for finding in boundary_info.get("layered_sheets", [])
             }
+            uncertain_sides = {
+                finding["side"] for finding in boundary_info.get("possible_inner_sheets", [])
+            }
             left_expansion = float(np.max(boundary[[0, 3], 0] - pages[[0, 3], 0]))
             right_expansion = float(np.max(pages[[1, 2], 0] - boundary[[1, 2], 0]))
+            left_inset = float(np.max(pages[[0, 3], 0] - boundary[[0, 3], 0]))
+            right_inset = float(np.max(boundary[[1, 2], 0] - pages[[1, 2], 0]))
             includes_underlying_sheet = (
                 ("left" in layered_sides and left_expansion > .025)
                 or ("right" in layered_sides and right_expansion > .025)
             )
-            if not includes_underlying_sheet:
+            clips_ambiguous_strip = (
+                ("left" in uncertain_sides and left_inset > .025)
+                or ("right" in uncertain_sides and right_inset > .025)
+            )
+            if not includes_underlying_sheet and not clips_ambiguous_strip:
                 crop["roi"] = page_roi
                 crop["status"] = "auto_pages"
     return upright, crop["roi"], crop

@@ -465,6 +465,8 @@ function Spread({ spread, config, file, busy, onEdit }) {
     <p className="muted">{reasons(spread.suspect)}</p>
     <label>この見開きの出力形式<select disabled={busy} value={layout} onChange={event => onEdit('output_layout', { spread_id: spread.id, layout: event.target.value })}><option value="spread">見開きのまま</option><option value="split">左右のページに分割</option></select></label>
     {layout === 'spread' && spread.whole_spread_crop && <p className="muted">{cropStatusLabel(spread.whole_spread_crop)}{spread.page_contour_debug && <> · <a href={file(spread.page_contour_debug)} target="_blank" rel="noopener">検出結果 ↗</a></>}</p>}
+    {layout === 'spread' && spread.whole_spread_crop?.boundary_refinement?.possible_inner_sheets?.length > 0 &&
+      <p className="muted">内側にも境界候補があります。表紙の縁かページ内の印刷か判断できないため、外周を確認・調整してください。</p>}
     {selectionMode === 'per_page' && <p className="muted">左右ページを別々に採点・選択中 · 左 #{selectedPages.left} / 右 #{selectedPages.right}</p>}
     {layout === 'split' && <div className="row">
       <button disabled={busy} onClick={() => onEdit('swap', { spread_id: spread.id })}>左右の順番を入れ替え</button>

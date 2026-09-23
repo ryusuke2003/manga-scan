@@ -258,6 +258,8 @@ def render_whole_spread(
     )
     if crop["status"] == "fallback":
         suspect.append("page_contour_low_confidence")
+    if crop.get("boundary_refinement", {}).get("possible_inner_sheets"):
+        suspect.append("page_quad_uncertain")
     if detection and any(detection[side]["touches_frame"] for side in ("left", "right")):
         suspect.append("source_frame_clipped")
     if hand_mask is not None:

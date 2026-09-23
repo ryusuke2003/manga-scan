@@ -251,7 +251,35 @@ def refine_spread_boundary(image, roi):
     except ValueError:
         return original.tolist(), info
 
-    candidate, layered_sheets = _nested_sheet_boundary(working, candidate)
+    inner_candidate, possible_layers = _nested_sheet_boundary(working, candidate)
+    layered_sheets = []
+    uncertain_layers = []
+    if possible_layers:
+        # A printed margin can create the same parallel, differently colored
+        # band as a cover beneath a page. A single frame cannot establish
+        # which one it is. Only protect an inner edge already supported by
+        # the input ROI; otherwise keep the full outer boundary for review.
+        outer_candidate = candidate.copy()
+        candidate = candidate.copy()
+        for finding in possible_layers:
+            indices = [0, 3] if finding["side"] == "left" else [1, 2]
+            near_inner = float(
+                np.mean(np.linalg.norm(original[indices] - inner_candidate[indices], axis=1))
+            )
+            near_outer = float(
+                np.mean(np.linalg.norm(original[indices] - outer_candidate[indices], axis=1))
+            )
+            if near_inner <= 0.04 and near_inner + 0.015 < near_outer:
+                candidate[indices] = inner_candidate[indices]
+                layered_sheets.append(finding)
+            else:
+                uncertain_layers.append(finding)
+        try:
+            candidate = validate_roi(candidate)
+        except ValueError:
+            candidate = outer_candidate
+            uncertain_layers.extend(layered_sheets)
+            layered_sheets = []
 
     initial_area = float(cv2.contourArea(original))
     candidate_area = float(cv2.contourArea(candidate))
@@ -268,6 +296,7 @@ def refine_spread_boundary(image, roi):
         "area_ratio": round(area_ratio, 4),
         "corner_shift": round(corner_shift, 4),
         "edge_occupancy": round(edge_occupancy, 4),
+        **({"possible_inner_sheets": uncertain_layers} if uncertain_layers else {}),
     }
     # Shrinking an edge already occupied by the book can clip artwork; growing
     # into an edge classified as desk can add background. Mixed-side errors

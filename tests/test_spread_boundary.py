@@ -4,7 +4,7 @@ import pytest
 
 from manga_scan.config import Config
 from manga_scan.motion import Sample
-from manga_scan.pipeline import candidate
+from manga_scan.pipeline import candidate, render_spread
 from manga_scan.pipeline_render_helpers import _whole_spread_geometry
 from manga_scan.spread_boundary import refine_spread_boundary
 
@@ -112,14 +112,102 @@ def _layered_image(cover_color=(236, 234, 229)):
         (70, 195, 235),  # yellow
     ],
 )
-def test_page_on_colored_cover_uses_inner_sheet_edge(cover_color):
+def test_colored_band_without_depth_evidence_keeps_outer_edge(cover_color):
     image, cover, page = _layered_image(cover_color)
 
     result, info = refine_spread_boundary(image, cover.tolist())
 
     assert info["refined"]
-    assert info["layered_sheets"][0]["side"] == "right"
+    assert info["possible_inner_sheets"][0]["side"] == "right"
+    assert "layered_sheets" not in info
+    assert _iou(result, cover) > .99
+
+
+def _printed_margin_image(margin_color):
+    image = np.full((700, 400, 3), (40, 70, 100), np.uint8)
+    page = np.asarray([[0, 30], [310, 20], [245, 650], [0, 665]], np.float32)
+    margin = np.asarray([[255, 20], [310, 20], [245, 650], [190, 650]], np.int32)
+    cv2.fillConvexPoly(image, page.astype(np.int32), (210, 220, 218))
+    cv2.fillConvexPoly(image, margin, margin_color)
+    cv2.rectangle(image, (40, 100), (175, 135), (60, 70, 70), 3)
+    inner = np.asarray([[0, 30], [255, 20], [190, 650], [0, 665]], np.float32)
+    return image, page / [399, 699], inner / [399, 699]
+
+
+@pytest.mark.parametrize("margin_color", [(236, 234, 229), (45, 70, 170), (20, 20, 20)])
+def test_no_cover_printed_margin_is_not_clipped(margin_color):
+    image, page, _ = _printed_margin_image(margin_color)
+
+    result, info = refine_spread_boundary(image, page.tolist())
+
+    assert info["refined"]
+    assert "layered_sheets" not in info
     assert _iou(result, page) > .99
+
+
+def test_uncertain_inner_contour_cannot_clip_printed_margin():
+    image, page, inner = _printed_margin_image((45, 70, 170))
+    detection = {
+        "detected": True,
+        "confidence": .9,
+        "left": {"quad": [[0, .04], [.3, .04], [.3, .95], [0, .95]]},
+        "right": {"quad": [[.3, .04], inner[1].tolist(), inner[2].tolist(), [.3, .95]]},
+    }
+
+    _, roi, crop = _whole_spread_geometry(
+        image,
+        {"id": 0, "roi": page.tolist()},
+        {},
+        Config(refine_quad=True),
+        page_detection=detection,
+    )
+
+    assert crop["status"] == "auto_boundary"
+    assert crop["boundary_refinement"]["possible_inner_sheets"]
+    assert _iou(roi, page) > .99
+
+
+def test_uncertain_inner_edge_is_flagged_in_rendered_page(tmp_path, monkeypatch):
+    image, page, inner = _printed_margin_image((45, 70, 170))
+    detection = {
+        "detected": True,
+        "confidence": .9,
+        "left": {
+            "quad": [[0, .04], [.3, .04], [.3, .95], [0, .95]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+        "right": {
+            "quad": [[.3, .04], inner[1].tolist(), inner[2].tolist(), [.3, .95]],
+            "confidence": .9,
+            "detected": True,
+            "touches_frame": False,
+        },
+    }
+    monkeypatch.setattr("manga_scan.pipeline.extract_frame", lambda *_args, **_kwargs: image.copy())
+    monkeypatch.setattr("manga_scan.pipeline.detect_spread_page_consensus", lambda *_args: detection)
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        output_layout="spread",
+        grayscale=False,
+        illumination_correction=False,
+        white_normalization=False,
+        dewarp_mode="off",
+    )
+    spread = {
+        "id": "layered_ambiguous",
+        "selected": 0,
+        "candidates": [{"id": 0, "time": 0.0, "roi": page.tolist(), "suspect": []}],
+        "extra_suspect": [],
+    }
+    manifest = {"config": cfg.to_dict(), "source": "unused", "pdf_stale": False}
+
+    result = render_spread(tmp_path, manifest, spread)[0]
+
+    assert result["crop"]["status"] == "auto_boundary"
+    assert "page_quad_uncertain" in result["suspect"]
 
 
 def test_outer_page_contour_cannot_replace_inner_sheet_edge():
@@ -133,7 +221,14 @@ def test_outer_page_contour_cannot_replace_inner_sheet_edge():
 
     _, roi, crop = _whole_spread_geometry(
         image,
-        {"id": 0, "roi": cover.tolist()},
+        {
+            "id": 0,
+            "roi": page.tolist(),
+            "boundary_refinement": {
+                "refined": True,
+                "layered_sheets": [{"side": "right"}],
+            },
+        },
         {},
         Config(refine_quad=True),
         page_detection=detection,

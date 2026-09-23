@@ -25,7 +25,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `score.py`: 品質指標、合成スコア、suspect判定。
 - `selection.py`: 候補見開きを左右に分けたページ単位スコアと、左右別候補IDの選択。
 - `page_detect.py`: ユーザー指定の見開きROIを外側へ広げない保守的な外周微調整。
-- `spread_boundary.py`: GrabCutで見開きと机の境界を推定し、ROIを内外両方向へ補正。ページの外に長く平行な表紙の帯が見える場合は、ページ側の明るさ・境界の色差・帯の色の一貫性を確認して内側の紙面を選ぶ。表紙の色は固定しない。変化量・元ROI外周の前景率で危険な変更を棄却する。
+- `spread_boundary.py`: GrabCutで見開きと机の境界を推定し、ROIを内外両方向へ補正。表紙らしい平行な帯を検出しても、ページ内の印刷帯と単一フレームでは区別できない。初期ROIが内側の境界を支持する場合のみそれを採用し、それ以外は外側を維持してレビューに曖昧さを示す。表紙の色は固定せず、変化量・元ROI外周の前景率で危険な変更を棄却する。
 - `page_contour.py`: 見開き内の左右ページ外周を各候補フレームで個別検出し、外れ値を除いたconfidence加重consensus quadを返す。片側が指や影で欠けたフレームも別候補で補完し、低confidence時は既存ROI分割へfallback。
 - `page_warp.py`: 左右ページquadを独立した `warpPerspective` で長方形化する。
 - `perspective.py`: ROI検証、見開き射影変換、90°単位のROI回転。

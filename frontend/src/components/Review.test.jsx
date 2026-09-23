@@ -48,6 +48,19 @@ it('shows when a page edge inside an underlying cover was selected', () => {
   expect(screen.getByText(/重なった紙の内側の外周を自動補正/)).toBeTruthy();
 });
 
+it('warns when an inner edge could also be printed on a page', () => {
+  const ambiguous = {
+    ...manifest,
+    spreads: [{ ...manifest.spreads[0], whole_spread_crop: {
+      ...manifest.spreads[0].whole_spread_crop,
+      status: 'auto_boundary',
+      boundary_refinement: { possible_inner_sheets: [{ side: 'right' }] },
+    } }],
+  };
+  render(<Review manifest={ambiguous} file={path => path} busy={false} onEdit={vi.fn()} />);
+  expect(screen.getByText(/表紙の縁かページ内の印刷か判断できない/)).toBeTruthy();
+});
+
 it('keeps the long missing-candidate list collapsed by default', () => {
   const timelineManifest = {
     metadata: { duration: 40 },
