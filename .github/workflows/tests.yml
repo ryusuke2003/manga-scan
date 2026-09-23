@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   fast:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,7 +34,7 @@ jobs:
       - run: python -m pytest -q --ignore=tests/test_pipeline.py
 
   compat-py311:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
