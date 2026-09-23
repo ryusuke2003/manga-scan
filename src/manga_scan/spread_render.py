@@ -29,6 +29,7 @@ def render_whole_spread(
     detect_spread_page_consensus_fn,
     candidate_by_id_fn,
     whole_spread_geometry_fn,
+    runtime_cache=None,
     extract_frame_fn=extract_frame,
     boundary_finger_mask_fn=boundary_finger_mask,
     repair_finger_regions_fn=repair_finger_regions,
@@ -78,7 +79,13 @@ def render_whole_spread(
             )
         hand_mask = None
         if cfg.hand_backend == "mediapipe" and record.get("hand_mask"):
-            saved = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
+            cached_runtime = (runtime_cache or {}).get(candidate_id) or {}
+            saved = cached_runtime.get("hand_mask")
+            if saved is None:
+                saved = cv2.imread(
+                    str(project / record["hand_mask"]),
+                    cv2.IMREAD_GRAYSCALE,
+                )
             if saved is not None:
                 saved = cv2.resize(
                     saved, (source.shape[1], source.shape[0]), interpolation=cv2.INTER_NEAREST
@@ -168,6 +175,7 @@ def render_whole_spread(
                 donors(),
                 min_coverage=cfg.finger_repair_min_coverage,
                 fallback=cfg.finger_repair_fallback,
+                alignment_workers=cfg.processing_workers,
             )
             repair["occlusion_kinds"] = [
                 kind
