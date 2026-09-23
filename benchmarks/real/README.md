@@ -11,13 +11,14 @@ The repository stores only:
 
 `benchmarks/real/videos/` and generated reports are intentionally ignored.
 
-## Initial corpus
+## Corpus
 
-The first corpus contains three videos and ten annotated frames:
+The corpus contains four videos and fifteen annotated frames:
 
-- `IMG_6481.mp4`: landscape desk capture, curved gutter, moving fingers, one frame touching the right edge
-- `IMG_6474.mp4`: portrait file that needs 270-degree clockwise correction, tight handheld framing and strong curvature
-- `IMG_6479.mp4`: portrait desk capture with a cover negative case and increasingly heavy hand occlusion
+- `IMG_6481.MOV`: landscape desk capture, curved gutter, moving fingers, one frame touching the right edge
+- `IMG_6474.MOV`: portrait file that needs 270-degree clockwise correction, tight handheld framing and strong curvature
+- `IMG_6479.MOV`: portrait desk capture with a cover negative case and increasingly heavy hand occlusion
+- `ムービー（2026-09-21 15.59）.mov`: upside-down desk capture with white and dark pages, full-bleed art, and fingers on both page edges
 
 Two same-spread pairs are also defined for optional MediaPipe/finger-repair evaluation.
 
@@ -30,6 +31,7 @@ benchmarks/real/videos/
   IMG_6474.MOV
   IMG_6479.MOV
   IMG_6481.MOV
+  ムービー（2026-09-21 15.59）.mov
 ```
 
 The runner verifies SHA-256 before using a file. A renamed file is also accepted when its hash matches.

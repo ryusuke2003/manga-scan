@@ -95,6 +95,17 @@ def test_rotation_detection_warns_when_extra_samples_fail(monkeypatch):
     assert result["confidence"] == 0.55
 
 
+def test_rotation_detection_offers_180_when_page_geometry_is_nearly_symmetric(monkeypatch):
+    first = _spread_like_image()
+    monkeypatch.setattr(rotation_module, "extract_frame", lambda *_args, **_kwargs: first)
+
+    result = detect_video_rotation("unused.mov", _metadata(), first)
+
+    assert result["rotation"] == 0
+    assert result["requires_confirmation"]
+    assert result["rotation_options"] == [0, 180]
+
+
 def _rotation_project(tmp_path, cover):
     project = tmp_path / "scan"
     (project / "source").mkdir(parents=True)

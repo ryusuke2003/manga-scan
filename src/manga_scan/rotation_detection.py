@@ -140,15 +140,17 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
     suggested_rotation = best_rotation
     confidence = _confidence(scores, suggested_rotation)
     sideways_axis = suggested_rotation in (90, 270)
-    direction_margin = abs(float(scores[90]) - float(scores[270]))
-    direction_ambiguous = sideways_axis and direction_margin < 0.025
+    opposite = (suggested_rotation + 180) % 360
+    direction_margin = abs(float(scores[suggested_rotation]) - float(scores[opposite]))
+    # Page shape and gutter direction cannot reliably distinguish a book from
+    # the same book upside down. Small score gaps can come from a hand or desk
+    # lighting, so ask for confirmation on either axis.
+    direction_ambiguous = direction_margin < 0.06
     if direction_ambiguous:
         confidence = min(confidence, 0.55)
-        # A portrait display frame may either contain an upright book or a
-        # sideways book. Page geometry identifies the axis but cannot decide
-        # that semantic distinction or 90° versus 270°. Keep the non-destructive
-        # preview unchanged until the user confirms it.
-        if first_frame.shape[0] > first_frame.shape[1]:
+        # Page geometry identifies an axis more reliably than which end is up.
+        # Keep the preview unchanged until the user confirms the direction.
+        if not sideways_axis or first_frame.shape[0] > first_frame.shape[1]:
             best_rotation = 0
     # The geometry path is designed around three independent observations.
     # If one or both extra seeks fail, do not let a single cover/transition
@@ -157,6 +159,11 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
         confidence = min(confidence, 0.62)
     elif len(frames) == 1:
         confidence = min(confidence, 0.55)
+    rotation_options = [best_rotation]
+    if direction_ambiguous:
+        rotation_options = [90, 270] if sideways_axis else [0, 180]
+        if sideways_axis and first_frame.shape[0] > first_frame.shape[1]:
+            rotation_options.insert(0, 0)
     result = {
         "rotation": best_rotation,
         "confidence": confidence,
@@ -166,13 +173,7 @@ def detect_video_rotation(path, metadata, first_frame, hwaccel="none"):
         "sample_count": len(frames),
         "direction_ambiguous": direction_ambiguous,
         "requires_confirmation": direction_ambiguous,
-        "rotation_options": (
-            [0, 90, 270]
-            if direction_ambiguous and first_frame.shape[0] > first_frame.shape[1]
-            else [90, 270]
-            if direction_ambiguous
-            else [best_rotation]
-        ),
+        "rotation_options": rotation_options,
         "suggested_rotation": suggested_rotation,
     }
     if display_rotation is not None:

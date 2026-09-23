@@ -321,6 +321,8 @@ def _proposal_from_prior_set(
         roi = spread_quad_from_page_quads(pages)
     except ValueError:
         return None, float(pages["confidence"])
+    if _has_frame_edge_background(working_frames[anchor_index], pages):
+        return None, float(pages["confidence"])
 
     temporal_support = min(
         pages["left"]["consensus_count"],
@@ -353,6 +355,42 @@ def _distinct_proposals(first, second):
     first_roi = np.asarray(first["roi"], dtype=np.float32)
     second_roi = np.asarray(second["roi"], dtype=np.float32)
     return float(np.mean(np.linalg.norm(first_roi - second_roi, axis=1))) >= 0.025
+
+
+def _has_frame_edge_background(image, pages):
+    """Reject a page candidate that is actually horizontal desk grain.
+
+    The coarse search can split a narrow cover and the desk beside it into two
+    convincing quads. Only inspect a side that reaches the image boundary: a
+    real clipped page still has ink in both gradient directions, whereas the
+    exposed wood in this case has almost exclusively horizontal grain.
+    """
+
+    height, width = image.shape[:2]
+    clipped_sides = []
+    for side in ("left", "right"):
+        quad = np.asarray(pages[side]["quad"], dtype=np.float32)
+        if np.any((quad <= 0.002) | (quad >= 0.998)):
+            clipped_sides.append(quad)
+    if not clipped_sides:
+        return False
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    gx = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
+    gy = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
+    for quad in clipped_sides:
+        points = np.rint(quad * [width - 1, height - 1]).astype(np.int32)
+        mask = np.zeros((height, width), np.uint8)
+        cv2.fillConvexPoly(mask, points, 255)
+        margin = max(5, round(min(height, width) * 0.025)) | 1
+        mask = cv2.erode(mask, np.ones((margin, margin), np.uint8))
+        interior = mask > 0
+        if np.count_nonzero(interior) < 100:
+            continue
+        vertical_gradient = float(np.mean(gx[interior]))
+        horizontal_gradient = float(np.mean(gy[interior]))
+        if horizontal_gradient > 10 and vertical_gradient / horizontal_gradient < 0.45:
+            return True
+    return False
 
 
 def detect_reference_spread_consensus(

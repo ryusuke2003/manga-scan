@@ -13,8 +13,8 @@ from scripts.run_real_benchmark import (
 def test_real_benchmark_manifest_is_valid():
     data = json.loads(Path("benchmarks/real/cases.json").read_text())
     validate_manifest(data)
-    assert len(data["videos"]) == 3
-    assert sum(len(video["samples"]) for video in data["videos"]) == 10
+    assert len(data["videos"]) == 4
+    assert sum(len(video["samples"]) for video in data["videos"]) == 15
     assert sum(len(video.get("repair_pairs", [])) for video in data["videos"]) == 2
 
 

@@ -143,6 +143,59 @@
           "tags": ["finger-repair", "heavy-hand-occlusion", "same-spread"]
         }
       ]
+    },
+    {
+      "id": "desk-upside-down-20260921",
+      "filename": "ムービー（2026-09-21 15.59）.mov",
+      "sha256": "ff0aabf8eab9ccc4c85c860ddb04c01ae1b552598a827a4134f6acc92d3bc168",
+      "width": 1620,
+      "height": 1080,
+      "duration": 258.996667,
+      "expected_rotation": 180,
+      "samples": [
+        {
+          "id": "cover-negative",
+          "time": 0.0,
+          "expect_spread": false,
+          "tags": ["cover", "upside-down", "negative-reference"]
+        },
+        {
+          "id": "white-page-right-hand",
+          "time": 48.0,
+          "expect_spread": true,
+          "spread_quad": [[0.154, 0.200], [0.869, 0.200], [0.841, 0.883], [0.198, 0.909]],
+          "min_reference_iou": 0.58,
+          "min_page_iou": 0.62,
+          "tags": ["upside-down", "desk", "hand-right", "white-pages"]
+        },
+        {
+          "id": "dark-pages-edge-hand",
+          "time": 112.0,
+          "expect_spread": true,
+          "spread_quad": [[0.141, 0.276], [0.869, 0.219], [0.836, 0.904], [0.209, 0.994]],
+          "min_reference_iou": 0.50,
+          "min_page_iou": 0.54,
+          "tags": ["upside-down", "desk", "dark-pages", "hand-bottom", "curvature"]
+        },
+        {
+          "id": "full-bleed-both-hands",
+          "time": 144.0,
+          "expect_spread": true,
+          "spread_quad": [[0.144, 0.202], [0.860, 0.202], [0.826, 0.941], [0.181, 0.950]],
+          "min_reference_iou": 0.48,
+          "min_page_iou": 0.52,
+          "tags": ["upside-down", "desk", "full-bleed", "hands-both", "curvature"]
+        },
+        {
+          "id": "white-page-bottom-hand",
+          "time": 224.0,
+          "expect_spread": true,
+          "spread_quad": [[0.146, 0.202], [0.890, 0.135], [0.840, 0.915], [0.200, 0.976]],
+          "min_reference_iou": 0.58,
+          "min_page_iou": 0.62,
+          "tags": ["upside-down", "desk", "hand-bottom", "white-pages", "perspective"]
+        }
+      ]
     }
   ]
 }
