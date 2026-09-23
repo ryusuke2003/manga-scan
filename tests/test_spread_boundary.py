@@ -90,11 +90,11 @@ def test_whole_spread_fallback_uses_boundary_but_manual_override_wins():
     np.testing.assert_allclose(roi, CLIPPED_CROP)
 
 
-def _layered_image():
+def _layered_image(cover_color=(236, 234, 229)):
     image = np.full((700, 400, 3), (40, 70, 100), np.uint8)
     cover = np.asarray([[0, 30], [310, 20], [245, 650], [0, 665]], np.float32)
     page = np.asarray([[0, 30], [255, 20], [190, 650], [0, 665]], np.float32)
-    cv2.fillConvexPoly(image, cover.astype(np.int32), (236, 234, 229))
+    cv2.fillConvexPoly(image, cover.astype(np.int32), cover_color)
     cv2.fillConvexPoly(image, page.astype(np.int32), (210, 220, 218))
     cv2.rectangle(image, (40, 100), (175, 135), (60, 70, 70), 3)
     cv2.rectangle(image, (65, 350), (140, 425), (50, 55, 55), 3)
@@ -102,8 +102,18 @@ def _layered_image():
     return image, cover / [399, 699], page / [399, 699]
 
 
-def test_page_on_pale_cover_uses_inner_sheet_edge():
-    image, cover, page = _layered_image()
+@pytest.mark.parametrize(
+    "cover_color",
+    [
+        (236, 234, 229),  # white
+        (45, 70, 170),  # red
+        (150, 65, 45),  # navy
+        (20, 20, 20),  # black
+        (70, 195, 235),  # yellow
+    ],
+)
+def test_page_on_colored_cover_uses_inner_sheet_edge(cover_color):
+    image, cover, page = _layered_image(cover_color)
 
     result, info = refine_spread_boundary(image, cover.tolist())
 

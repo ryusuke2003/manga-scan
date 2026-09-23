@@ -55,12 +55,12 @@ def _ordered_quad(points):
 
 
 def _nested_sheet_boundary(image, quad):
-    """Find a pale sheet edge inside a second pale book edge.
+    """Find a page edge inside the visible edge of an underlying sheet.
 
     GrabCut treats stacked pages and covers as one foreground object. A long,
-    nearly parallel inner edge with different pale material on both sides is
-    evidence that the outer foreground edge belongs to the sheet underneath.
-    Dark artwork or a panel rule alone cannot satisfy the pale-strip check.
+    nearly parallel inner edge with a consistent outer strip is evidence that
+    the outer foreground edge belongs to the sheet underneath. The strip can
+    be any color; the visible page side must still look like light paper.
     """
 
     height, width = image.shape[:2]
@@ -128,28 +128,36 @@ def _nested_sheet_boundary(image, quad):
             outer_colors = np.asarray(outer_colors)
             strip_colors = np.asarray(strip_colors)
             contrast = float(np.linalg.norm(np.median(outer_colors - inner_colors, axis=0)))
-            pale_fraction = float(
+            strip_consistency = float(
                 np.mean(
                     (inner_colors[:, 0] > 180)
-                    & (outer_colors[:, 0] > 180)
-                    & (strip_colors[:, 0] > 180)
+                    & (np.linalg.norm(outer_colors - strip_colors, axis=1) < 26)
                 )
             )
-            if contrast < 12.5 or pale_fraction < 0.75:
+            if contrast < 12.5 or strip_consistency < 0.75:
                 continue
-            score = contrast * pale_fraction * (high - low) / side_height
+            score = contrast * strip_consistency * (high - low) / side_height
             if best is None or score > best[0]:
-                best = (score, x1, y1, x2, y2, contrast, pale_fraction, float(np.median(offsets)))
+                best = (
+                    score,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    contrast,
+                    strip_consistency,
+                    float(np.median(offsets)),
+                )
         if best is None:
             continue
-        _, x1, y1, x2, y2, contrast, pale_fraction, offset = best
+        _, x1, y1, x2, y2, contrast, strip_consistency, offset = best
         for index in indices:
             y = pixels[index, 1]
             adjusted[index, 0] = np.clip(x1 + (x2 - x1) * (y - y1) / (y2 - y1), 0, width - 1)
         findings.append({
             "side": side,
             "contrast": round(contrast, 2),
-            "pale_fraction": round(pale_fraction, 3),
+            "strip_consistency": round(strip_consistency, 3),
             "offset_fraction": round(offset / width, 4),
         })
     if not findings:
