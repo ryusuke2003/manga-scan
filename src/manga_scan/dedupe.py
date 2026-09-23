@@ -44,6 +44,8 @@ def _alignment_defaults():
         "inliers": 0,
         "inlier_ratio": 0.0,
         "match_balance": 0.0,
+        "inlier_balance": 0.0,
+        "inliers_by_half": [0, 0],
         "coverage_x": 0.0,
         "coverage_y": 0.0,
         "overlap": 0.0,
@@ -121,6 +123,12 @@ def feature_alignment(a, b):
     if inliers < 4:
         return result
 
+    source_on_left = source[:, 0] < right_width / 2
+    target_on_left = target[:, 0] < left_width / 2
+    left_inliers = int(np.count_nonzero(source_on_left & target_on_left))
+    right_inliers = int(np.count_nonzero(~source_on_left & ~target_on_left))
+    inlier_balance = min(left_inliers, right_inliers) / inliers
+
     coverage_x = min(
         float(np.ptp(source[:, 0])) / right_width,
         float(np.ptp(target[:, 0])) / left_width,
@@ -162,23 +170,41 @@ def feature_alignment(a, b):
         inliers >= 60
         and feature_density >= 0.04
         and inlier_ratio >= 0.45
-        and match_balance >= 0.08
+        and min(left_inliers, right_inliers) >= 20
+        and inlier_balance >= 0.08
         and coverage_x >= 0.40
         and coverage_y >= 0.45
         and overlap >= 0.55
         and correlation >= 0.45
+    )
+    # A hand may cover a large fraction of one page and depress global pixel
+    # correlation. Numerous geometrically consistent matches on *both* pages
+    # still establish that the visible content is the same. Count RANSAC
+    # inliers per half; pre-RANSAC matches can misleadingly look balanced when
+    # only one physical page is actually unchanged.
+    occluded_duplicate = (
+        inliers >= 120
+        and inlier_ratio >= 0.40
+        and min(left_inliers, right_inliers) >= 40
+        and inlier_balance >= 0.20
+        and coverage_x >= 0.58
+        and coverage_y >= 0.65
+        and overlap >= 0.75
+        and correlation >= 0.25
     )
     result.update(
         available=True,
         inliers=inliers,
         inlier_ratio=round(inlier_ratio, 6),
         match_balance=round(match_balance, 6),
+        inlier_balance=round(inlier_balance, 6),
+        inliers_by_half=[left_inliers, right_inliers],
         coverage_x=round(coverage_x, 6),
         coverage_y=round(coverage_y, 6),
         overlap=round(overlap, 6),
         correlation=round(correlation, 6),
-        duplicate=bool(duplicate),
-        suspect=bool(suspect or duplicate),
+        duplicate=bool(duplicate or occluded_duplicate),
+        suspect=bool(suspect or duplicate or occluded_duplicate),
     )
     return result
 

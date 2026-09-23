@@ -122,6 +122,31 @@ def test_later_duplicate_replaces_hand_covered_page_then_repairs_it():
     assert not hand_page["enabled"] and clean_page["enabled"]
 
 
+def test_resume_dedupe_uses_cleaner_promoted_spread(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        pipeline,
+        "selected_spread_preview",
+        lambda project, spread, cfg: spread["id"],
+    )
+    manifest = {
+        "spreads": [
+            {"id": "hand"},
+            {"id": "clean", "duplicate_of": "hand"},
+            {"id": "next"},
+        ],
+        "pages": [
+            {"spread_id": "hand", "enabled": False},
+            {"spread_id": "clean", "enabled": True},
+            {"spread_id": "next", "enabled": True},
+        ],
+    }
+
+    assert pipeline._resume_previous_spreads(tmp_path, manifest, Config()) == [
+        ("hand", "clean"),
+        ("next", "next"),
+    ]
+
+
 @pytest.mark.parametrize("hand,focus,risks", [
     (0.01, 0.5, ()),
     (0.01, 0.8, ("final_edge_crop_suspected",)),

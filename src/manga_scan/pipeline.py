@@ -1373,10 +1373,23 @@ def _resume_tracking_state(project, manifest):
 
 def _resume_previous_spreads(project, manifest, cfg):
     previous = []
+    spreads_by_id = {spread["id"]: spread for spread in manifest.get("spreads", [])}
     for spread in manifest.get("spreads", []):
         if spread.get("duplicate_of"):
             continue
-        thumbnail = selected_spread_preview(project, spread, cfg)
+        group = {spread["id"]}
+        group.update(
+            item["id"]
+            for item in manifest["spreads"]
+            if item.get("duplicate_of") == spread["id"]
+        )
+        enabled = {
+            page["spread_id"]
+            for page in manifest.get("pages", [])
+            if page.get("enabled", True) and page.get("spread_id") in group
+        }
+        representative = spreads_by_id[next(iter(enabled))] if len(enabled) == 1 else spread
+        thumbnail = selected_spread_preview(project, representative, cfg)
         previous.append((spread["id"], thumbnail))
     return previous[-cfg.dedupe_window :]
 
@@ -2084,6 +2097,11 @@ def run(project, roi=None):
                 )
                 _record_timing(timings, "render_spread", render_started)
                 _promote_cleaner_duplicate(manifest, spread, pages)
+                if spread.get("auto_promoted_duplicate_of"):
+                    previous_spreads = [
+                        (root_id, thumbnail if root_id == spread["duplicate_of"] else image)
+                        for root_id, image in previous_spreads
+                    ]
                 selected_tracking = _candidate_by_id(spread, spread["selected"])
                 cached_tracking = runtime_cache.get(spread["selected"])
                 next_tracking = cached_tracking.get("image") if cached_tracking else None

@@ -256,6 +256,51 @@ def test_aligned_match_on_only_one_half_is_not_dropped():
     assert compare(left, shifted, Config())["duplicate"] is False
 
 
+def test_occluded_spread_matches_without_ocr_but_changed_half_does_not():
+    rng = np.random.default_rng(12)
+    original = np.full((420, 720, 3), 245, np.uint8)
+    for side in range(2):
+        offset = side * 360
+        for _ in range(110):
+            x = int(rng.integers(offset + 10, offset + 340))
+            y = int(rng.integers(8, 400))
+            width = int(rng.integers(8, 40))
+            height = int(rng.integers(8, 34))
+            shade = int(rng.integers(15, 140))
+            cv2.rectangle(
+                original,
+                (x, y),
+                (min(offset + 355, x + width), min(415, y + height)),
+                (shade,) * 3,
+                2,
+            )
+    cv2.line(original, (360, 0), (360, 419), (35, 35, 35), 5)
+    perspective = np.float32(
+        [[1.02, 0.01, 9], [-0.005, 1.01, 6], [0.00001, -0.00002, 1]]
+    )
+    occluded = cv2.warpPerspective(
+        original, perspective, (720, 420), borderValue=(240, 240, 240)
+    )
+    cv2.fillConvexPoly(
+        occluded,
+        np.asarray([[0, 110], [530, 90], [560, 420], [0, 420]], np.int32),
+        (90, 142, 193),
+    )
+    cv2.ellipse(occluded, (700, 200), (50, 110), 0, 0, 360, (90, 142, 193), -1)
+
+    same = compare(original, occluded, Config())
+    assert same["alignment"]["correlation"] < 0.45
+    assert min(same["alignment"]["inliers_by_half"]) >= 40
+    assert same["duplicate"] is True
+
+    changed = original.copy()
+    changed[:, 360:] = rng.integers(0, 255, changed[:, 360:].shape, np.uint8)
+    different = compare(original, changed, Config())
+    assert different["alignment"]["inliers"] >= 120
+    assert different["alignment"]["inliers_by_half"][1] < 20
+    assert different["duplicate"] is False
+
+
 def test_roi_crop_removes_desk_and_preserves_corners():
     image = np.zeros((201, 301, 3), np.uint8)
     image[40:161, 60:241] = (40, 100, 220)
