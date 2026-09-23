@@ -710,6 +710,7 @@ def _render_split_page_side(
                 donor_pages(),
                 min_coverage=cfg.finger_repair_min_coverage,
                 fallback=cfg.finger_repair_fallback,
+                alignment_workers=cfg.processing_workers,
             )
             finger_repair["occlusion_kinds"] = [
                 kind
@@ -1937,7 +1938,12 @@ def run(project, roi=None):
                     previous_spreads = previous_spreads[-cfg.dedupe_window :]
                 raise_if_cancelled(project)
                 render_started = time.monotonic()
-                pages = render_spread(project, manifest, spread)
+                pages = render_spread(
+                    project,
+                    manifest,
+                    spread,
+                    runtime_cache=runtime_cache,
+                )
                 _record_timing(timings, "render_spread", render_started)
                 selected_tracking = _candidate_by_id(spread, spread["selected"])
                 cached_tracking = runtime_cache.get(spread["selected"])
@@ -2150,32 +2156,38 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
     if picked:
         next_id = max((int(item["id"]) for item in spread.get("candidates", [])), default=-1) + 1
         detector = HandDetector(cfg)
+        runtime_cache = {}
         try:
             frames = _decode_candidate_frames(manifest, cfg, picked)
-            for offset, (sample, image) in enumerate(zip(picked, frames)):
-                record = candidate(
-                    project,
-                    manifest,
-                    cfg,
-                    detector,
-                    spread["id"],
-                    next_id + offset,
-                    sample,
-                    base_roi=spread.get("tracked_roi"),
-                    image=image,
-                )
+            added = _process_candidate_batch(
+                project,
+                manifest,
+                cfg,
+                detector,
+                spread["id"],
+                picked,
+                frames,
+                start_id=next_id,
+                base_roi=spread.get("tracked_roi"),
+                runtime_cache=runtime_cache,
+            )
+            for record in added:
                 record["rescan"] = {
                     "center_time": center,
                     "radius": radius,
                     "requested_fps": requested_fps,
                     "effective_fps": effective_fps,
                 }
-                added.append(record)
         finally:
             detector.close()
 
         spread["candidates"].extend(added)
-        _augment_temporal_hand_masks(project, spread["candidates"], cfg)
+        _augment_temporal_hand_masks(
+            project,
+            spread["candidates"],
+            cfg,
+            runtime_cache=runtime_cache,
+        )
         selection_mode = (
             spread.get("candidate_selection_mode", cfg.candidate_selection_mode)
             if spread.get("output_layout", cfg.output_layout) == "split"
@@ -2192,7 +2204,12 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
         ]
         replacements = {
             rendered["id"]: rendered
-            for rendered in render_spread(project, manifest, spread)
+            for rendered in render_spread(
+                project,
+                manifest,
+                spread,
+                runtime_cache=runtime_cache,
+            )
         }
         for index in indices:
             old = manifest["pages"][index]
