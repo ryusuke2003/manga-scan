@@ -6,6 +6,7 @@ import cv2
 
 from .config import Config
 from .cover_detect import detect_cover_quad
+from .hand import HandDetector
 from .input_validation import (
     validate_manifest_video,
     validate_video_collection,
@@ -229,12 +230,12 @@ def _detect_cover_for_rotation(image, rotation):
 
 
 def _reference_consensus_frames(source, metadata, timestamp, image, cfg):
-    """Load the selected frame and its ±0.5s neighbors in display orientation."""
+    """Load the selected frame and nearby frames in display orientation."""
 
     duration = float(metadata["duration"])
     samples = [rotate_image(image, cfg.rotation)]
     sample_times = [float(timestamp)]
-    for offset in (-0.5, 0.5):
+    for offset in (-0.5, -0.25, 0.25, 0.5):
         sample_time = min(
             max(float(timestamp + offset), 0.0),
             max(0.0, duration - 0.001),
@@ -248,6 +249,22 @@ def _reference_consensus_frames(source, metadata, timestamp, image, cfg):
         samples.append(rotate_image(sample, cfg.rotation))
         sample_times.append(sample_time)
     return samples, 0
+
+
+def _reference_hand_masks(frames, cfg):
+    if cfg.hand_backend == "none":
+        return [np.zeros(frame.shape[:2], np.uint8) for frame in frames]
+
+    detector = HandDetector(cfg)
+    full_frame = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+    masks = []
+    try:
+        for frame in frames:
+            _overlap, mask = detector.detect(frame, full_frame)
+            masks.append(mask)
+    finally:
+        detector.close()
+    return masks
 
 
 def set_setup_frame(project, kind, time, confirm=False):
@@ -305,10 +322,12 @@ def set_setup_frame(project, kind, time, confirm=False):
                     cfg,
                 )
                 displayed = consensus_frames[anchor_index]
+                hand_masks = _reference_hand_masks(consensus_frames, cfg)
                 reference_detection = detect_reference_spread_consensus(
                     consensus_frames,
                     min_confidence=cfg.page_contour_min_confidence,
                     anchor_index=anchor_index,
+                    hand_masks=hand_masks,
                 )
                 reference_detection["method"] = "auto_pages"
                 if reference_detection["detected"]:
