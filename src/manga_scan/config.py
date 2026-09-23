@@ -16,6 +16,7 @@ class Config:
     motion_threshold: float = 0.012
     turn_threshold: float = 0.025
     candidates_per_spread: int = 7
+    processing_workers: int = 3
     candidate_selection_mode: str = "spread"
     output_layout: str = "spread"
     sharpness_weight: float = 1.0
@@ -88,6 +89,7 @@ class Config:
             "max_image_files",
             "stable_frames",
             "candidates_per_spread",
+            "processing_workers",
             "dedupe_window",
             "jpeg_quality",
             "pdf_dpi",
@@ -116,6 +118,7 @@ class Config:
             "analysis_width": (128, 1920),
             "stable_frames": (2, 100),
             "candidates_per_spread": (2, 30),
+            "processing_workers": (1, 4),
             "motion_threshold": (0.00001, 1),
             "turn_threshold": (0.00001, 1),
             "jpeg_quality": (1, 100),
