@@ -640,7 +640,250 @@ def _render_whole_spread(project, manifest, spread, cfg):
     )
 
 
-def render_spread(project, manifest, spread):
+def _render_split_page_side(
+    project,
+    spread,
+    cfg,
+    side,
+    selected_pages,
+    selected_data,
+    base_extra_suspect,
+    load_candidate,
+):
+    ext = "png" if cfg.image_format == "png" else "jpg"
+    data = selected_data[side]
+    render_settings = _page_render_settings(spread, side, cfg)
+    chosen = data["chosen"]
+    source_page = data["sides"][side]
+    selected_source = f"selected/{spread['id']}_{side}.png"
+    save_image(project / selected_source, source_page)
+
+    finger_repair = {"status": "disabled", "coverage": 0.0, "donors": []}
+    if cfg.finger_repair or cfg.glare_repair:
+        target_hand_mask = (
+            candidate_page_hand_mask(project, data, side, cfg)
+            if cfg.finger_repair
+            else None
+        )
+        target_glare_mask = candidate_page_glare_mask(data, side, cfg)
+        target_mask = _union_occlusion_masks(target_hand_mask, target_glare_mask)
+        if target_mask is None:
+            finger_repair = {
+                "status": "unavailable",
+                "coverage": 0.0,
+                "donors": [],
+            }
+        elif np.any(target_mask > 127):
+            target_mask_path = f"debug/finger_repair/{spread['id']}_{side}_target.png"
+            save_image(project / target_mask_path, target_mask)
+
+            def donor_pages():
+                for donor_record in _finger_donor_candidates(
+                    spread,
+                    side,
+                    selected_pages[side],
+                )[:5]:
+                    donor_data = load_candidate(donor_record["id"])
+                    donor_hand_mask = (
+                        candidate_page_hand_mask(project, donor_data, side, cfg)
+                        if cfg.finger_repair
+                        else None
+                    )
+                    donor_glare_mask = candidate_page_glare_mask(
+                        donor_data, side, cfg
+                    )
+                    donor_mask = _union_occlusion_masks(
+                        donor_hand_mask,
+                        donor_glare_mask,
+                    )
+                    if donor_mask is None:
+                        continue
+                    yield {
+                        "candidate_id": donor_record["id"],
+                        "image": donor_data["sides"][side],
+                        "mask": donor_mask,
+                    }
+
+            source_page, finger_repair, unresolved = repair_finger_regions(
+                source_page,
+                target_mask,
+                donor_pages(),
+                min_coverage=cfg.finger_repair_min_coverage,
+                fallback=cfg.finger_repair_fallback,
+            )
+            finger_repair["occlusion_kinds"] = [
+                kind
+                for kind, kind_mask in (
+                    ("finger", target_hand_mask),
+                    ("glare", target_glare_mask),
+                )
+                if kind_mask is not None and np.any(kind_mask > 127)
+            ]
+            finger_repair["target_mask"] = target_mask_path
+            if target_glare_mask is not None and np.any(target_glare_mask > 127):
+                glare_path = f"debug/finger_repair/{spread['id']}_{side}_glare.png"
+                save_image(project / glare_path, target_glare_mask)
+                finger_repair["glare_mask"] = glare_path
+            if np.any(unresolved):
+                unresolved_path = (
+                    f"debug/finger_repair/{spread['id']}_{side}_unresolved.png"
+                )
+                save_image(project / unresolved_path, unresolved)
+                finger_repair["unresolved_mask"] = unresolved_path
+            finger_repair = _persist_finger_repair_component_debug(
+                project,
+                finger_repair,
+                f"{spread['id']}_{side}",
+            )
+        else:
+            finger_repair = {
+                "status": "clean" if cfg.finger_repair else "disabled",
+                "coverage": 1.0 if cfg.finger_repair else 0.0,
+                "donors": [],
+                "occlusion_kinds": [],
+            }
+
+    dewarp_mode = render_settings["dewarp_mode"]
+    dewarp = {"mode": dewarp_mode, "applied": False, "status": "off"}
+    manual_dewarp = 0.0
+    qa_before_dewarp = None
+    if dewarp_mode == "manual":
+        manual_dewarp = cfg.dewarp_strength
+        dewarp.update(
+            applied=bool(manual_dewarp),
+            status="applied" if manual_dewarp else "off",
+            strength=manual_dewarp,
+        )
+        if manual_dewarp:
+            qa_before_dewarp = enhance_page(
+                source_page,
+                grayscale=cfg.grayscale,
+                contrast=cfg.contrast,
+                rotation=0,
+                dewarp_strength=0.0,
+                white_normalization=render_settings["white_normalization"],
+                white_target=cfg.white_target,
+                white_strength=cfg.white_strength,
+                illumination_correction=render_settings["illumination_correction"],
+                illumination_strength=cfg.illumination_strength,
+            )
+    elif dewarp_mode == "auto":
+        before = f"debug/dewarp/{spread['id']}_{side}_before.png"
+        before_image = enhance_page(
+            source_page,
+            grayscale=cfg.grayscale,
+            contrast=cfg.contrast,
+            rotation=0,
+            dewarp_strength=0.0,
+            white_normalization=render_settings["white_normalization"],
+            white_target=cfg.white_target,
+            white_strength=cfg.white_strength,
+            illumination_correction=render_settings["illumination_correction"],
+            illumination_strength=cfg.illumination_strength,
+        )
+        save_image(project / before, before_image)
+        qa_before_dewarp = before_image
+        corrected, estimate = auto_dewarp_page(
+            source_page,
+            side,
+            cfg.dewarp_max_strength,
+            cfg.dewarp_min_confidence,
+        )
+        source_page = corrected
+        dewarp.update(estimate)
+        dewarp["before"] = before
+        if estimate["strength"] > 0:
+            grid = f"debug/dewarp/{spread['id']}_{side}_remap.png"
+            save_image(
+                project / grid,
+                dewarp_debug_grid(
+                    data["sides"][side].shape,
+                    side,
+                    estimate["strength"],
+                    estimate.get("strength_profile"),
+                ),
+            )
+            dewarp["debug_grid"] = grid
+    else:
+        dewarp.update(status="disabled")
+
+    qa_before_enhance = source_page.copy()
+    page_image = enhance_page(
+        source_page,
+        grayscale=cfg.grayscale,
+        contrast=cfg.contrast,
+        rotation=0,
+        dewarp_strength=manual_dewarp,
+        white_normalization=render_settings["white_normalization"],
+        white_target=cfg.white_target,
+        white_strength=cfg.white_strength,
+        illumination_correction=render_settings["illumination_correction"],
+        illumination_strength=cfg.illumination_strength,
+    )
+    final_quality = final_quality_checks(
+        page_image,
+        before_enhance=qa_before_enhance,
+        before_dewarp=qa_before_dewarp,
+        dewarp=dewarp,
+        finger_repair=finger_repair,
+        white_normalization=render_settings["white_normalization"],
+    )
+    name = f"pages/{spread['id']}_{side}.{ext}"
+    save_image(project / name, page_image, cfg.jpeg_quality)
+    h, w = page_image.shape[:2]
+    thumb = cv2.resize(page_image, (max(1, round(w * min(1, 480 / h))), min(480, h)))
+    preview = f"pages/{spread['id']}_{side}_thumb.jpg"
+    save_image(project / preview, thumb)
+
+    page_suspect = list(
+        dict.fromkeys(
+            chosen.get("page_suspect", {}).get(side, chosen.get("suspect", []))
+            + base_extra_suspect
+            + data["state"].get("extra_suspect", [])
+        )
+    )
+    if dewarp.get("status") == "low_confidence":
+        page_suspect.append("dewarp_low_confidence")
+    contours = data["state"].get("page_contours") or {}
+    if contours.get(side, {}).get("touches_frame"):
+        page_suspect.append("source_frame_clipped")
+    if finger_repair["status"] in ("complete", "clean"):
+        if cfg.finger_repair:
+            page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
+        if cfg.glare_repair:
+            page_suspect = [reason for reason in page_suspect if reason != "glare_overlap"]
+    elif finger_repair["status"] in ("incomplete", "unavailable"):
+        page_suspect.append("occlusion_repair_incomplete")
+        if cfg.finger_repair:
+            page_suspect.append("finger_repair_incomplete")
+    page_suspect.extend(final_quality["reasons"])
+    return {
+            "id": f"{spread['id']}_{side}",
+            "spread_id": spread["id"],
+            "side": side,
+            "path": name,
+            "preview": preview,
+            "source": selected_source,
+            "candidate_id": selected_pages[side],
+            "candidate_time": chosen["time"],
+            "enabled": not bool(spread.get("duplicate_of")),
+            "suspect": list(dict.fromkeys(page_suspect)),
+            "finger_repair": finger_repair,
+            "dewarp": dewarp,
+            "render_settings": render_settings,
+            "page_contour": {
+                "mode": render_settings["page_quad_mode"],
+                "quad": contours.get(side, {}).get("quad"),
+                "confidence": contours.get(side, {}).get("confidence"),
+                "detected": contours.get(side, {}).get("detected"),
+                "manual": bool(contours.get(side, {}).get("manual")),
+            },
+            "final_quality": final_quality,
+    }
+
+
+
+def render_spread(project, manifest, spread, runtime_cache=None):
     cfg = Config.from_dict(manifest["config"])
     if spread.get("output_layout", cfg.output_layout) == "spread":
         return _render_whole_spread(project, manifest, spread, cfg)
@@ -663,10 +906,10 @@ def render_spread(project, manifest, spread):
     ]
     spread["extra_suspect"] = base_extra_suspect.copy()
     cache = {}
+    cache_guard = threading.Lock()
+    cache_item_locks = {}
 
-    def load_candidate(candidate_id):
-        if candidate_id in cache:
-            return cache[candidate_id]
+    def load_candidate_uncached(candidate_id):
         chosen = _candidate_by_id(spread, candidate_id)
         override = spread.get("roi_overrides", {}).get(str(candidate_id))
         if override is not None:
@@ -735,14 +978,28 @@ def render_spread(project, manifest, spread):
             )
         else:
             sides = rectify_spread_pages(project, image, rectified, roi, state, cfg)
-        cache[candidate_id] = {
+        cached_runtime = (runtime_cache or {}).get(candidate_id) or {}
+        return {
             "chosen": chosen,
             "rectified": rectified,
             "sides": sides,
             "state": state,
             "source_frame_shape": source_image.shape,
+            "hand_mask_raw": cached_runtime.get("hand_mask"),
         }
-        return cache[candidate_id]
+
+    def load_candidate(candidate_id):
+        with cache_guard:
+            item_lock = cache_item_locks.setdefault(candidate_id, threading.Lock())
+        with item_lock:
+            with cache_guard:
+                cached = cache.get(candidate_id)
+            if cached is not None:
+                return cached
+            loaded = load_candidate_uncached(candidate_id)
+            with cache_guard:
+                cache[candidate_id] = loaded
+            return loaded
 
     selected_data = {
         side: load_candidate(selected_pages[side]) for side in ("left", "right")
@@ -817,241 +1074,29 @@ def render_spread(project, manifest, spread):
     )
     spread["suspect"] = list(dict.fromkeys(selected_suspect + base_extra_suspect))
 
-    pages = []
     order = ["right", "left"] if cfg.reading_order == "rtl" else ["left", "right"]
-    ext = "png" if cfg.image_format == "png" else "jpg"
-    for side in order:
-        data = selected_data[side]
-        render_settings = _page_render_settings(spread, side, cfg)
-        chosen = data["chosen"]
-        source_page = data["sides"][side]
-        selected_source = f"selected/{spread['id']}_{side}.png"
-        save_image(project / selected_source, source_page)
 
-        finger_repair = {"status": "disabled", "coverage": 0.0, "donors": []}
-        if cfg.finger_repair or cfg.glare_repair:
-            target_hand_mask = (
-                candidate_page_hand_mask(project, data, side, cfg)
-                if cfg.finger_repair
-                else None
-            )
-            target_glare_mask = candidate_page_glare_mask(data, side, cfg)
-            target_mask = _union_occlusion_masks(target_hand_mask, target_glare_mask)
-            if target_mask is None:
-                finger_repair = {
-                    "status": "unavailable",
-                    "coverage": 0.0,
-                    "donors": [],
-                }
-            elif np.any(target_mask > 127):
-                target_mask_path = f"debug/finger_repair/{spread['id']}_{side}_target.png"
-                save_image(project / target_mask_path, target_mask)
-
-                def donor_pages():
-                    for donor_record in _finger_donor_candidates(
-                        spread,
-                        side,
-                        selected_pages[side],
-                    )[:5]:
-                        donor_data = load_candidate(donor_record["id"])
-                        donor_hand_mask = (
-                            candidate_page_hand_mask(project, donor_data, side, cfg)
-                            if cfg.finger_repair
-                            else None
-                        )
-                        donor_glare_mask = candidate_page_glare_mask(
-                            donor_data, side, cfg
-                        )
-                        donor_mask = _union_occlusion_masks(
-                            donor_hand_mask,
-                            donor_glare_mask,
-                        )
-                        if donor_mask is None:
-                            continue
-                        yield {
-                            "candidate_id": donor_record["id"],
-                            "image": donor_data["sides"][side],
-                            "mask": donor_mask,
-                        }
-
-                source_page, finger_repair, unresolved = repair_finger_regions(
-                    source_page,
-                    target_mask,
-                    donor_pages(),
-                    min_coverage=cfg.finger_repair_min_coverage,
-                    fallback=cfg.finger_repair_fallback,
-                )
-                finger_repair["occlusion_kinds"] = [
-                    kind
-                    for kind, kind_mask in (
-                        ("finger", target_hand_mask),
-                        ("glare", target_glare_mask),
-                    )
-                    if kind_mask is not None and np.any(kind_mask > 127)
-                ]
-                finger_repair["target_mask"] = target_mask_path
-                if target_glare_mask is not None and np.any(target_glare_mask > 127):
-                    glare_path = f"debug/finger_repair/{spread['id']}_{side}_glare.png"
-                    save_image(project / glare_path, target_glare_mask)
-                    finger_repair["glare_mask"] = glare_path
-                if np.any(unresolved):
-                    unresolved_path = (
-                        f"debug/finger_repair/{spread['id']}_{side}_unresolved.png"
-                    )
-                    save_image(project / unresolved_path, unresolved)
-                    finger_repair["unresolved_mask"] = unresolved_path
-                finger_repair = _persist_finger_repair_component_debug(
-                    project,
-                    finger_repair,
-                    f"{spread['id']}_{side}",
-                )
-            else:
-                finger_repair = {
-                    "status": "clean" if cfg.finger_repair else "disabled",
-                    "coverage": 1.0 if cfg.finger_repair else 0.0,
-                    "donors": [],
-                    "occlusion_kinds": [],
-                }
-
-        dewarp_mode = render_settings["dewarp_mode"]
-        dewarp = {"mode": dewarp_mode, "applied": False, "status": "off"}
-        manual_dewarp = 0.0
-        qa_before_dewarp = None
-        if dewarp_mode == "manual":
-            manual_dewarp = cfg.dewarp_strength
-            dewarp.update(
-                applied=bool(manual_dewarp),
-                status="applied" if manual_dewarp else "off",
-                strength=manual_dewarp,
-            )
-            if manual_dewarp:
-                qa_before_dewarp = enhance_page(
-                    source_page,
-                    grayscale=cfg.grayscale,
-                    contrast=cfg.contrast,
-                    rotation=0,
-                    dewarp_strength=0.0,
-                    white_normalization=render_settings["white_normalization"],
-                    white_target=cfg.white_target,
-                    white_strength=cfg.white_strength,
-                    illumination_correction=render_settings["illumination_correction"],
-                    illumination_strength=cfg.illumination_strength,
-                )
-        elif dewarp_mode == "auto":
-            before = f"debug/dewarp/{spread['id']}_{side}_before.png"
-            before_image = enhance_page(
-                source_page,
-                grayscale=cfg.grayscale,
-                contrast=cfg.contrast,
-                rotation=0,
-                dewarp_strength=0.0,
-                white_normalization=render_settings["white_normalization"],
-                white_target=cfg.white_target,
-                white_strength=cfg.white_strength,
-                illumination_correction=render_settings["illumination_correction"],
-                illumination_strength=cfg.illumination_strength,
-            )
-            save_image(project / before, before_image)
-            qa_before_dewarp = before_image
-            corrected, estimate = auto_dewarp_page(
-                source_page,
-                side,
-                cfg.dewarp_max_strength,
-                cfg.dewarp_min_confidence,
-            )
-            source_page = corrected
-            dewarp.update(estimate)
-            dewarp["before"] = before
-            if estimate["strength"] > 0:
-                grid = f"debug/dewarp/{spread['id']}_{side}_remap.png"
-                save_image(
-                    project / grid,
-                    dewarp_debug_grid(
-                        data["sides"][side].shape,
-                        side,
-                        estimate["strength"],
-                        estimate.get("strength_profile"),
-                    ),
-                )
-                dewarp["debug_grid"] = grid
-        else:
-            dewarp.update(status="disabled")
-
-        qa_before_enhance = source_page.copy()
-        page_image = enhance_page(
-            source_page,
-            grayscale=cfg.grayscale,
-            contrast=cfg.contrast,
-            rotation=0,
-            dewarp_strength=manual_dewarp,
-            white_normalization=render_settings["white_normalization"],
-            white_target=cfg.white_target,
-            white_strength=cfg.white_strength,
-            illumination_correction=render_settings["illumination_correction"],
-            illumination_strength=cfg.illumination_strength,
+    def render_side(side):
+        return _render_split_page_side(
+            project,
+            spread,
+            cfg,
+            side,
+            selected_pages,
+            selected_data,
+            base_extra_suspect,
+            load_candidate,
         )
-        final_quality = final_quality_checks(
-            page_image,
-            before_enhance=qa_before_enhance,
-            before_dewarp=qa_before_dewarp,
-            dewarp=dewarp,
-            finger_repair=finger_repair,
-            white_normalization=render_settings["white_normalization"],
-        )
-        name = f"pages/{spread['id']}_{side}.{ext}"
-        save_image(project / name, page_image, cfg.jpeg_quality)
-        h, w = page_image.shape[:2]
-        thumb = cv2.resize(page_image, (max(1, round(w * min(1, 480 / h))), min(480, h)))
-        preview = f"pages/{spread['id']}_{side}_thumb.jpg"
-        save_image(project / preview, thumb)
 
-        page_suspect = list(
-            dict.fromkeys(
-                chosen.get("page_suspect", {}).get(side, chosen.get("suspect", []))
-                + base_extra_suspect
-                + data["state"].get("extra_suspect", [])
-            )
-        )
-        if dewarp.get("status") == "low_confidence":
-            page_suspect.append("dewarp_low_confidence")
-        contours = data["state"].get("page_contours") or {}
-        if contours.get(side, {}).get("touches_frame"):
-            page_suspect.append("source_frame_clipped")
-        if finger_repair["status"] in ("complete", "clean"):
-            if cfg.finger_repair:
-                page_suspect = [reason for reason in page_suspect if reason != "hand_overlap"]
-            if cfg.glare_repair:
-                page_suspect = [reason for reason in page_suspect if reason != "glare_overlap"]
-        elif finger_repair["status"] in ("incomplete", "unavailable"):
-            page_suspect.append("occlusion_repair_incomplete")
-            if cfg.finger_repair:
-                page_suspect.append("finger_repair_incomplete")
-        page_suspect.extend(final_quality["reasons"])
-        pages.append(
-            {
-                "id": f"{spread['id']}_{side}",
-                "spread_id": spread["id"],
-                "side": side,
-                "path": name,
-                "preview": preview,
-                "source": selected_source,
-                "candidate_id": selected_pages[side],
-                "candidate_time": chosen["time"],
-                "enabled": not bool(spread.get("duplicate_of")),
-                "suspect": list(dict.fromkeys(page_suspect)),
-                "finger_repair": finger_repair,
-                "dewarp": dewarp,
-                "render_settings": render_settings,
-                "page_contour": {
-                    "mode": render_settings["page_quad_mode"],
-                    "quad": contours.get(side, {}).get("quad"),
-                    "confidence": contours.get(side, {}).get("confidence"),
-                    "detected": contours.get(side, {}).get("detected"),
-                    "manual": bool(contours.get(side, {}).get("manual")),
-                },
-                "final_quality": final_quality,
-            }
-        )
+    render_workers = min(2, cfg.processing_workers)
+    if render_workers <= 1:
+        pages = [render_side(side) for side in order]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=render_workers,
+            thread_name_prefix="page-render",
+        ) as executor:
+            pages = list(executor.map(render_side, order))
     if cfg.finger_repair:
         incomplete = any(
             page.get("finger_repair", {}).get("status") in ("incomplete", "unavailable")
