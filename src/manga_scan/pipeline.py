@@ -4,6 +4,8 @@ import json
 import logging
 import math
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -64,6 +66,7 @@ _detect_spread_page_consensus_impl = render_helpers.detect_spread_page_consensus
 _rectify_spread_pages_impl = render_helpers.rectify_spread_pages
 
 LOG = logging.getLogger("manga_scan")
+_TIMING_LOCK = threading.Lock()
 
 
 
@@ -76,9 +79,11 @@ def update(project, manifest, progress, message):
 def _record_timing(timings, name, started, calls=1):
     if timings is None:
         return
-    entry = timings.setdefault(name, {"seconds": 0.0, "calls": 0})
-    entry["seconds"] += time.monotonic() - started
-    entry["calls"] += calls
+    elapsed = time.monotonic() - started
+    with _TIMING_LOCK:
+        entry = timings.setdefault(name, {"seconds": 0.0, "calls": 0})
+        entry["seconds"] += elapsed
+        entry["calls"] += calls
 
 
 def _performance_snapshot(timings):
@@ -147,6 +152,9 @@ def candidate(
     base_roi=None,
     image=None,
     timings=None,
+    detector_lock=None,
+    runtime_cache=None,
+    runtime_lock=None,
 ):
     if image is None:
         started = time.monotonic()
@@ -162,7 +170,11 @@ def candidate(
     _record_timing(timings, "candidate_refine", started)
 
     started = time.monotonic()
-    overlap, mask = detector.detect(image, roi)
+    if detector_lock is None:
+        overlap, mask = detector.detect(image, roi)
+    else:
+        with detector_lock:
+            overlap, mask = detector.detect(image, roi)
     _record_timing(timings, "hand_detection", started)
 
     started = time.monotonic()
@@ -246,18 +258,92 @@ def candidate(
     }
     write_json(project / f"{base}.json", record)
     _record_timing(timings, "candidate_io", started)
+    if runtime_cache is not None:
+        runtime = {
+            "image": image,
+            "hand_mask": mask,
+            "glare_mask": glare_mask,
+            "rectified": rectified,
+        }
+        if runtime_lock is None:
+            runtime_cache[number] = runtime
+        else:
+            with runtime_lock:
+                runtime_cache[number] = runtime
     return record
 
 
-def _augment_temporal_hand_masks(project, records, cfg):
+def _process_candidate_batch(
+    project,
+    manifest,
+    cfg,
+    detector,
+    spread_id,
+    samples,
+    frames,
+    *,
+    start_id=0,
+    base_roi=None,
+    timings=None,
+    runtime_cache=None,
+):
+    samples = list(samples)
+    frames = list(frames)
+    if len(samples) != len(frames):
+        raise ValueError("Candidate sample/frame count mismatch")
+    if not samples:
+        return []
+
+    detector_lock = threading.Lock() if cfg.hand_backend == "mediapipe" else None
+    runtime_lock = threading.Lock() if runtime_cache is not None else None
+
+    def process(item):
+        offset, sample, image = item
+        raise_if_cancelled(project)
+        return candidate(
+            project,
+            manifest,
+            cfg,
+            detector,
+            spread_id,
+            start_id + offset,
+            sample,
+            base_roi=base_roi,
+            image=image,
+            timings=timings,
+            detector_lock=detector_lock,
+            runtime_cache=runtime_cache,
+            runtime_lock=runtime_lock,
+        )
+
+    items = [
+        (offset, sample, image)
+        for offset, (sample, image) in enumerate(zip(samples, frames))
+    ]
+    workers = min(cfg.processing_workers, len(items))
+    if workers <= 1:
+        return [process(item) for item in items]
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="candidate",
+    ) as executor:
+        return list(executor.map(process, items))
+
+
+def _augment_temporal_hand_masks(project, records, cfg, runtime_cache=None):
     """Supplement MediaPipe masks from transient same-spread candidate content."""
     if cfg.hand_backend != "mediapipe" or len(records) < 4:
         return records
 
     loaded = {}
     for record in records:
-        image = cv2.imread(str(project / record["path"]), cv2.IMREAD_COLOR)
-        mask = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
+        cached = (runtime_cache or {}).get(record["id"])
+        image = cached.get("image") if cached else None
+        mask = cached.get("hand_mask") if cached else None
+        if image is None:
+            image = cv2.imread(str(project / record["path"]), cv2.IMREAD_COLOR)
+        if mask is None:
+            mask = cv2.imread(str(project / record["hand_mask"]), cv2.IMREAD_GRAYSCALE)
         if image is None or mask is None:
             continue
         loaded[record["id"]] = (image, mask)
@@ -293,6 +379,8 @@ def _augment_temporal_hand_masks(project, records, cfg):
         temporal_path = str(mask_path.with_name(temporal_name))
         save_image(project / temporal_path, temporal)
         save_image(project / record["hand_mask"], combined)
+        if runtime_cache is not None and record["id"] in runtime_cache:
+            runtime_cache[record["id"]]["hand_mask"] = combined
 
         page = np.zeros(image.shape[:2], np.uint8)
         cv2.fillConvexPoly(
@@ -330,9 +418,10 @@ def _augment_temporal_hand_masks(project, records, cfg):
                 record["roi"],
                 interpolation=cv2.INTER_NEAREST,
             )
-            glare_mask = None
+            cached = (runtime_cache or {}).get(record["id"])
+            glare_mask = cached.get("glare_mask") if cached else None
             glare_path = record.get("glare_mask")
-            if glare_path:
+            if glare_mask is None and glare_path:
                 glare_mask = cv2.imread(
                     str(project / glare_path),
                     cv2.IMREAD_GRAYSCALE,
