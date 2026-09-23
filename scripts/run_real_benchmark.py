@@ -394,6 +394,42 @@ def _reference_consensus_result(video_spec, sample, path):
     }, quad
 
 
+def _candidate_prefilter_result(video_spec, pair, path):
+    """Ensure known clean donor moments are not collapsed with an occluded target."""
+    from manga_scan.candidate_prefilter import near_identical_candidate_frames
+    from manga_scan.perspective import rotate_roi, warp_roi
+    from manga_scan.video import extract_frame
+
+    rotation = int(video_spec["expected_rotation"])
+    # repair_pairs are annotated in the configured display orientation, while
+    # production candidate prefiltering happens before configured rotation.
+    prefilter_roi = rotate_roi(
+        pair["spread_quad"],
+        (360 - rotation) % 360,
+    )
+    target_source = extract_frame(path, pair["target_time"], width=480)
+    target = warp_roi(target_source, prefilter_roi)
+    donor_results = []
+    for timestamp in pair["donor_times"]:
+        donor_source = extract_frame(path, timestamp, width=480)
+        donor = warp_roi(donor_source, prefilter_roi)
+        collapsed = near_identical_candidate_frames(target, donor)
+        donor_results.append(
+            {
+                "time": timestamp,
+                "collapsed_as_near_identical": bool(collapsed),
+                "passed": not collapsed,
+            }
+        )
+    return {
+        "video_id": video_spec["id"],
+        "pair_id": pair["id"],
+        "target_time": pair["target_time"],
+        "donors": donor_results,
+        "passed": all(item["passed"] for item in donor_results),
+    }
+
+
 def _repair_result(video_spec, pair, path, model_path):
     from manga_scan.config import Config
     from manga_scan.finger_repair import repair_finger_regions
@@ -550,6 +586,11 @@ def _summarize(report):
     if report["rotations"]:
         checks["rotation"] = len(report["rotations"])
         passes["rotation"] = sum(int(item["passed"]) for item in report["rotations"])
+    if report["candidate_prefilter"]:
+        checks["candidate_prefilter"] = len(report["candidate_prefilter"])
+        passes["candidate_prefilter"] = sum(
+            int(item["passed"]) for item in report["candidate_prefilter"]
+        )
     if report["repairs"]:
         checks["finger_repair"] = len(report["repairs"])
         passes["finger_repair"] = sum(int(item["passed"]) for item in report["repairs"])
@@ -583,6 +624,7 @@ def run(
         "videos": [],
         "rotations": [],
         "samples": [],
+        "candidate_prefilter": [],
         "repairs": [],
     }
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -660,8 +702,11 @@ def run(
             name = f"{spec['id']}__{sample['id']}.jpg"
             cv2.imwrite(str(debug_dir / name), canvas, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
-        if with_hands:
-            for pair in spec.get("repair_pairs", []):
+        for pair in spec.get("repair_pairs", []):
+            report["candidate_prefilter"].append(
+                _candidate_prefilter_result(spec, pair, path)
+            )
+            if with_hands:
                 report["repairs"].append(
                     _repair_result_isolated(spec, pair, path, hand_model)
                 )

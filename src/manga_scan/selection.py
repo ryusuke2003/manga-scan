@@ -208,8 +208,9 @@ def _selection_value(metrics):
     return float(value) if _finite(value) else float("-inf")
 
 
-_HAND_PRIORITY_BLOCKING_RISKS = {
+_READABILITY_BLOCKING_RISKS = {
     "low_sharpness",
+    "glare_overlap",
     "high_motion",
     "page_quad_uncertain",
     "underexposed",
@@ -217,8 +218,14 @@ _HAND_PRIORITY_BLOCKING_RISKS = {
 
 
 def _choose_with_hand_priority(records, metrics_for, suspect_for):
-    """Prefer a substantially cleaner frame when its measured quality is close."""
-    best = max(records, key=lambda record: _selection_value(metrics_for(record)))
+    """Prefer readable candidates first, then a substantially cleaner hand frame."""
+    readable = [
+        record
+        for record in records
+        if not (set(suspect_for(record)) & _READABILITY_BLOCKING_RISKS)
+    ]
+    pool = readable or records
+    best = max(pool, key=lambda record: _selection_value(metrics_for(record)))
     best_metrics = metrics_for(best)
     best_hand = best_metrics.get("hand_overlap")
     if not _finite(best_hand):
@@ -229,7 +236,7 @@ def _choose_with_hand_priority(records, metrics_for, suspect_for):
     best_risks = set(suspect_for(best))
 
     eligible = []
-    for record in records:
+    for record in pool:
         metrics = metrics_for(record)
         hand = metrics.get("hand_overlap")
         focus = _sharpness_value(metrics)
@@ -243,7 +250,7 @@ def _choose_with_hand_priority(records, metrics_for, suspect_for):
             and focus is not None
             and focus >= best_sharpness * 0.8
             and _selection_value(metrics) >= _selection_value(best_metrics) - 0.55
-            and not ((set(suspect_for(record)) - best_risks) & _HAND_PRIORITY_BLOCKING_RISKS)
+            and not ((set(suspect_for(record)) - best_risks) & _READABILITY_BLOCKING_RISKS)
             and (
                 not (_finite(motion) and _finite(best_motion))
                 or motion <= max(0.02, best_motion * 3)
