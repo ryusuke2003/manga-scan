@@ -72,6 +72,7 @@ _CANDIDATE_DECODE_SPREAD_BATCH = 3
 _CANDIDATE_DECODE_MAX_GAP = 3.0
 _CANDIDATE_DECODE_MAX_SPAN = 15.0
 _CANDIDATE_PRIMARY_LIMIT = 3
+_PREMERGE_MIN_SSIM = 0.99
 
 
 
@@ -1853,8 +1854,14 @@ def _same_page_preview(a, b, cfg):
         return False
     if (dhash(a) ^ dhash(b)).bit_count() > cfg.duplicate_hash_distance:
         return False
-    return min(ssim(a, b), ssim(a[:, :32], b[:, :32]),
-               ssim(a[:, 32:], b[:, 32:])) >= max(0.985, cfg.duplicate_ssim)
+    # Premerge is more destructive than the later duplicate flag: once two
+    # stable intervals are folded together the review UI cannot restore them as
+    # separate spreads. Require a stricter pixel match than normal dedupe.
+    return min(
+        ssim(a, b),
+        ssim(a[:, :32], b[:, :32]),
+        ssim(a[:, 32:], b[:, 32:]),
+    ) >= max(_PREMERGE_MIN_SSIM, cfg.duplicate_ssim)
 
 
 def _intervals_match_before_heavy(left, right, frame_previews, cfg):
