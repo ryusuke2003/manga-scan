@@ -145,8 +145,22 @@ def test_candidates_span_interval_including_late_hand_withdrawal():
 
 def test_cli_rejects_non_macos(monkeypatch):
     monkeypatch.setattr(cli_module.sys, "platform", "linux")
-    with pytest.raises(RuntimeError, match="macOS only"):
+    monkeypatch.setattr(cli_module.platform, "machine", lambda: "x86_64")
+    with pytest.raises(RuntimeError, match="Apple Silicon macOS only"):
         cli_module.require_macos()
+
+
+def test_cli_rejects_intel_macos(monkeypatch):
+    monkeypatch.setattr(cli_module.sys, "platform", "darwin")
+    monkeypatch.setattr(cli_module.platform, "machine", lambda: "x86_64")
+    with pytest.raises(RuntimeError, match="Apple Silicon macOS only"):
+        cli_module.require_macos()
+
+
+def test_cli_accepts_apple_silicon(monkeypatch):
+    monkeypatch.setattr(cli_module.sys, "platform", "darwin")
+    monkeypatch.setattr(cli_module.platform, "machine", lambda: "arm64")
+    cli_module.require_macos()
 
 
 def test_scan_style_defaults_and_hand_disabled_compatibility():
