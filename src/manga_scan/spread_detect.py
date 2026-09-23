@@ -6,9 +6,11 @@ import cv2
 import numpy as np
 
 from .cover_detect import detect_cover_quad_candidates
+from .motion import motion_score
 from .page_contour import (
     consensus_page_quads,
     detect_page_quads,
+    quad_edge_evidence,
     spread_quad_from_page_quads,
 )
 from .temporal_alignment import (
@@ -24,6 +26,9 @@ REFERENCE_AMBIGUITY_SCORE_MARGIN = 0.035
 REFERENCE_PRIOR_SEARCH_WIDTH = 2
 REFERENCE_PRIOR_SEARCH_STEPS = (0.10, 0.05)
 REFERENCE_PRIOR_SEARCH_MAX_WIDTH = 600
+REFERENCE_EDGE_MIN_SUPPORT = 0.22
+REFERENCE_EDGE_HAND_OCCLUSION = 0.18
+REFERENCE_UNCERTAIN_CONFIDENCE_CAP = 0.69
 
 
 def _coarse_spread_priors():
@@ -86,6 +91,200 @@ def _working_image(image):
         if scale < 1
         else image
     )
+
+
+def _working_mask(mask, shape):
+    height, width = shape[:2]
+    if mask is None:
+        return np.zeros((height, width), np.uint8)
+    array = np.asarray(mask)
+    if array.ndim != 2:
+        raise ValueError("hand masks must be grayscale")
+    if array.shape != (height, width):
+        array = cv2.resize(
+            array.astype(np.uint8),
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    return (array > 0).astype(np.uint8) * 255
+
+
+def _select_reference_search_frame(images, hand_masks, min_confidence):
+    """Choose a nearby frame that exposes the spread boundary most clearly."""
+
+    diagnostics = []
+    for index, image in enumerate(images):
+        mask = hand_masks[index]
+        hand_fraction = float(np.count_nonzero(mask) / max(1, mask.size))
+        hand_score = float(np.clip(1.0 - hand_fraction / 0.10, 0.0, 1.0))
+
+        outlines = detect_cover_quad_candidates(
+            image,
+            min_confidence=max(0.35, float(min_confidence) - 0.20),
+            area_range=(0.12, 0.96),
+            aspect_range=(1.05, 3.2),
+            target_aspect=1.75,
+            limit=3,
+        )
+        outline_score = max(
+            (float(item.get("confidence", 0.0)) for item in outlines),
+            default=0.0,
+        )
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        sharpness_score = float(np.clip(sharpness / 180.0, 0.0, 1.0))
+
+        motions = []
+        for neighbor in (index - 1, index + 1):
+            if 0 <= neighbor < len(images):
+                try:
+                    motions.append(motion_score(image, images[neighbor]))
+                except ValueError:
+                    pass
+        frame_motion = float(np.median(motions)) if motions else 0.0
+        stability_score = float(np.clip(1.0 - frame_motion / 0.04, 0.0, 1.0))
+
+        score = (
+            0.45 * outline_score
+            + 0.25 * hand_score
+            + 0.15 * stability_score
+            + 0.15 * sharpness_score
+        )
+        diagnostics.append(
+            {
+                "index": index,
+                "score": round(score, 4),
+                "hand_fraction": round(hand_fraction, 4),
+                "outline_score": round(outline_score, 4),
+                "motion": round(frame_motion, 4),
+                "sharpness": round(sharpness, 2),
+            }
+        )
+
+    best = max(diagnostics, key=lambda item: item["score"])
+    return int(best["index"]), diagnostics
+
+
+def _priors_to_anchor(priors, search_index, anchor_index, alignments, frames):
+    if search_index == anchor_index:
+        return [np.asarray(prior, dtype=np.float32) for prior in priors]
+    alignment = alignments[search_index]
+    if alignment.get("status") != "aligned":
+        return None
+    transformed = []
+    for prior in priors:
+        try:
+            transformed.append(
+                transform_normalized_quad(
+                    prior,
+                    alignment["matrix"],
+                    frames[search_index].shape,
+                    frames[anchor_index].shape,
+                )
+            )
+        except (ValueError, cv2.error):
+            return None
+    return transformed
+
+
+def _outline_to_anchor(outline, search_index, anchor_index, alignments, frames):
+    if outline is None or search_index == anchor_index:
+        return outline
+    transformed = _priors_to_anchor(
+        [outline["roi"]],
+        search_index,
+        anchor_index,
+        alignments,
+        frames,
+    )
+    if not transformed:
+        return None
+    result = dict(outline)
+    result["roi"] = transformed[0].tolist()
+    return result
+
+
+def _boundary_evidence(working_frames, roi, alignments, anchor_index, hand_masks):
+    """Aggregate outer-edge evidence across aligned nearby frames."""
+
+    per_frame = []
+    for frame_index, frame in enumerate(working_frames):
+        frame_roi = np.asarray(roi, dtype=np.float32)
+        alignment = alignments[frame_index]
+        if frame_index != anchor_index:
+            if alignment.get("status") != "aligned":
+                continue
+            try:
+                anchor_to_frame = np.linalg.inv(alignment["matrix"])
+                frame_roi = transform_normalized_quad(
+                    frame_roi,
+                    anchor_to_frame,
+                    working_frames[anchor_index].shape,
+                    frame.shape,
+                )
+            except (ValueError, np.linalg.LinAlgError, cv2.error):
+                continue
+        try:
+            evidence = quad_edge_evidence(
+                frame,
+                frame_roi,
+                hand_masks[frame_index],
+            )
+        except ValueError:
+            continue
+        per_frame.append({"index": frame_index, "edges": evidence})
+
+    edge_names = ("top", "right", "bottom", "left")
+    aggregated = {}
+    uncertain = []
+    for edge in edge_names:
+        samples = [
+            {"index": item["index"], **item["edges"][edge]}
+            for item in per_frame
+        ]
+        samples.sort(key=lambda item: item["support"], reverse=True)
+        selected = samples[: min(2, len(samples))]
+        if selected:
+            support = float(np.mean([item["support"] for item in selected]))
+            visible_support = float(
+                np.mean([item["visible_support"] for item in selected])
+            )
+            occlusion = float(np.mean([item["occlusion"] for item in selected]))
+        else:
+            support = visible_support = occlusion = 0.0
+
+        reasons = []
+        if support < REFERENCE_EDGE_MIN_SUPPORT:
+            reasons.append("weak_edge")
+        if occlusion >= REFERENCE_EDGE_HAND_OCCLUSION:
+            reasons.append("hand_occlusion")
+        if reasons:
+            uncertain.append(edge)
+        aggregated[edge] = {
+            "support": round(support, 4),
+            "visible_support": round(visible_support, 4),
+            "hand_occlusion": round(occlusion, 4),
+            "reasons": reasons,
+            "frames": selected,
+        }
+
+    minimum_support = min(aggregated[edge]["support"] for edge in edge_names)
+    maximum_occlusion = max(
+        aggregated[edge]["hand_occlusion"] for edge in edge_names
+    )
+    support_cap = 0.45 + 0.50 * min(1.0, minimum_support / 0.45)
+    confidence_cap = min(0.95, support_cap)
+    if uncertain:
+        confidence_cap = min(confidence_cap, REFERENCE_UNCERTAIN_CONFIDENCE_CAP)
+    return {
+        "edges": aggregated,
+        "minimum_support": round(float(minimum_support), 4),
+        "maximum_hand_occlusion": round(float(maximum_occlusion), 4),
+        "uncertain_edges": uncertain,
+        "confidence_cap": round(float(confidence_cap), 4),
+        "frame_count": len(per_frame),
+    }
 
 
 def _adjust_prior(roi, left=0.0, right=0.0, top=0.0, bottom=0.0):
@@ -261,6 +460,7 @@ def _proposal_from_prior_set(
     outline=None,
     source,
     local_search=None,
+    hand_masks=None,
 ):
     detections = []
     failures = []
@@ -324,20 +524,44 @@ def _proposal_from_prior_set(
     if _has_frame_edge_background(working_frames[anchor_index], pages):
         return None, float(pages["confidence"])
 
+    masks = hand_masks or [
+        np.zeros(frame.shape[:2], np.uint8) for frame in working_frames
+    ]
+    boundary = _boundary_evidence(
+        working_frames,
+        roi,
+        alignments,
+        anchor_index,
+        masks,
+    )
+    geometry_confidence = float(pages["confidence"])
+    confidence = min(geometry_confidence, float(boundary["confidence_cap"]))
+
     temporal_support = min(
         pages["left"]["consensus_count"],
         pages["right"]["consensus_count"],
     ) / max(len(working_frames), 1)
     outline_confidence = float(outline["confidence"]) if outline else 0.62
+    edge_quality = float(
+        np.mean(
+            [
+                min(1.0, boundary["edges"][edge]["support"] / 0.55)
+                for edge in ("top", "right", "bottom", "left")
+            ]
+        )
+    )
     score = (
-        0.68 * float(pages["confidence"])
-        + 0.20 * float(temporal_support)
-        + 0.12 * outline_confidence
+        0.56 * geometry_confidence
+        + 0.18 * float(temporal_support)
+        + 0.10 * outline_confidence
+        + 0.16 * edge_quality
     )
     return {
         "proposal_id": proposal_id,
         "score": round(float(score), 4),
-        "confidence": round(float(pages["confidence"]), 4),
+        "confidence": round(float(confidence), 4),
+        "geometry_confidence": round(float(geometry_confidence), 4),
+        "boundary_evidence": boundary,
         "roi": roi,
         "outline": outline,
         "pages": pages,
@@ -348,7 +572,7 @@ def _proposal_from_prior_set(
         ),
         "frame_count": len(working_frames),
         "local_search": local_search,
-    }, float(pages["confidence"])
+    }, float(confidence)
 
 
 def _distinct_proposals(first, second):
@@ -399,6 +623,7 @@ def detect_reference_spread_consensus(
     *,
     max_candidates=8,
     anchor_index=None,
+    hand_masks=None,
 ):
     """Detect a spread by verifying top Hough candidates across nearby frames.
 
@@ -421,8 +646,32 @@ def detect_reference_spread_consensus(
         anchor_index = len(working_frames) // 2
     if not 0 <= int(anchor_index) < len(working_frames):
         raise ValueError("anchor_index must identify one supplied frame")
-    center = working_frames[int(anchor_index)]
+
+    if hand_masks is None:
+        working_masks = [
+            np.zeros(frame.shape[:2], np.uint8) for frame in working_frames
+        ]
+    else:
+        hand_masks = list(hand_masks)
+        if len(hand_masks) != len(working_frames):
+            raise ValueError("hand_masks must match the supplied frame count")
+        working_masks = [
+            _working_mask(mask, frame.shape)
+            for mask, frame in zip(hand_masks, working_frames)
+        ]
+
+    search_index, frame_quality = _select_reference_search_frame(
+        working_frames,
+        working_masks,
+        min_confidence,
+    )
     alignments = estimate_frame_alignments(working_frames, int(anchor_index))
+    if (
+        search_index != int(anchor_index)
+        and alignments[search_index].get("status") != "aligned"
+    ):
+        search_index = int(anchor_index)
+    center = working_frames[search_index]
     alignment = alignment_summary(alignments)
     outlines = detect_cover_quad_candidates(
         center,
@@ -442,6 +691,22 @@ def detect_reference_spread_consensus(
             _outline_priors(outline["roi"]),
             min_confidence,
         )
+        refined_priors = _priors_to_anchor(
+            refined_priors,
+            search_index,
+            int(anchor_index),
+            alignments,
+            working_frames,
+        )
+        if not refined_priors:
+            continue
+        anchor_outline = _outline_to_anchor(
+            outline,
+            search_index,
+            int(anchor_index),
+            alignments,
+            working_frames,
+        )
         search_diagnostics.append({"proposal_id": f"hough_{index + 1}", **search})
         proposal, failure = _proposal_from_prior_set(
             working_frames,
@@ -450,9 +715,10 @@ def detect_reference_spread_consensus(
             alignments=alignments,
             anchor_index=int(anchor_index),
             proposal_id=f"hough_{index + 1}",
-            outline=outline,
+            outline=anchor_outline,
             source="outline_pages_consensus" if len(images) > 1 else "outline_pages",
             local_search=search,
+            hand_masks=working_masks,
         )
         best_failure = max(best_failure, failure)
         if proposal is not None:
@@ -465,17 +731,27 @@ def detect_reference_spread_consensus(
         _coarse_spread_priors(),
         min_confidence,
     )
-    search_diagnostics.append({"proposal_id": "coarse", **coarse_search})
-    coarse, failure = _proposal_from_prior_set(
-        working_frames,
+    coarse_priors = _priors_to_anchor(
         coarse_priors,
-        min_confidence,
-        alignments=alignments,
-        anchor_index=int(anchor_index),
-        proposal_id="coarse",
-        source="coarse_pages_consensus" if len(images) > 1 else "coarse_pages",
-        local_search=coarse_search,
+        search_index,
+        int(anchor_index),
+        alignments,
+        working_frames,
     )
+    search_diagnostics.append({"proposal_id": "coarse", **coarse_search})
+    coarse, failure = (None, 0.0)
+    if coarse_priors:
+        coarse, failure = _proposal_from_prior_set(
+            working_frames,
+            coarse_priors,
+            min_confidence,
+            alignments=alignments,
+            anchor_index=int(anchor_index),
+            proposal_id="coarse",
+            source="coarse_pages_consensus" if len(images) > 1 else "coarse_pages",
+            local_search=coarse_search,
+            hand_masks=working_masks,
+        )
     best_failure = max(best_failure, failure)
     if coarse is not None:
         proposals.append(coarse)
@@ -500,6 +776,8 @@ def detect_reference_spread_consensus(
             "requires_confirmation": False,
             "candidate_count": len(outlines),
             "alignment": alignment,
+            "search_frame_index": search_index,
+            "frame_quality": frame_quality,
             "prior_search": search_diagnostics,
             "alternatives": [],
         }
@@ -519,16 +797,26 @@ def detect_reference_spread_consensus(
             "proposal_id": item["proposal_id"],
             "score": item["score"],
             "confidence": item["confidence"],
+            "geometry_confidence": item.get("geometry_confidence"),
             "roi": item["roi"],
             "source": item["source"],
+            "boundary_evidence": item.get("boundary_evidence"),
             "frame_support": item["frame_support"],
             "local_search": item["local_search"],
         }
         for item in proposals[:3]
     ]
+    boundary_uncertain = bool(
+        best.get("boundary_evidence", {}).get("uncertain_edges")
+    )
     return {
         "detected": True,
         "confidence": best["confidence"],
+        "geometry_confidence": best.get("geometry_confidence", best["confidence"]),
+        "boundary_evidence": best.get("boundary_evidence"),
+        "uncertain_edges": (
+            best.get("boundary_evidence", {}).get("uncertain_edges", [])
+        ),
         "roi": best["roi"],
         "outline": best["outline"] or {
             "detected": False, "confidence": 0.0, "roi": None,
@@ -537,11 +825,13 @@ def detect_reference_spread_consensus(
         "stage": "complete",
         "source": best["source"],
         "ambiguous": ambiguous,
-        "requires_confirmation": ambiguous,
+        "requires_confirmation": ambiguous or boundary_uncertain,
         "candidate_count": len(outlines),
         "frame_support": best["frame_support"],
         "frame_count": best["frame_count"],
         "alignment": alignment,
+        "search_frame_index": search_index,
+        "frame_quality": frame_quality,
         "local_search": best["local_search"],
         "prior_search": search_diagnostics,
         "score_margin": round(
@@ -593,12 +883,22 @@ def draw_reference_spread(image, detection):
     if roi:
         h, w = canvas.shape[:2]
         quad = np.asarray(roi, dtype=np.float32) * [max(w - 1, 1), max(h - 1, 1)]
-        cv2.polylines(
-            canvas,
-            [np.rint(quad).astype(np.int32)],
-            True,
-            (255, 220, 80),
-            3,
-            cv2.LINE_AA,
+        quad = np.rint(quad).astype(np.int32)
+        uncertain = set(detection.get("uncertain_edges") or [])
+        edges = (
+            ("top", 0, 1),
+            ("right", 1, 2),
+            ("bottom", 2, 3),
+            ("left", 3, 0),
         )
+        for name, first, second in edges:
+            color = (60, 60, 240) if name in uncertain else (255, 220, 80)
+            cv2.line(
+                canvas,
+                tuple(quad[first]),
+                tuple(quad[second]),
+                color,
+                3,
+                cv2.LINE_AA,
+            )
     return canvas
