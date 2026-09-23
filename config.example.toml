@@ -65,7 +65,7 @@ dewarp_strength = 0.0 # manual mode only; legacy symmetric cylindrical remap, 0.
 dewarp_max_strength = 0.25 # auto 2D profile upper bound per image row; keep conservative
 dewarp_min_confidence = 0.6 # auto mode falls back without remap below this confidence
 pdf_dpi = 300 # Physical page size only; no pixel resampling
-hwaccel = "videotoolbox" # macOS default; automatically retries on CPU if hardware decode fails
+# hwaccel = "videotoolbox" # Optional override; macOS already defaults to VideoToolbox, other platforms default to CPU
 save_lowres = false # true writes all sampled small frames; otherwise streamed
 
 suspect_sharpness = 60.0
