@@ -625,7 +625,7 @@ def _whole_spread_geometry(source, record, spread, cfg, page_detection=None):
     )
 
 
-def _render_whole_spread(project, manifest, spread, cfg):
+def _render_whole_spread(project, manifest, spread, cfg, runtime_cache=None):
     return _render_whole_spread_impl(
         project,
         manifest,
@@ -634,6 +634,7 @@ def _render_whole_spread(project, manifest, spread, cfg):
         detect_spread_page_consensus_fn=detect_spread_page_consensus,
         candidate_by_id_fn=_candidate_by_id,
         whole_spread_geometry_fn=_whole_spread_geometry,
+        runtime_cache=runtime_cache,
         extract_frame_fn=extract_frame,
         boundary_finger_mask_fn=boundary_finger_mask,
         repair_finger_regions_fn=repair_finger_regions,
@@ -887,7 +888,13 @@ def _render_split_page_side(
 def render_spread(project, manifest, spread, runtime_cache=None):
     cfg = Config.from_dict(manifest["config"])
     if spread.get("output_layout", cfg.output_layout) == "spread":
-        return _render_whole_spread(project, manifest, spread, cfg)
+        return _render_whole_spread(
+            project,
+            manifest,
+            spread,
+            cfg,
+            runtime_cache=runtime_cache,
+        )
     spread.pop("whole_spread_crop", None)
     selected_pages = spread.get("selected_pages") or {
         "left": spread["selected"],
