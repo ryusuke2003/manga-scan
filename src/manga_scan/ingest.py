@@ -231,25 +231,40 @@ def _detect_cover_for_rotation(image, rotation):
 
 
 def _reference_consensus_frames(source, metadata, timestamp, image, cfg):
-    """Load the selected frame and nearby frames in display orientation."""
+    """Load nearby display-oriented frames in chronological order."""
 
     duration = float(metadata["duration"])
-    samples = [rotate_image(image, cfg.rotation)]
-    sample_times = [float(timestamp)]
+    samples = [
+        {
+            "time": float(timestamp),
+            "image": rotate_image(image, cfg.rotation),
+            "anchor": True,
+        }
+    ]
     for offset in (-0.5, -0.25, 0.25, 0.5):
         sample_time = min(
             max(float(timestamp + offset), 0.0),
             max(0.0, duration - 0.001),
         )
-        if any(abs(sample_time - existing) < 0.001 for existing in sample_times):
+        if any(abs(sample_time - item["time"]) < 0.001 for item in samples):
             continue
         try:
             sample = extract_frame(source, sample_time, hwaccel=cfg.hwaccel)
         except (OSError, RuntimeError):
             continue
-        samples.append(rotate_image(sample, cfg.rotation))
-        sample_times.append(sample_time)
-    return samples, 0
+        samples.append(
+            {
+                "time": sample_time,
+                "image": rotate_image(sample, cfg.rotation),
+                "anchor": False,
+            }
+        )
+
+    samples.sort(key=lambda item: item["time"])
+    anchor_index = next(
+        index for index, item in enumerate(samples) if item["anchor"]
+    )
+    return [item["image"] for item in samples], anchor_index
 
 
 def _reference_hand_masks(frames, cfg):
