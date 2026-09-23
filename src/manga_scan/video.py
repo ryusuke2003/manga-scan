@@ -187,7 +187,7 @@ def extract_frames(path, times, size, hwaccel="none"):
     offsets = [timestamp - start_time for timestamp in unique_times]
     select_terms = ["isnan(prev_selected_t)"]
     select_terms.extend(
-        f"gte(t,{offset:.8f})*lt(prev_selected_t,{offset:.8f})"
+        f"gte(t\\,{offset:.8f})*lt(prev_selected_t\\,{offset:.8f})"
         for offset in offsets[1:]
     )
     filters = (
