@@ -687,6 +687,42 @@ def test_normal_premerge_rejects_interval_with_changed_end_page():
     assert len(records) == 2
 
 
+def test_normal_premerge_rejects_small_local_page_change():
+    first = [_sample(index) for index in range(3)]
+    second = [
+        Sample(index=10 + index, time=3.0 + index, motion=0.005, sharpness=100.0)
+        for index in range(3)
+    ]
+    base = np.full((64, 64), 225, np.uint8)
+    for y in range(8, 58, 8):
+        cv2.line(base, (4, y), (28, y), 40, 1)
+        cv2.line(base, (36, y), (60, y), 55, 1)
+    for x in (8, 20, 40, 52):
+        cv2.line(base, (x, 5), (x, 59), 90, 1)
+    changed = base.copy()
+    cv2.rectangle(changed, (44, 28), (47, 31), 10, -1)
+    previews = {
+        first[0].time: base,
+        first[-1].time: base,
+        second[0].time: changed,
+        second[-1].time: changed,
+    }
+    cfg = Config(
+        hand_backend="none",
+        finger_repair=False,
+        candidates_per_spread=3,
+    )
+
+    records = pipeline._prepared_interval_records(
+        [first, second],
+        cfg,
+        [],
+        frame_previews=previews,
+    )
+
+    assert len(records) == 2
+
+
 def test_normal_interval_premerge_requires_both_page_halves_to_match():
     first = [_sample(index) for index in range(3)]
     second = [
