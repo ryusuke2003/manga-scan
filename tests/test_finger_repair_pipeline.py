@@ -257,14 +257,13 @@ def test_spread_output_preserves_local_repair_metadata_and_debug(tmp_path, monke
 def test_split_output_keeps_components_unresolved_and_multiple_donors(tmp_path, monkeypatch):
     _, _, manifest, spread = _fixture(tmp_path, monkeypatch, output_layout="split")
     _install_split_geometry(monkeypatch)
-    calls = 0
+    image = _image()
+    right_source = image[:, image.shape[1] // 2 :]
 
     def fake_repair(target, _target_mask, donors, **_kwargs):
-        nonlocal calls
-        calls += 1
         donor_ids = [donor["candidate_id"] for donor in donors]
         assert donor_ids == [1, 2]
-        if calls == 1:
+        if np.array_equal(target, right_source):
             unresolved = np.zeros(target.shape[:2], np.uint8)
             unresolved[12:24, 20:32] = 255
             return (
