@@ -7,6 +7,7 @@ from manga_scan.perspective import rotate_roi
 from manga_scan.spread_detect import (
     _adjust_prior,
     _refine_priors,
+    _select_reference_search_frame,
     detect_reference_spread,
     detect_reference_spread_consensus,
 )
@@ -181,8 +182,78 @@ def test_reference_consensus_keeps_selected_frame_as_anchor_at_video_start(monke
 
     assert anchor_index == 0
     np.testing.assert_array_equal(frames[anchor_index], selected)
-    assert extracted_times == [0.5]
-    assert len(frames) == 2
+    assert extracted_times == [0.25, 0.5]
+    assert len(frames) == 3
+
+
+def test_reference_search_frame_prefers_lower_hand_occlusion(monkeypatch):
+    images = [
+        np.full((120, 200, 3), 180, np.uint8),
+        np.full((120, 200, 3), 180, np.uint8),
+    ]
+    masks = [
+        np.zeros((120, 200), np.uint8),
+        np.zeros((120, 200), np.uint8),
+    ]
+    masks[0][:, 120:] = 255
+    monkeypatch.setattr(
+        "manga_scan.spread_detect.detect_cover_quad_candidates",
+        lambda *_args, **_kwargs: [{"confidence": 0.75}],
+    )
+
+    selected, diagnostics = _select_reference_search_frame(
+        images,
+        masks,
+        min_confidence=0.5,
+    )
+
+    assert selected == 1
+    assert diagnostics[1]["score"] > diagnostics[0]["score"]
+    assert diagnostics[0]["hand_fraction"] > diagnostics[1]["hand_fraction"]
+
+
+def test_reference_boundary_marks_persistently_hand_occluded_edge_uncertain():
+    image = _synthetic_spread()
+    hand = np.zeros(image.shape[:2], np.uint8)
+    cv2.line(hand, (930, 55), (950, 520), 255, 110)
+
+    result = detect_reference_spread_consensus(
+        [image, image.copy(), image.copy()],
+        min_confidence=0.5,
+        anchor_index=1,
+        hand_masks=[hand, hand.copy(), hand.copy()],
+    )
+
+    assert result["detected"]
+    assert result["requires_confirmation"]
+    assert "right" in result["uncertain_edges"]
+    assert result["confidence"] <= 0.69
+    assert result["geometry_confidence"] >= result["confidence"]
+    assert (
+        result["boundary_evidence"]["edges"]["right"]["hand_occlusion"]
+        >= 0.18
+    )
+
+
+def test_reference_boundary_uses_clean_neighboring_frames_when_available():
+    image = _synthetic_spread()
+    hand = np.zeros(image.shape[:2], np.uint8)
+    cv2.line(hand, (930, 55), (950, 520), 255, 110)
+    clear = np.zeros_like(hand)
+
+    result = detect_reference_spread_consensus(
+        [image, image.copy(), image.copy()],
+        min_confidence=0.5,
+        anchor_index=1,
+        hand_masks=[clear, hand, clear],
+    )
+
+    assert result["detected"]
+    assert "right" not in result["uncertain_edges"]
+    assert (
+        result["boundary_evidence"]["edges"]["right"]["hand_occlusion"]
+        < 0.18
+    )
 
 
 def test_reference_confirmation_stores_auto_roi_in_source_coordinates(tmp_path, monkeypatch):
@@ -315,6 +386,7 @@ def test_reference_spread_marks_close_distinct_candidates_ambiguous(monkeypatch)
         outline=None,
         source,
         local_search=None,
+        hand_masks=None,
     ):
         assert alignments[anchor_index]["status"] == "anchor"
         assert local_search is not None
