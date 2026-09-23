@@ -10,9 +10,11 @@ concurrency:
 
 jobs:
   fast:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -34,9 +36,11 @@ jobs:
       - run: python -m pytest -q --ignore=tests/test_pipeline.py
 
   compat-py311:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -52,6 +56,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
