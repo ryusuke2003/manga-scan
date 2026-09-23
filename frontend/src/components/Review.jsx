@@ -641,6 +641,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
   const [draggedPageId, setDraggedPageId] = useState(null);
   const [dragOverPageId, setDragOverPageId] = useState(null);
   const [viewerPageId, setViewerPageId] = useState(null);
+  const [editingCoverCrop, setEditingCoverCrop] = useState(false);
   const enabled = manifest.pages.filter(page => page.enabled);
   let number = 0;
   const numbered = manifest.pages.map(page => ({ ...page, number: page.enabled ? ++number : null }));
@@ -737,6 +738,24 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       </label>
     </div>
     <p className="muted reorder-help">ページは「⠿ ドラッグ」で並べ替えできます。← / →もそのまま使えます。</p>
+    {editingCoverCrop && manifest.cover?.frame && <div>
+      <button type="button" disabled={busy} onClick={() => setEditingCoverCrop(false)}>表紙の編集を閉じる</button>
+      <RoiSelector
+        key={`${manifest.cover.frame}-${manifest.cover.roi?.flat().join(',')}`}
+        imageUrl={file(manifest.cover.frame)}
+        initialPoints={rotateNormalizedRoi(manifest.cover.roi, manifest.config.rotation || 0)}
+        rotation={manifest.config.rotation || 0}
+        busy={busy}
+        step="表紙の外周を修正"
+        title="表紙の四隅を指定"
+        description="「やり直す」を押して、左上 → 右上 → 右下 → 左下の順に表紙の角を指定してください。"
+        actionLabel="この範囲で表紙を再出力"
+        onStart={roi => {
+          onEdit('cover_crop', { roi });
+          setEditingCoverCrop(false);
+        }}
+      />
+    </div>}
     <div className={`page-grid ${manifest.pages.some(page => page.side === 'spread') ? 'with-spreads' : ''}`}>{numbered.filter(page => (page.enabled || showExcluded) && (!suspectsOnly || needsReview(page))).map(page => <article
       key={page.id}
       className={`page-card ${needsReview(page) ? 'suspect' : ''} ${page.enabled ? '' : 'excluded'} ${draggedPageId === page.id ? 'dragging' : ''} ${dragOverPageId === page.id ? 'drag-over' : ''}`}
@@ -783,6 +802,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
       <button type="button" className="viewer-open" onClick={() => setViewerPageId(page.id)}>全画面で確認・ズーム</button>
       <h3>{page.number ? String(page.number).padStart(3, '0') : '除外'} · {pageSideLabel(page.side)}</h3>
       <p>{reasons(page.suspect)}</p>
+      {page.side === 'cover' && manifest.cover?.frame && <button type="button" disabled={busy} onClick={() => setEditingCoverCrop(true)}>表紙の外周を修正</button>}
       {page.candidate_time !== undefined && <p className="muted">候補 #{page.candidate_id} · {page.candidate_time.toFixed(2)}s</p>}
       {!['cover', 'external'].includes(page.side) && <PageReviewControls page={page} manifest={manifest} file={file} busy={busy} onEdit={onEdit} />}
       {page.source === 'external_image' && <p className="muted">外部画像: {page.external_name || '読み込み画像'}</p>}
@@ -825,7 +845,7 @@ export default function Review({ manifest, file, busy, exporting = false, onEdit
         <div className="row">{page.dewarp.before && <a href={file(page.dewarp.before)} target="_blank" rel="noopener">補正前 ↗</a>}
           {page.dewarp.debug_grid && <a href={file(page.dewarp.debug_grid)} target="_blank" rel="noopener">remap ↗</a>}</div>
       </div>}
-      <div className="row"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
+      <div className="row page-card-actions"><button disabled={busy} onClick={() => onEdit('toggle_page', { page_id: page.id })}>{page.enabled ? '除外' : '復元'}</button>
         <button disabled={busy} aria-label={`${page.id}を前へ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: -1 })}>←</button>
         <button disabled={busy} aria-label={`${page.id}を後ろへ`} onClick={() => onEdit('move_page', { page_id: page.id, delta: 1 })}>→</button>
         <label className="external-page-replace">画像で差し替え

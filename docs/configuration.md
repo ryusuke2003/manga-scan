@@ -196,7 +196,7 @@ dewarp_strength = 0.15
 | 微振動で静止判定されない | `motion_threshold` を少し上げる |
 | 別ページが1区間になる | `turn_threshold` を下げる |
 | 同じページが繰り返される | `turn_threshold` を上げる / 重複SSIMを少し下げる |
-| 指の少ない候補を拾わない | `candidates_per_spread`、`hand_overlap_weight` を上げる |
+| 指の少ない候補を拾わない | `candidates_per_spread` を増やし、手の検出が有効か確認する。ブレや欠けがある候補は手の面積が小さくても採用しない |
 | 左右でベストな瞬間が違う | `candidate_selection_mode="per_page"` |
 | 左右ページで台形の向きが違う | `perspective_mode="per_page"` |
 | 自動ページ輪郭が不安定 | `page_contour_min_confidence` を上げる |

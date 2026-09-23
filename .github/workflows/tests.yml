@@ -29,6 +29,8 @@ jobs:
         run: npm --prefix frontend ci --no-audit --no-fund
       - name: Test frontend
         run: npm --prefix frontend test
+      - name: Check page-card layout in Chrome
+        run: npm --prefix frontend run test:layout
       - name: Build frontend
         run: npm --prefix frontend run build
       - run: python -m pip install -e '.[dev]'

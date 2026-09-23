@@ -35,6 +35,19 @@ it('shows when the whole-spread crop was corrected from the page boundary', () =
   expect(screen.getByText(/紙面と机の境界から外周を自動補正/)).toBeTruthy();
 });
 
+it('lets the cover crop be reopened during review', () => {
+  const withCover = {
+    ...manifest,
+    cover: { frame: 'source/cover_frame.png', roi: [[.1, .1], [.9, .1], [.9, .9], [.1, .9]] },
+    pages: [{ id: 'cover', spread_id: 'cover', side: 'cover', enabled: true, suspect: [], path: 'pages/cover.png' }],
+    spreads: [],
+  };
+  render(<Review manifest={withCover} file={path => path} busy={false} onEdit={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: '表紙の外周を修正' }));
+  expect(screen.getByRole('heading', { name: '表紙の四隅を指定' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'この範囲で表紙を再出力' })).toBeTruthy();
+});
+
 it('shows when a page edge inside an underlying cover was selected', () => {
   const corrected = {
     ...manifest,

@@ -66,6 +66,7 @@ Viteが `/api` と `/files` を `127.0.0.1:8765` のFlaskへproxyします。
 source .venv/bin/activate
 
 npm --prefix frontend test
+npm --prefix frontend run test:layout
 npm --prefix frontend run build
 
 ruff check src tests scripts
@@ -74,11 +75,13 @@ python -m pytest -q
 
 PythonのUI統合テストは、Viteで生成された `src/manga_scan/static/` をFlaskから実際に配信できることも確認します。
 そのため、**Pythonテストより先にフロントをbuild**してください。
+`test:layout` はローカルのViteサーバーとChromeのヘッドレスモードを使い、複数の画面幅でページカードのはみ出しを確認します。
 
 ### フロントだけ確認する
 
 ```bash
 npm --prefix frontend test
+npm --prefix frontend run test:layout
 npm --prefix frontend run build
 ```
 
@@ -95,7 +98,7 @@ python -m pytest -q
 
 PRではGitHub Actionsが以下を確認します。
 
-- Apple Silicon macOS / Python 3.14: フロントテスト、Vite build、Ruff、軽量Pythonテスト
+- Apple Silicon macOS / Python 3.14: フロントテスト、Chromeでのページカード幅確認、Vite build、Ruff、軽量Pythonテスト
 - Apple Silicon macOS / Python 3.11: UI以外のPythonテストと最低対応Pythonのソース互換性
 - Apple Silicon macOS / Python 3.14: FFmpegを使うパイプライン統合テスト
 

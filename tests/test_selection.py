@@ -339,3 +339,72 @@ def test_relative_scoring_uses_glare_overlap_when_available():
     assert selected == 1
     assert records[1]["metrics"]["relative_quality"]["glare"] == 1.0
     assert records[0]["metrics"]["relative_quality"]["glare"] == 0.0
+
+
+def test_hand_area_wins_when_focus_is_comparable():
+    records = [
+        _v2_record(0, base_score=0.9, sharpness_uniformity=0.78,
+                   motion=0.01, hand_overlap=0.11),
+        _v2_record(1, base_score=0.75, sharpness_uniformity=0.75,
+                   motion=0.02, hand_overlap=0.01),
+    ]
+
+    selected, pages = choose_candidate_selection(records, "spread")
+
+    assert selected == 1
+    assert pages == {"left": 1, "right": 1}
+
+
+def test_hand_area_does_not_overrule_blurry_frame():
+    records = [
+        _v2_record(0, base_score=0.9, sharpness_uniformity=0.8,
+                   hand_overlap=0.12),
+        _v2_record(1, base_score=0.5, sharpness_uniformity=0.2,
+                   hand_overlap=0.0),
+    ]
+
+    selected, _ = choose_candidate_selection(records, "spread")
+
+    assert selected == 0
+
+
+def test_hand_area_does_not_introduce_geometry_risk():
+    records = [
+        _v2_record(0, base_score=0.9, sharpness_uniformity=0.8,
+                   hand_overlap=0.1),
+        _v2_record(1, base_score=0.8, sharpness_uniformity=0.78,
+                   hand_overlap=0.0),
+    ]
+    records[1]["suspect"] = ["page_quad_uncertain"]
+
+    selected, _ = choose_candidate_selection(records, "spread")
+
+    assert selected == 0
+
+
+def test_hand_priority_is_independent_for_each_page():
+    records = [
+        _v2_record(0, base_score=0.9, sharpness_uniformity=0.8,
+                   hand_overlap=0.1),
+        _v2_record(1, base_score=0.8, sharpness_uniformity=0.78,
+                   hand_overlap=0.01),
+    ]
+    records[0]["page_metrics"]["right"]["hand_overlap"] = 0.0
+    records[1]["page_metrics"]["right"]["hand_overlap"] = 0.1
+
+    _, pages = choose_candidate_selection(records, "per_page")
+
+    assert pages == {"left": 1, "right": 0}
+
+
+def test_missing_hand_measurement_keeps_quality_choice():
+    records = [
+        _v2_record(0, base_score=0.9, sharpness_uniformity=0.8,
+                   hand_overlap=None),
+        _v2_record(1, base_score=0.5, sharpness_uniformity=0.75,
+                   hand_overlap=None),
+    ]
+
+    selected, _ = choose_candidate_selection(records, "spread")
+
+    assert selected == 0

@@ -208,6 +208,63 @@ def _selection_value(metrics):
     return float(value) if _finite(value) else float("-inf")
 
 
+_HAND_PRIORITY_BLOCKING_RISKS = {
+    "low_sharpness",
+    "high_motion",
+    "page_quad_uncertain",
+    "underexposed",
+}
+
+
+def _choose_with_hand_priority(records, metrics_for, suspect_for):
+    """Prefer a substantially cleaner frame when its measured quality is close."""
+    best = max(records, key=lambda record: _selection_value(metrics_for(record)))
+    best_metrics = metrics_for(best)
+    best_hand = best_metrics.get("hand_overlap")
+    if not _finite(best_hand):
+        return best
+    best_sharpness = _sharpness_value(best_metrics)
+    if best_sharpness is None:
+        return best
+    best_risks = set(suspect_for(best))
+
+    eligible = []
+    for record in records:
+        metrics = metrics_for(record)
+        hand = metrics.get("hand_overlap")
+        focus = _sharpness_value(metrics)
+        motion = metrics.get("motion")
+        best_motion = best_metrics.get("motion")
+        glare = metrics.get("glare_overlap", metrics.get("glare"))
+        best_glare = best_metrics.get("glare_overlap", best_metrics.get("glare"))
+        if (
+            _finite(hand)
+            and hand <= best_hand - 0.01
+            and focus is not None
+            and focus >= best_sharpness * 0.8
+            and _selection_value(metrics) >= _selection_value(best_metrics) - 0.55
+            and not ((set(suspect_for(record)) - best_risks) & _HAND_PRIORITY_BLOCKING_RISKS)
+            and (
+                not (_finite(motion) and _finite(best_motion))
+                or motion <= max(0.02, best_motion * 3)
+            )
+            and (
+                not (_finite(glare) and _finite(best_glare))
+                or glare <= best_glare + 0.05
+            )
+        ):
+            eligible.append(record)
+    if not eligible:
+        return best
+    return min(
+        eligible,
+        key=lambda record: (
+            float(metrics_for(record)["hand_overlap"]),
+            -_selection_value(metrics_for(record)),
+        ),
+    )
+
+
 def choose_candidate_selection(records, mode):
     if not records:
         raise ValueError("No candidates to select")
@@ -223,14 +280,20 @@ def choose_candidate_selection(records, mode):
     if complete:
         apply_relative_candidate_scores(records)
 
-    spread = max(records, key=lambda candidate: _selection_value(candidate["metrics"]))
+    spread = _choose_with_hand_priority(
+        records,
+        lambda record: record["metrics"],
+        lambda record: record.get("suspect", []),
+    )
     if mode == "spread":
         selected_pages = {"left": spread["id"], "right": spread["id"]}
     elif mode == "per_page":
         selected_pages = {
-            side: max(
+            side: _choose_with_hand_priority(
                 records,
-                key=lambda candidate: _selection_value(candidate["page_metrics"][side]),
+                lambda record: record["page_metrics"][side],
+                lambda record: record.get("page_suspect", {}).get(
+                    side, record.get("suspect", [])),
             )["id"]
             for side in ("left", "right")
         }

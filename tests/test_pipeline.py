@@ -78,6 +78,94 @@ def test_candidate_batch_preserves_input_order(monkeypatch, tmp_path):
     assert [record["time"] for record in records] == [0.0, 1.0, 2.0, 3.0, 4.0]
 
 
+def _duplicate_fixture(spread_id, hand, focus=0.8, risks=(), *, root=None):
+    spread = {
+        "id": spread_id,
+        "candidates": [{
+            "id": 0,
+            "metrics": {"hand_overlap": hand, "sharpness_uniformity": focus},
+        }],
+    }
+    if root:
+        spread["duplicate_of"] = root
+    page = {
+        "id": f"{spread_id}_spread",
+        "spread_id": spread_id,
+        "side": "spread",
+        "candidate_id": 0,
+        "enabled": root is None,
+        "suspect": list(risks),
+    }
+    return spread, page
+
+
+def test_later_duplicate_replaces_hand_covered_page_then_repairs_it():
+    old, old_page = _duplicate_fixture(
+        "spread_0001", 0.11,
+        risks=("finger_repair_incomplete", "final_unresolved_finger"),
+    )
+    hand, hand_page = _duplicate_fixture(
+        "spread_0002", 0.006,
+        risks=("finger_repair_incomplete", "final_unresolved_finger"),
+        root=old["id"],
+    )
+    clean, clean_page = _duplicate_fixture(
+        "spread_0003", 0.008, root=old["id"],
+    )
+    manifest = {"spreads": [old], "pages": [old_page]}
+
+    pipeline._promote_cleaner_duplicate(manifest, hand, [hand_page])
+    assert not old_page["enabled"] and hand_page["enabled"]
+    manifest["spreads"].append(hand)
+    manifest["pages"].append(hand_page)
+    pipeline._promote_cleaner_duplicate(manifest, clean, [clean_page])
+    assert not hand_page["enabled"] and clean_page["enabled"]
+
+
+@pytest.mark.parametrize("hand,focus,risks", [
+    (0.01, 0.5, ()),
+    (0.01, 0.8, ("final_edge_crop_suspected",)),
+    (0.01, 0.8, ("final_unresolved_finger",)),
+    (None, 0.8, ()),
+])
+def test_duplicate_promotion_rejects_new_quality_risk(hand, focus, risks):
+    old, old_page = _duplicate_fixture("spread_0001", 0.1)
+    newer, newer_page = _duplicate_fixture(
+        "spread_0002", hand, focus, risks, root=old["id"],
+    )
+    manifest = {"spreads": [old], "pages": [old_page]}
+
+    pipeline._promote_cleaner_duplicate(manifest, newer, [newer_page])
+
+    assert old_page["enabled"] and not newer_page["enabled"]
+
+
+def test_manual_duplicate_selection_blocks_later_auto_promotion():
+    old, old_page = _duplicate_fixture("spread_0001", 0.1)
+    newer, newer_page = _duplicate_fixture("spread_0002", 0.0, root=old["id"])
+    manifest = {
+        "spreads": [old],
+        "pages": [old_page],
+        "manual_duplicate_groups": [old["id"]],
+    }
+
+    pipeline._promote_cleaner_duplicate(manifest, newer, [newer_page])
+
+    assert old_page["enabled"] and not newer_page["enabled"]
+
+
+def test_manual_duplicate_group_marking_and_undo_state():
+    old, old_page = _duplicate_fixture("spread_0001", 0.1)
+    newer, newer_page = _duplicate_fixture("spread_0002", 0.0, root=old["id"])
+    manifest = {"spreads": [old, newer], "pages": [old_page, newer_page]}
+    before = pipeline._page_review_state(manifest)
+
+    pipeline._protect_manual_duplicate_group(manifest, newer)
+    assert manifest["manual_duplicate_groups"] == [old["id"]]
+    pipeline._restore_page_review_state(manifest, before)
+    assert manifest["manual_duplicate_groups"] == []
+
+
 def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     project = tmp_path / "book"
     cfg = Config(output_layout="split", hand_backend="none", finger_repair=False,
@@ -444,6 +532,14 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     assert manifest["spreads"][0]["start"] >= 1.6
     assert manifest["pages"][0]["side"] == "cover"
     assert len(manifest["pages"]) == 7
+    original_cover = (project / manifest["pages"][0]["path"]).read_bytes()
+    corrected = edit(project, "cover_crop", roi=[
+        [0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8],
+    ])
+    assert corrected["cover"]["detection"]["source"] == "manual"
+    assert corrected["pdf_stale"] is True
+    assert corrected["pages"][0]["id"] == "cover"
+    assert (project / corrected["pages"][0]["path"]).read_bytes() != original_cover
     spread_pages = [page for page in manifest["pages"] if page["side"] != "cover"]
     assert all(page["dewarp"]["mode"] == "auto" for page in spread_pages)
     assert all("strength_profile" in page["dewarp"] for page in spread_pages)

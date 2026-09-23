@@ -1242,6 +1242,7 @@ def _page_review_state(manifest, include_pages=False):
     state = {
         "order": [page["id"] for page in pages],
         "disabled": [page["id"] for page in pages if not page.get("enabled", True)],
+        "manual_duplicate_groups": list(manifest.get("manual_duplicate_groups", [])),
     }
     if include_pages:
         state["pages"] = deepcopy(pages)
@@ -1269,6 +1270,7 @@ def _clear_page_history(manifest):
 
 
 def _restore_page_review_state(manifest, state):
+    manifest["manual_duplicate_groups"] = list(state.get("manual_duplicate_groups", []))
     snapshot = state.get("pages")
     if isinstance(snapshot, list):
         manifest["pages"] = deepcopy(snapshot)
@@ -1373,6 +1375,122 @@ def _resume_previous_spreads(project, manifest, cfg):
         thumbnail = selected_spread_preview(project, spread, cfg)
         previous.append((spread["id"], thumbnail))
     return previous[-cfg.dedupe_window :]
+
+
+_DUPLICATE_HARD_RISKS = {
+    "low_sharpness",
+    "high_motion",
+    "underexposed",
+    "source_frame_clipped",
+    "final_edge_crop_suspected",
+    "final_background_fill_large",
+    "final_dewarp_line_regression",
+    "final_glare_residual",
+    "final_near_blank_white",
+    "final_near_blank_black",
+    "page_quad_uncertain",
+    "page_contour_low_confidence",
+    "dewarp_low_confidence",
+}
+_DUPLICATE_REPAIR_RISKS = {
+    "occlusion_repair_incomplete",
+    "finger_repair_incomplete",
+    "final_unresolved_finger",
+    "final_finger_repair_residual",
+}
+
+
+def _duplicate_page_metrics(spread, page):
+    candidate = next(
+        (item for item in spread["candidates"] if item["id"] == page["candidate_id"]),
+        None,
+    )
+    if candidate is None:
+        return None
+    if page["side"] == "spread":
+        return candidate.get("metrics")
+    return candidate.get("page_metrics", {}).get(page["side"])
+
+
+def _prefer_duplicate_pages(old_spread, old_pages, new_spread, new_pages):
+    """Decide whether a later duplicate is cleaner without adding crop/blur risk."""
+    old_by_side = {page["side"]: page for page in old_pages}
+    new_by_side = {page["side"]: page for page in new_pages}
+    if not old_by_side or old_by_side.keys() != new_by_side.keys():
+        return False
+    old_hands = []
+    new_hands = []
+    old_repair_risks = 0
+    new_repair_risks = 0
+    for side, old_page in old_by_side.items():
+        new_page = new_by_side[side]
+        old_metrics = _duplicate_page_metrics(old_spread, old_page)
+        new_metrics = _duplicate_page_metrics(new_spread, new_page)
+        if not old_metrics or not new_metrics:
+            return False
+        old_hand = old_metrics.get("hand_overlap")
+        new_hand = new_metrics.get("hand_overlap")
+        old_focus = old_metrics.get("sharpness_uniformity")
+        new_focus = new_metrics.get("sharpness_uniformity")
+        if not all(
+            isinstance(value, (int, float)) and math.isfinite(value)
+            for value in (old_hand, new_hand, old_focus, new_focus)
+        ):
+            return False
+        if new_focus < old_focus * 0.8:
+            return False
+        old_risks = set(old_page.get("suspect", []))
+        new_risks = set(new_page.get("suspect", []))
+        if (new_risks & _DUPLICATE_HARD_RISKS) - old_risks:
+            return False
+        old_repair_risks += len(old_risks & _DUPLICATE_REPAIR_RISKS)
+        new_repair_risks += len(new_risks & _DUPLICATE_REPAIR_RISKS)
+        old_hands.append(float(old_hand))
+        new_hands.append(float(new_hand))
+    if new_repair_risks > old_repair_risks:
+        return False
+    old_hand = sum(old_hands) / len(old_hands)
+    new_hand = sum(new_hands) / len(new_hands)
+    return (
+        new_hand <= old_hand - 0.01
+        or (new_repair_risks < old_repair_risks and new_hand <= old_hand + 0.005)
+    )
+
+
+def _promote_cleaner_duplicate(manifest, spread, pages):
+    root_id = spread.get("duplicate_of")
+    if not root_id or root_id in manifest.get("manual_duplicate_groups", []):
+        return
+    group = {root_id, spread["id"]}
+    group.update(
+        item["id"]
+        for item in manifest["spreads"]
+        if item.get("duplicate_of") == root_id
+    )
+    enabled = [
+        page for page in manifest["pages"]
+        if page.get("enabled") and page["spread_id"] in group
+    ]
+    if not enabled or len({page["spread_id"] for page in enabled}) != 1:
+        return
+    current_id = enabled[0]["spread_id"]
+    current_spread = next(item for item in manifest["spreads"] if item["id"] == current_id)
+    if _prefer_duplicate_pages(current_spread, enabled, spread, pages):
+        for page in enabled:
+            page["enabled"] = False
+        for page in pages:
+            page["enabled"] = True
+        spread["auto_promoted_duplicate_of"] = current_id
+
+
+def _protect_manual_duplicate_group(manifest, spread):
+    if spread is None:
+        return
+    root_id = spread.get("duplicate_of", spread["id"])
+    if any(item.get("duplicate_of") == root_id for item in manifest["spreads"]):
+        groups = manifest.setdefault("manual_duplicate_groups", [])
+        if root_id not in groups:
+            groups.append(root_id)
 
 
 def _high_fps_window_samples(manifest, cfg, start, end, requested_fps):
@@ -1483,7 +1601,7 @@ def _add_auto_high_fps_candidates(
     return added, effective_fps
 
 
-def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, segments, fps):
+def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, segments, fps, on_progress=None):
     analysis = analyze_page_turns(
         motion_samples,
         segments,
@@ -1495,8 +1613,11 @@ def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, s
         return segments, analysis
 
     recovered = []
-    for missing in list(analysis.get("missing_candidates", [])):
+    missing_candidates = list(analysis.get("missing_candidates", []))
+    for index, missing in enumerate(missing_candidates, 1):
         raise_if_cancelled(project)
+        if on_progress is not None:
+            on_progress(index, len(missing_candidates))
         samples, effective_fps = _high_fps_window_samples(
             manifest,
             cfg,
@@ -1763,6 +1884,12 @@ def run(project, roi=None):
                     motion_samples,
                     segments,
                     fps,
+                    on_progress=lambda current, total: update(
+                        project,
+                        manifest,
+                        0.4,
+                        f"取りこぼしを高fpsで再探索 {current} / {total} 区間",
+                    ),
                 )
                 manifest["page_turn_analysis"] = page_turn_analysis
                 write_json(project / "debug/page_turns.json", page_turn_analysis)
@@ -1952,6 +2079,7 @@ def run(project, roi=None):
                     runtime_cache=runtime_cache,
                 )
                 _record_timing(timings, "render_spread", render_started)
+                _promote_cleaner_duplicate(manifest, spread, pages)
                 selected_tracking = _candidate_by_id(spread, spread["selected"])
                 cached_tracking = runtime_cache.get(spread["selected"])
                 next_tracking = cached_tracking.get("image") if cached_tracking else None
@@ -2245,6 +2373,35 @@ def edit(project, action, **params):
     with project_lock(project):
         manifest = read_manifest(project)
         cfg = Config.from_dict(manifest["config"])
+        if action == "cover_crop":
+            cover = manifest.get("cover") or {}
+            if cover.get("status") != "ready" or not cover.get("frame"):
+                raise ValueError("No cover frame to crop")
+            index = next(
+                (i for i, existing in enumerate(manifest["pages"])
+                 if existing["side"] == "cover"),
+                None,
+            )
+            if index is None:
+                raise ValueError("Cover page is missing")
+            validate_manifest_video(manifest, cfg, require_dimensions=True)
+            raw_roi = rotate_roi(
+                params["roi"], (360 - cfg.rotation) % 360
+            ).tolist()
+            cover["roi"] = raw_roi
+            cover["detection"] = {
+                "detected": False,
+                "confidence": 0.0,
+                "source": "manual",
+            }
+            page = render_cover(project, manifest)
+            page["enabled"] = manifest["pages"][index]["enabled"]
+            manifest["pages"][index] = page
+            manifest["pdf_stale"] = True
+            manifest["message"] = "表紙の外周を修正しました。PDF / CBZを再出力してください"
+            _refresh_adjacent_final_quality(project, manifest, cfg)
+            save_manifest(project, manifest)
+            return manifest
         if action == "export":
             manifest["message"] = "PDF / CBZを生成中です"
             save_manifest(project, manifest)
@@ -2304,6 +2461,11 @@ def edit(project, action, **params):
             before = _page_review_state(manifest)
             page = next(p for p in manifest["pages"] if p["id"] == params["page_id"])
             page["enabled"] = not page["enabled"]
+            spread = next(
+                (item for item in manifest.get("spreads", []) if item["id"] == page["spread_id"]),
+                None,
+            )
+            _protect_manual_duplicate_group(manifest, spread)
             _push_page_history(manifest, before, "除外 / 復元")
         elif action == "move_page":
             index = next(
@@ -2491,6 +2653,7 @@ def edit(project, action, **params):
                     selection = int(params["candidate_id"])
                     if selection not in [c["id"] for c in spread["candidates"]]:
                         raise ValueError("Unknown candidate")
+                    _protect_manual_duplicate_group(manifest, spread)
                     side = params.get("side")
                     if side is None:
                         spread["selected"] = selection

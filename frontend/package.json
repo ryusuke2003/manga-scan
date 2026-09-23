@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:layout": "node scripts/check-page-card-layout.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
