@@ -8,7 +8,8 @@ React / Vite source (frontend/)
   └─ build ──> src/manga_scan/static/ (generated, gitignored)
                                       │
 CLI / Flask loopback Web UI (127.0.0.1:8765)
-  └─ ingest → video → motion → candidate sampling → hand + score
+  └─ ingest → video → motion → low-res interval premerge
+       → candidate batch decode → candidate prefilter → hand + score
        → candidate selection → dedupe → configured rotation
        → page contour + per-page perspective OR spread perspective + split
        → finger repair → dewarp → illumination → white normalization / enhancement
@@ -19,6 +20,7 @@ CLI / Flask loopback Web UI (127.0.0.1:8765)
 - `ingest.py`: ローカル動画確認、ffprobeメタデータ、表紙/見開き基準フレーム選択、プロジェクト作成。
 - `video.py`: FFmpeg境界。回転メタデータを適用した画像、表示時刻でのseek、縮小パイプ。
 - `motion.py`: ROI差分、stable/turning状態機械、時間分散した候補抽出。
+- `candidate_prefilter.py`: 本ROI内の低解像度比較による候補の保守的な事前統合と、序盤・中盤・終盤を覆う二段階評価計画。
 - `hand.py`: MediaPipe IMAGEモード、最大4手、landmark凸包を膨張したマスクとROIの交差。
 - `finger_alignment.py`: donorのglobal ECC、component単位local translation、clean-context検証、bounded photometric alignment。
 - `finger_repair.py`: alignment済みdonorの実画素合成、境界feather、未補修fallback、repair metadata。
@@ -53,7 +55,10 @@ Node.jsはフロントのinstall/build/devに必要だが、build済み静的フ
 
 動画入力、メタデータ、任意の表紙1ページ、見開き基準フレーム/ROI、めくりと静止検出、ベストフレーム、手の重なり評価、
 重複除外、射影変換、左右分割、画像/PDF保存、ログ、レビューまで。
-除外はmanifestのフラグで行い、重複候補も画像を残す。
+後段の重複判定で除外した見開きはmanifestのフラグで無効化し、画像を残す。
+ただし通常stable interval同士が重い評価前の低解像度比較で同一見開きと強く判定できた場合は、
+1見開きへ事前統合し、元区間は `normal_premerge.source_starts` に記録する。
+一致が不確かな区間は事前統合せず、従来の後段重複判定へ残す。
 初回解析で自動PDF生成。編集後は `pdf_stale=true` とし再出力を明示する。
 
 改善余地: より高度な2D/3D曲面推定、長時間4Kでの性能最適化、
@@ -84,9 +89,35 @@ ROI射影画像のmotion判定はv2で、grayscale化後に縮小・低域化し
 区間を最大 `candidates_per_spread` 個（デフォルト7）の時間ビンへ分割し、各ビンで
 `log1p(sharpness) - 30*motion` 最大を選ぶ。
 最初の鋭い候補だけに偏らず、後半に手が引かれたフレームを調べる。
-候補時刻を元動画から縮小再取得しMediaPipeを実行する。同じ静止区間内で鮮鋭度・motion・
-hand overlap・反射・合成スコアを相対評価する。最高点の候補より指の検出面積が1ポイント以上小さく、
+
+通常stable interval同士は、各区間の先頭・末尾だけ保持する64×64 grayscale previewを用い、
+両区間の先頭同士・末尾同士の双方で、全体・左半分・右半分が厳しいdHash/SSIM条件を満たす場合だけ
+重い評価前に統合する。片端だけ一致する区間は、複数ページが混在した可能性を考えて統合しない。
+previewは動画全体の低motionフレームを保持せず、確定した各区間の境界2枚だけ残すため、
+1つのページを長く静止させても静止時間に比例して低解像度画像メモリが増えないようにする。
+
+候補フレームの復号は、間隔3秒以内・全体15秒以内の隣接見開きを最大3件まで1回のFFmpeg処理へまとめる。
+復号後は机などの背景ではなく確定済みの本ROI内だけを128×96へ縮小して比較し、
+連続するnear-identical候補だけを保守的にまとめて後側を代表にする。
+候補が4件以上ある場合、まず序盤・中盤・終盤を覆う最大3候補を詳細評価し、
+最後の異なる候補は必ず一次評価へ含める。一次候補がすべて
+low sharpness / hand overlap / glare overlap / high motion / page quad uncertain / underexposed
+のいずれかで読みにくい場合だけ、低解像度のnear-identical判定で一度抑えた候補も含む
+元の通常候補プール全体を詳細評価する。安い事前判定を画質の最終判断には使わない。
+候補が3件以下なら従来どおり全件を評価する。
+MediaPipe利用時に一次評価が3候補で終了した場合は、既存のtemporal hand maskが必要とする
+3 peerを維持するため、未評価フレーム1枚へ手検出だけを追加する。輪郭・反射・保存などの重い評価は行わない。
+このtemporal補助で一次3候補が全て手ありと判明した場合も、high-fps再探索へ進む前に
+未評価の通常候補を全件詳細評価する。
+
+詳細評価ではMediaPipe、輪郭補正、反射、鮮鋭度・motion・合成スコアを計算する。
+low sharpness / glare overlap / high motion / page quad uncertain / underexposed の
+読解阻害リスクがない候補が1枚でもある場合、最終選択はその集合内で行う。
+全候補に読解阻害リスクがある場合だけ全体の相対スコアへ戻る。
+その上で、最高点の候補より指の検出面積が1ポイント以上小さく、
 ピント・動き・反射・ページ形状が許容範囲にある候補を優先する。指だけ少なくてもブレや欠けがあれば採用しない。
+`performance.json` には `candidate_decode_batch` / `candidate_prefilter` /
+`candidate_primary_batch` / `candidate_fallback_batch` も記録し、削減効果とfallback量を追跡できる。
 `candidate_selection_mode="spread"` は見開き全体で選ぶ。`"per_page"` では各候補のROI射影画像を左右に分割し、
 左/右それぞれについて鮮鋭度・hand overlap・clipping・exposureを再計算する。motionとROI幾何ペナルティは
 同じ候補時刻/ROI由来の値を共有し、左右ごとに候補IDを独立して選ぶ。
@@ -265,7 +296,8 @@ README参照。`manifest.json` の `pages` 配列がページ順の唯一の根�
 - タイムラインの欠落候補・時間間隔警告はページ欠落の証明にならない。OCRなしで実ページ番号は分からない。
 - FFmpegは圧縮動画の中間フレームを内部でdecodeする。4K全フレームをPythonで解析する
   ことは避けるが、decode自体をサンプル数まで削減できるわけではない。
-- 長いGOPを何度もseekすると候補抽出が遅い。今後は候補を時間順にまとめてdecode可能。
+- 長いGOPを何度もseekすると候補抽出が遅い。近接する通常候補は最大3見開きまで時間順にまとめてdecodeするが、
+  離れた区間や15秒を超える範囲は安全のため別processに分ける。
 - Pythonに保持する高解像度画像は一見開きずつ。PDF生成はReportLabが圧縮ページを
   内部保持するため、長大な本ではPDFのサイズに応じてメモリを使う。
 - 背景スレッドはブラウザを閉じても続くが、サーバー終了・Macスリープ中は完了しない。

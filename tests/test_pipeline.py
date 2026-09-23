@@ -198,12 +198,15 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     create_project(video, project, cfg)
     manifest = run(project, ROI)
     assert manifest["status"] == "complete"
-    assert len(manifest["spreads"]) == 4
-    assert len(manifest["pages"]) == 8
+    assert len(manifest["spreads"]) == 3
+    assert len(manifest["pages"]) == 6
     assert all("final_quality" in page for page in manifest["pages"])
     assert all("reasons" in page["final_quality"] for page in manifest["pages"])
     assert sum(p["enabled"] for p in manifest["pages"]) == 6
-    assert manifest["spreads"][2]["duplicate_of"] == "spread_0002"
+    assert any(
+        spread["normal_premerge"]["source_intervals"] == 2
+        for spread in manifest["spreads"]
+    )
     assert [p["side"] for p in manifest["pages"]][:2] == ["right", "left"]
     assert len(PdfReader(project / "output/manga.pdf").pages) == 6
     with zipfile.ZipFile(project / "output/manga.cbz") as archive:
@@ -231,7 +234,7 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     with zipfile.ZipFile(project / "output/manga.cbz") as archive:
         assert len(archive.namelist()) == 5
     manifest = edit(project, "add_frame", time=0.8)
-    assert len(manifest["pages"]) == 10
+    assert len(manifest["pages"]) == 8
     manual_spread = next(
         spread
         for spread in manifest["spreads"]
@@ -499,7 +502,7 @@ def test_matching_short_recovery_retains_extra_candidates(monkeypatch, tmp_path)
     cfg = Config(hand_backend="none", finger_repair=False)
     updated, analysis = pipeline._recover_missing_segments_high_fps(
         tmp_path, {"analysis_fps": 10}, cfg, samples, segments, 10,
-        frame_previews={5: preview},
+        frame_previews={samples[5].time: preview},
     )
 
     assert len(updated) == 2
@@ -564,7 +567,7 @@ def test_cancelled_processing_resumes_after_completed_spread(video, tmp_path, mo
     resumed = pipeline.run(project, ROI)
 
     assert resumed["status"] == "complete"
-    assert len(resumed["spreads"]) == 4
+    assert len(resumed["spreads"]) == 3
     assert "processing_checkpoint" not in resumed
     assert first_candidate.stat().st_mtime_ns == first_mtime
     assert (project / "output/manga.pdf").is_file()
@@ -624,10 +627,10 @@ def test_optional_cover_and_reference_time(video, tmp_path):
     assert (project / "source/reference_frame.png").is_file()
 
     manifest = run(project, ROI)
-    assert len(manifest["spreads"]) == 3
+    assert len(manifest["spreads"]) == 2
     assert manifest["spreads"][0]["start"] >= 1.6
     assert manifest["pages"][0]["side"] == "cover"
-    assert len(manifest["pages"]) == 7
+    assert len(manifest["pages"]) == 5
     original_cover = (project / manifest["pages"][0]["path"]).read_bytes()
     corrected = edit(project, "cover_crop", roi=[
         [0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8],
@@ -827,10 +830,10 @@ def test_default_spread_output_pdf_cover_and_manual_add(video, tmp_path):
     set_setup_frame(project, "cover", 0.2, confirm=True)
     manifest = run(project, ROI)
     assert manifest["config"]["output_layout"] == "spread"
-    assert len(manifest["pages"]) == 5  # One cover + four complete spreads.
-    assert [p["side"] for p in manifest["pages"]] == ["cover"] + ["spread"] * 4
+    assert len(manifest["pages"]) == 4  # One cover + three premerged spreads.
+    assert [p["side"] for p in manifest["pages"]] == ["cover"] + ["spread"] * 3
     assert all("final_quality" in page for page in manifest["pages"])
-    assert len(PdfReader(project / "output/manga.pdf").pages) == 4  # One duplicate excluded.
+    assert len(PdfReader(project / "output/manga.pdf").pages) == 4
     first = manifest["pages"][1]
     image = cv2.imread(str(project / first["path"]))
     assert image.shape[1] > image.shape[0]
@@ -838,7 +841,7 @@ def test_default_spread_output_pdf_cover_and_manual_add(video, tmp_path):
     manifest = edit(project, "select_candidate", spread_id="spread_0001", candidate_id=1)
     assert not manifest["pages"][1]["enabled"]
     manifest = edit(project, "add_frame", time=.8)
-    assert len(manifest["pages"]) == 6
+    assert len(manifest["pages"]) == 5
     manual = next(s for s in manifest["spreads"] if "manual_frame" in s.get("extra_suspect", []))
     assert [p["side"] for p in manifest["pages"] if p["spread_id"] == manual["id"]] == ["spread"]
     edit(project, "export")

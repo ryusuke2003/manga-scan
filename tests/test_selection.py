@@ -368,6 +368,53 @@ def test_hand_area_does_not_overrule_blurry_frame():
     assert selected == 0
 
 
+def test_selection_prefers_readable_candidate_over_higher_risky_score():
+    risky = _record(0, 9.0, 9.0, 9.0)
+    readable = _record(1, 5.0, 5.0, 5.0)
+    risky["suspect"] = ["page_quad_uncertain"]
+
+    selected, pages = choose_candidate_selection([risky, readable], "spread")
+
+    assert selected == 1
+    assert pages == {"left": 1, "right": 1}
+
+
+def test_selection_treats_glare_as_readability_blocker():
+    risky = _record(0, 9.0, 9.0, 9.0)
+    readable = _record(1, 5.0, 5.0, 5.0)
+    risky["suspect"] = ["glare_overlap"]
+
+    selected, _ = choose_candidate_selection([risky, readable], "spread")
+
+    assert selected == 1
+
+
+def test_per_page_selection_filters_readability_risk_independently():
+    risky = _record(0, 9.0, 9.0, 9.0)
+    readable = _record(1, 5.0, 5.0, 5.0)
+    risky["page_suspect"] = {
+        "left": ["underexposed"],
+        "right": [],
+    }
+    readable["page_suspect"] = {"left": [], "right": []}
+
+    selected, pages = choose_candidate_selection([risky, readable], "per_page")
+
+    assert selected == 0
+    assert pages == {"left": 1, "right": 0}
+
+
+def test_selection_keeps_score_choice_when_every_candidate_is_risky():
+    high = _record(0, 9.0, 9.0, 9.0)
+    low = _record(1, 5.0, 5.0, 5.0)
+    high["suspect"] = ["page_quad_uncertain"]
+    low["suspect"] = ["underexposed"]
+
+    selected, _ = choose_candidate_selection([high, low], "spread")
+
+    assert selected == 0
+
+
 def test_hand_area_does_not_introduce_geometry_risk():
     records = [
         _v2_record(0, base_score=0.9, sharpness_uniformity=0.8,

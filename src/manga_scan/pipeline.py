@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from . import pipeline_render_helpers as render_helpers
+from .candidate_prefilter import build_candidate_plan, staged_fallback_reasons
 from .config import Config
 from .dedupe import compare, dhash, ssim
 from .export import (
@@ -67,6 +68,10 @@ _rectify_spread_pages_impl = render_helpers.rectify_spread_pages
 
 LOG = logging.getLogger("manga_scan")
 _TIMING_LOCK = threading.Lock()
+_CANDIDATE_DECODE_SPREAD_BATCH = 3
+_CANDIDATE_DECODE_MAX_GAP = 3.0
+_CANDIDATE_DECODE_MAX_SPAN = 15.0
+_CANDIDATE_PRIMARY_LIMIT = 3
 
 
 
@@ -139,6 +144,37 @@ def _decode_candidate_frames(manifest, cfg, samples, timings=None):
     )
     _record_timing(timings, "candidate_decode", started, len(frames))
     return frames
+
+
+def _decode_candidate_frame_groups(manifest, cfg, sample_groups, timings=None):
+    """Decode adjacent spreads through one FFmpeg process and split the result."""
+    groups = [list(group) for group in sample_groups]
+    flat = [sample for group in groups for sample in group]
+    if not flat:
+        return [[] for _group in groups]
+
+    started = time.monotonic()
+    frames = extract_frames(
+        manifest["source"],
+        [sample.time for sample in flat],
+        _candidate_frame_size(manifest, cfg),
+        cfg.hwaccel,
+    )
+    elapsed_started = started
+    _record_timing(timings, "candidate_decode", elapsed_started, len(frames))
+    # Keep a separate batch-level counter/timing so performance.json makes it
+    # obvious how many FFmpeg decode processes were needed.
+    _record_timing(timings, "candidate_decode_batch", started)
+
+    output = []
+    offset = 0
+    for group in groups:
+        size = len(group)
+        output.append(frames[offset : offset + size])
+        offset += size
+    if offset != len(frames):
+        raise ValueError("Candidate frame batch split mismatch")
+    return output
 
 
 def candidate(
@@ -330,9 +366,209 @@ def _process_candidate_batch(
         return list(executor.map(process, items))
 
 
-def _augment_temporal_hand_masks(project, records, cfg, runtime_cache=None):
+def _process_staged_candidate_batch(
+    project,
+    manifest,
+    cfg,
+    detector,
+    spread_id,
+    samples,
+    frames,
+    *,
+    selection_mode,
+    base_roi=None,
+    timings=None,
+    runtime_cache=None,
+):
+    """Run expensive analysis on a small temporal sample, then expand on failure."""
+    samples = list(samples)
+    frames = list(frames)
+    started = time.monotonic()
+    prefilter_roi = base_roi if base_roi is not None else manifest.get("roi")
+    prefilter_frames = (
+        [warp_roi(frame, prefilter_roi) for frame in frames]
+        if prefilter_roi is not None
+        else frames
+    )
+    plan = build_candidate_plan(
+        samples,
+        prefilter_frames,
+        primary_limit=_CANDIDATE_PRIMARY_LIMIT,
+    )
+    _record_timing(timings, "candidate_prefilter", started, len(samples))
+
+    primary_indices = plan["primary_indices"]
+    primary_samples = [samples[index] for index in primary_indices]
+    primary_frames = [frames[index] for index in primary_indices]
+    batch_started = time.monotonic()
+    records = _process_candidate_batch(
+        project,
+        manifest,
+        cfg,
+        detector,
+        spread_id,
+        primary_samples,
+        primary_frames,
+        start_id=0,
+        base_roi=base_roi,
+        timings=timings,
+        runtime_cache=runtime_cache,
+    )
+    _record_timing(timings, "candidate_primary_batch", batch_started)
+
+    staged_reasons = staged_fallback_reasons(records, selection_mode)
+    primary_set = set(primary_indices)
+    fallback_indices = (
+        [index for index in range(len(samples)) if index not in primary_set]
+        if staged_reasons
+        else []
+    )
+    fallback_evaluated = bool(fallback_indices)
+    if fallback_evaluated:
+        fallback_samples = [samples[index] for index in fallback_indices]
+        fallback_frames = [frames[index] for index in fallback_indices]
+        next_id = max((int(item["id"]) for item in records), default=-1) + 1
+        batch_started = time.monotonic()
+        records.extend(
+            _process_candidate_batch(
+                project,
+                manifest,
+                cfg,
+                detector,
+                spread_id,
+                fallback_samples,
+                fallback_frames,
+                start_id=next_id,
+                base_roi=base_roi,
+                timings=timings,
+                runtime_cache=runtime_cache,
+            )
+        )
+        _record_timing(timings, "candidate_fallback_batch", batch_started)
+
+    temporal_peer_index = None
+    if (
+        not fallback_evaluated
+        and getattr(cfg, "hand_backend", None) == "mediapipe"
+        and len(records) == 3
+        and prefilter_roi is not None
+        and runtime_cache is not None
+    ):
+        extra_indices = [
+            index
+            for index in (
+                plan["remaining_indices"]
+                + plan["duplicate_suppressed_indices"]
+            )
+            if index not in primary_indices
+        ]
+        if extra_indices:
+            temporal_peer_index = min(
+                extra_indices,
+                key=lambda index: (
+                    float(samples[index].motion),
+                    -float(samples[index].sharpness),
+                    index,
+                ),
+            )
+            peer_started = time.monotonic()
+            _overlap, peer_mask = detector.detect(
+                frames[temporal_peer_index],
+                prefilter_roi,
+            )
+            _record_timing(timings, "hand_detection", peer_started)
+            runtime_cache["_temporal_peers"] = [
+                {
+                    "image": frames[temporal_peer_index],
+                    "mask": peer_mask,
+                }
+            ]
+
+    plan = {
+        **plan,
+        "fallback_evaluated": fallback_evaluated,
+        "fallback_reasons": list(staged_reasons),
+        "fallback_indices": fallback_indices,
+        "evaluated_count": len(records),
+        "temporal_peer_index": temporal_peer_index,
+    }
+    return records, plan
+
+
+def _expand_staged_candidates_after_temporal(
+    project,
+    manifest,
+    cfg,
+    detector,
+    spread_id,
+    samples,
+    frames,
+    records,
+    plan,
+    *,
+    selection_mode,
+    base_roi=None,
+    timings=None,
+    runtime_cache=None,
+):
+    """Expand the normal pool if temporal hand detection makes every primary bad."""
+    if plan.get("fallback_evaluated"):
+        return records, plan, []
+
+    reasons = staged_fallback_reasons(records, selection_mode)
+    if not reasons:
+        return records, plan, []
+
+    primary_set = set(plan.get("primary_indices", ()))
+    fallback_indices = [
+        index for index in range(len(samples)) if index not in primary_set
+    ]
+    if not fallback_indices:
+        return records, plan, []
+
+    next_id = max((int(item["id"]) for item in records), default=-1) + 1
+    started = time.monotonic()
+    added = _process_candidate_batch(
+        project,
+        manifest,
+        cfg,
+        detector,
+        spread_id,
+        [samples[index] for index in fallback_indices],
+        [frames[index] for index in fallback_indices],
+        start_id=next_id,
+        base_roi=base_roi,
+        timings=timings,
+        runtime_cache=runtime_cache,
+    )
+    _record_timing(timings, "candidate_fallback_batch", started)
+    records.extend(added)
+    if runtime_cache is not None:
+        runtime_cache.pop("_temporal_peers", None)
+
+    updated = {
+        **plan,
+        "fallback_evaluated": True,
+        "fallback_reasons": sorted(
+            set(plan.get("fallback_reasons", ())) | set(reasons)
+        ),
+        "fallback_indices": fallback_indices,
+        "evaluated_count": len(records),
+        "post_temporal_fallback": True,
+    }
+    return records, updated, [record["id"] for record in added]
+
+
+def _augment_temporal_hand_masks(
+    project,
+    records,
+    cfg,
+    runtime_cache=None,
+    only_record_ids=None,
+):
     """Supplement MediaPipe masks from transient same-spread candidate content."""
-    if cfg.hand_backend != "mediapipe" or len(records) < 4:
+    extra_peers = list((runtime_cache or {}).get("_temporal_peers", []))
+    if cfg.hand_backend != "mediapipe" or len(records) + len(extra_peers) < 4:
         return records
 
     loaded = {}
@@ -348,10 +584,13 @@ def _augment_temporal_hand_masks(project, records, cfg, runtime_cache=None):
             continue
         loaded[record["id"]] = (image, mask)
 
-    if len(loaded) < 4:
+    if len(loaded) + len(extra_peers) < 4:
         return records
 
+    target_ids = set(only_record_ids) if only_record_ids is not None else None
     for record in records:
+        if target_ids is not None and record["id"] not in target_ids:
+            continue
         target = loaded.get(record["id"])
         if target is None:
             continue
@@ -360,7 +599,7 @@ def _augment_temporal_hand_masks(project, records, cfg, runtime_cache=None):
             {"image": peer_image, "mask": peer_mask}
             for candidate_id, (peer_image, peer_mask) in loaded.items()
             if candidate_id != record["id"]
-        ]
+        ] + extra_peers
         temporal = temporal_transient_mask(
             image,
             record["roi"],
@@ -1618,23 +1857,104 @@ def _same_page_preview(a, b, cfg):
                ssim(a[:, 32:], b[:, 32:])) >= max(0.985, cfg.duplicate_ssim)
 
 
-def _prepared_interval_records(segments, cfg, merged_windows):
+def _intervals_match_before_heavy(left, right, frame_previews, cfg):
+    """Conservatively identify adjacent stable intervals showing the same spread."""
+    if not frame_previews:
+        return False
+    if float(right["start"]) - float(left["end"]) > _CANDIDATE_DECODE_MAX_GAP:
+        return False
+
+    left_times = left.get("_preview_times") or [
+        candidate.get("time") for candidate in left["candidates"]
+    ]
+    right_times = right.get("_preview_times") or [
+        candidate.get("time") for candidate in right["candidates"]
+    ]
+    left_times = [timestamp for timestamp in left_times if timestamp is not None]
+    right_times = [timestamp for timestamp in right_times if timestamp is not None]
+    if not left_times or not right_times:
+        return False
+
+    # Require both interval endpoints to agree. Searching any matching pair,
+    # or only the adjacent boundary, can chain-merge a malformed interval that
+    # accidentally contains content from two different pages.
+    left_first = frame_previews.get(float(left_times[0]))
+    left_last = frame_previews.get(float(left_times[-1]))
+    right_first = frame_previews.get(float(right_times[0]))
+    right_last = frame_previews.get(float(right_times[-1]))
+    return (
+        _same_page_preview(left_first, right_first, cfg)
+        and _same_page_preview(left_last, right_last, cfg)
+    )
+
+
+def _prepared_interval_records(segments, cfg, merged_windows, frame_previews=None):
+    records = [
+        {
+            "start": float(segment[0].time),
+            "end": float(segment[-1].time),
+            "sample_count": len(segment),
+            "candidates": [
+                asdict(sample)
+                for sample in choose_candidates(segment, cfg.candidates_per_spread)
+            ],
+            "_source_starts": [float(segment[0].time)],
+            "_preview_times": [float(segment[0].time), float(segment[-1].time)],
+        }
+        for segment in segments
+    ]
+
+    # A false turn can split one physical spread into multiple normal stable
+    # intervals. Fold those intervals together before contour/hand/glare work.
+    premerged = []
+    for record in records:
+        if (
+            premerged
+            and _intervals_match_before_heavy(
+                premerged[-1],
+                record,
+                frame_previews,
+                cfg,
+            )
+        ):
+            previous = premerged[-1]
+            previous["end"] = max(float(previous["end"]), float(record["end"]))
+            previous["sample_count"] += int(record["sample_count"])
+            previous["candidates"].extend(record["candidates"])
+            previous["_source_starts"].extend(record["_source_starts"])
+            previous["_preview_times"].extend(record["_preview_times"])
+        else:
+            premerged.append(record)
+
     merged_by_start = {}
     for merged in merged_windows:
-        merged_by_start.setdefault(merged["target_start"], []).append(merged)
-    records = []
-    for segment in segments:
-        extra = merged_by_start.get(segment[0].time, [])
-        records.append({
-            "start": min([segment[0].time] + [item["start"] for item in extra]),
-            "end": max([segment[-1].time] + [item["end"] for item in extra]),
-            "sample_count": len(segment),
-            "candidates": [asdict(sample) for sample in choose_candidates(
-                segment, cfg.candidates_per_spread)] + [
-                candidate for item in extra for candidate in item["candidates"]
-            ],
-        })
-    return records
+        merged_by_start.setdefault(float(merged["target_start"]), []).append(merged)
+    for record in premerged:
+        extras = [
+            item
+            for start in record["_source_starts"]
+            for item in merged_by_start.get(float(start), [])
+        ]
+        if extras:
+            record["start"] = min(
+                [float(record["start"])] + [float(item["start"]) for item in extras]
+            )
+            record["end"] = max(
+                [float(record["end"])] + [float(item["end"]) for item in extras]
+            )
+            record["candidates"].extend(
+                candidate
+                for item in extras
+                for candidate in item["candidates"]
+            )
+        record["candidates"].sort(key=lambda item: float(item["time"]))
+        source_starts = record.pop("_source_starts")
+        record.pop("_preview_times", None)
+        record["normal_premerge"] = {
+            "source_intervals": len(source_starts),
+            "source_starts": source_starts,
+        }
+    return premerged
 
 
 def _add_auto_high_fps_candidates(
@@ -1763,7 +2083,7 @@ def _recover_missing_segments_high_fps(
                     continue
                 reference_preview = recovered_previews.get(id(segment))
                 if reference_preview is None:
-                    reference_preview = frame_previews.get(edge.index)
+                    reference_preview = frame_previews.get(float(edge.time))
                 if _same_page_preview(previews.get(best.index), reference_preview, cfg):
                     target = segment
                     break
@@ -1962,6 +2282,8 @@ def run(project, roi=None):
                     cfg.turn_threshold,
                 )
                 segments, previous, motion_samples, frame_previews = [], None, [], {}
+                preview_pending = []
+                preview_active = None
                 with (project / "debug/motion.csv").open("w", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow(["index", "time", "motion", "sharpness", "state"])
@@ -1986,14 +2308,37 @@ def run(project, roi=None):
                             sharpness(cropped),
                         )
                         motion_samples.append(sample)
-                        if cfg.auto_high_fps_fallback:
-                            frame_previews[index] = cv2.resize(
+                        was_stable = machine.state == "stable"
+                        preview = None
+                        if sample.motion <= cfg.motion_threshold:
+                            preview = cv2.resize(
                                 cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY),
-                                (64, 64), interpolation=cv2.INTER_AREA,
+                                (64, 64),
+                                interpolation=cv2.INTER_AREA,
                             )
+                            preview_pending.append((float(timestamp), preview))
+                            preview_pending = preview_pending[-cfg.stable_frames :]
                         complete = machine.push(sample)
+                        if sample.motion <= cfg.motion_threshold:
+                            if not was_stable and machine.state == "stable":
+                                preview_active = {
+                                    "first": preview_pending[0],
+                                    "last": (float(timestamp), preview),
+                                }
+                                preview_pending.clear()
+                            elif was_stable and preview_active is not None:
+                                preview_active["last"] = (float(timestamp), preview)
+                                preview_pending.clear()
+                        else:
+                            preview_pending.clear()
                         if complete:
                             segments.append(complete)
+                            if preview_active is not None:
+                                first_time, first_preview = preview_active["first"]
+                                last_time, last_preview = preview_active["last"]
+                                frame_previews[first_time] = first_preview
+                                frame_previews[last_time] = last_preview
+                            preview_active = None
                         writer.writerow(
                             [
                                 index,
@@ -2031,6 +2376,13 @@ def run(project, roi=None):
                 tail = machine.finish()
                 if tail:
                     segments.append(tail)
+                    if preview_active is not None:
+                        first_time, first_preview = preview_active["first"]
+                        last_time, last_preview = preview_active["last"]
+                        frame_previews[first_time] = first_preview
+                        frame_previews[last_time] = last_preview
+                preview_pending.clear()
+                preview_active = None
                 if not segments:
                     raise ValueError(
                         "No stable intervals found. Hold pages longer, tune "
@@ -2051,14 +2403,15 @@ def run(project, roi=None):
                         f"取りこぼしを高fpsで再探索 {current} / {total} 区間",
                     ),
                 )
-                frame_previews.clear()
                 manifest["page_turn_analysis"] = page_turn_analysis
                 write_json(project / "debug/page_turns.json", page_turn_analysis)
                 interval_records = _prepared_interval_records(
                     segments,
                     cfg,
                     page_turn_analysis.get("high_fps_fallback", {}).get("merged_windows", []),
+                    frame_previews=frame_previews,
                 )
+                frame_previews.clear()
                 write_json(interval_path, interval_records)
                 _record_timing(timings, "motion_analysis", motion_started)
                 manifest["processing_checkpoint"] = {
@@ -2075,6 +2428,7 @@ def run(project, roi=None):
 
             gaps = np.diff([item["start"] for item in interval_records])
             typical_gap = float(np.median(gaps)) if len(gaps) else 0
+            candidate_frame_cache = {}
             for i in range(completed_spreads, len(interval_records)):
                 raise_if_cancelled(project)
                 interval = interval_records[i]
@@ -2098,12 +2452,51 @@ def run(project, roi=None):
                         )
                     ),
                 }
-                candidate_frames = _decode_candidate_frames(
-                    manifest,
-                    cfg,
-                    candidate_samples,
-                    timings,
-                )
+                if i not in candidate_frame_cache:
+                    batch_indices = [i]
+                    first_interval = interval_records[i]
+                    for index in range(
+                        i + 1,
+                        min(
+                            len(interval_records),
+                            i + _CANDIDATE_DECODE_SPREAD_BATCH,
+                        ),
+                    ):
+                        previous_interval = interval_records[batch_indices[-1]]
+                        next_interval = interval_records[index]
+                        if (
+                            float(next_interval["start"])
+                            - float(previous_interval["end"])
+                            > _CANDIDATE_DECODE_MAX_GAP
+                            or float(next_interval["end"])
+                            - float(first_interval["start"])
+                            > _CANDIDATE_DECODE_MAX_SPAN
+                        ):
+                            break
+                        batch_indices.append(index)
+                    sample_groups = [
+                        [
+                            Sample(**sample)
+                            for sample in interval_records[index]["candidates"]
+                        ]
+                        for index in batch_indices
+                    ]
+                    decoded_groups = _decode_candidate_frame_groups(
+                        manifest,
+                        cfg,
+                        sample_groups,
+                        timings,
+                    )
+                    candidate_frame_cache.update(
+                        {
+                            index: frames
+                            for index, frames in zip(
+                                batch_indices,
+                                decoded_groups,
+                            )
+                        }
+                    )
+                candidate_frames = candidate_frame_cache.pop(i)
                 if cfg.roi_tracking and tracking_image is not None and candidate_frames:
                     roi_tracking_started = time.monotonic()
                     tracking_probe = candidate_frames[0]
@@ -2119,8 +2512,12 @@ def run(project, roi=None):
                     spread_roi = roi_tracking["roi"]
 
                 runtime_cache = {}
-                batch_started = time.monotonic()
-                records = _process_candidate_batch(
+                selection_mode = (
+                    cfg.candidate_selection_mode
+                    if cfg.output_layout == "split"
+                    else "spread"
+                )
+                records, candidate_prefilter = _process_staged_candidate_batch(
                     project,
                     manifest,
                     cfg,
@@ -2128,11 +2525,11 @@ def run(project, roi=None):
                     spread_id,
                     candidate_samples,
                     candidate_frames,
+                    selection_mode=selection_mode,
                     base_roi=spread_roi,
                     timings=timings,
                     runtime_cache=runtime_cache,
                 )
-                _record_timing(timings, "candidate_batch", batch_started)
                 temporal_started = time.monotonic()
                 _augment_temporal_hand_masks(
                     project,
@@ -2141,7 +2538,37 @@ def run(project, roi=None):
                     runtime_cache=runtime_cache,
                 )
                 _record_timing(timings, "temporal_hand_masks", temporal_started)
-                selection_mode = cfg.candidate_selection_mode if cfg.output_layout == "split" else "spread"
+                records, candidate_prefilter, post_temporal_ids = (
+                    _expand_staged_candidates_after_temporal(
+                        project,
+                        manifest,
+                        cfg,
+                        detector,
+                        spread_id,
+                        candidate_samples,
+                        candidate_frames,
+                        records,
+                        candidate_prefilter,
+                        selection_mode=selection_mode,
+                        base_roi=spread_roi,
+                        timings=timings,
+                        runtime_cache=runtime_cache,
+                    )
+                )
+                if post_temporal_ids:
+                    temporal_started = time.monotonic()
+                    _augment_temporal_hand_masks(
+                        project,
+                        records,
+                        cfg,
+                        runtime_cache=runtime_cache,
+                        only_record_ids=post_temporal_ids,
+                    )
+                    _record_timing(
+                        timings,
+                        "temporal_hand_masks",
+                        temporal_started,
+                    )
                 selected, selected_pages = choose_candidate_selection(records, selection_mode)
                 initial_selected = selected
                 initial_selected_pages = dict(selected_pages)
@@ -2188,6 +2615,11 @@ def run(project, roi=None):
                     "candidate_selection_mode": cfg.candidate_selection_mode,
                     "tracked_roi": validate_roi(spread_roi).tolist(),
                     "roi_tracking": roi_tracking,
+                    "normal_premerge": interval.get(
+                        "normal_premerge",
+                        {"source_intervals": 1, "source_starts": [interval["start"]]},
+                    ),
+                    "candidate_prefilter": candidate_prefilter,
                     "extra_suspect": [],
                 }
                 if reasons:

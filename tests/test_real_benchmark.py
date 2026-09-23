@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from scripts.run_real_benchmark import (
+    _candidate_prefilter_result,
     _repair_result_isolated,
     polygon_iou,
     validate_manifest,
@@ -43,6 +45,31 @@ def test_real_benchmark_consensus_offsets_must_include_center_frame():
 
     with pytest.raises(ValueError, match="must include 0"):
         validate_manifest(data)
+
+
+def test_real_benchmark_candidate_prefilter_preserves_changed_hand_frame(monkeypatch):
+    base = np.full((120, 180, 3), 210, np.uint8)
+    target = base.copy()
+    target[55:115, 125:179] = 35
+
+    def fake_extract_frame(_path, timestamp, width=None, hwaccel="none"):
+        assert width == 480
+        return target.copy() if timestamp == 10.0 else base.copy()
+
+    monkeypatch.setattr("manga_scan.video.extract_frame", fake_extract_frame)
+    result = _candidate_prefilter_result(
+        {"id": "video", "expected_rotation": 0},
+        {
+            "id": "moving-hand",
+            "target_time": 10.0,
+            "donor_times": [11.0],
+            "spread_quad": [[0, 0], [1, 0], [1, 1], [0, 1]],
+        },
+        Path("unused.mov"),
+    )
+
+    assert result["passed"] is True
+    assert result["donors"][0]["collapsed_as_near_identical"] is False
 
 
 def test_repair_worker_reports_python_errors_without_aborting(tmp_path):
