@@ -710,7 +710,7 @@ def _render_split_page_side(
                 donor_pages(),
                 min_coverage=cfg.finger_repair_min_coverage,
                 fallback=cfg.finger_repair_fallback,
-                alignment_workers=cfg.processing_workers,
+                alignment_workers=min(2, cfg.processing_workers),
             )
             finger_repair["occlusion_kinds"] = [
                 kind
