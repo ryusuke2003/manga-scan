@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import cv2
 import numpy as np
 
@@ -197,6 +199,7 @@ def repair_occluded_regions(
     donors,
     min_coverage=0.9,
     fallback="preserve",
+    alignment_workers=3,
 ):
     """Fill masked occlusions only from clean pixels in alternate frames.
 
@@ -208,6 +211,8 @@ def repair_occluded_regions(
         raise ValueError("min_coverage must be between 0 and 1")
     if fallback not in ("preserve", "paper", "white"):
         raise ValueError("finger repair fallback must be preserve, paper, or white")
+    if type(alignment_workers) is not int or not 1 <= alignment_workers <= 4:
+        raise ValueError("alignment_workers must be an integer within 1..4")
 
     target_mask = _binary_mask(target_mask, target.shape)
     total = int(np.count_nonzero(target_mask))
@@ -229,10 +234,12 @@ def repair_occluded_regions(
             },
         }, np.zeros(target.shape[:2], np.uint8)
 
-    # Keep the existing global page alignment as the first safety gate. Local
-    # refinement is attempted only for donors that already match the page.
-    aligned_donors = []
-    for donor in donors:
+    # Keep the existing global page alignment as the first safety gate. Donors
+    # are independent at this stage, so run their ECC alignment concurrently.
+    # executor.map preserves donor order, keeping downstream selection stable.
+    donor_list = list(donors)
+
+    def align_one(donor):
         aligned = align_donor_page(
             target,
             donor["image"],
@@ -240,16 +247,24 @@ def repair_occluded_regions(
             target_mask,
         )
         if aligned is None:
-            continue
+            return None
         aligned_image, aligned_mask, global_score = aligned
-        aligned_donors.append(
-            {
-                "candidate_id": donor["candidate_id"],
-                "image": aligned_image,
-                "mask": aligned_mask,
-                "global_score": float(global_score),
-            }
-        )
+        return {
+            "candidate_id": donor["candidate_id"],
+            "image": aligned_image,
+            "mask": aligned_mask,
+            "global_score": float(global_score),
+        }
+
+    if len(donor_list) <= 1 or alignment_workers == 1:
+        aligned_results = [align_one(donor) for donor in donor_list]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=min(alignment_workers, len(donor_list)),
+            thread_name_prefix="finger-align",
+        ) as executor:
+            aligned_results = list(executor.map(align_one, donor_list))
+    aligned_donors = [item for item in aligned_results if item is not None]
 
     result = target.copy()
     remaining = target_mask.astype(bool)
@@ -389,6 +404,7 @@ def repair_finger_regions(
     donors,
     min_coverage=0.9,
     fallback="preserve",
+    alignment_workers=3,
 ):
     """Backward-compatible wrapper for the generalized occlusion repair engine."""
 
@@ -398,5 +414,6 @@ def repair_finger_regions(
         donors,
         min_coverage=min_coverage,
         fallback=fallback,
+        alignment_workers=alignment_workers,
     )
 
