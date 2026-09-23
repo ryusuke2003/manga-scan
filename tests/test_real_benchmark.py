@@ -8,6 +8,7 @@ from scripts.run_real_benchmark import (
     polygon_iou,
     validate_manifest,
 )
+from scripts.run_recovery_speed_benchmark import _strict_failures
 
 
 def test_real_benchmark_manifest_is_valid():
@@ -23,6 +24,17 @@ def test_polygon_iou_identical_and_disjoint():
     b = [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]
     assert polygon_iou(a, a) == 1.0
     assert polygon_iou(a, b) == 0.0
+
+
+def test_recovery_benchmark_requires_annotated_pages_even_if_legacy_missed():
+    report = {
+        "legacy_recoveries_lost": [],
+        "annotated_page_coverage_legacy": {"page": False},
+        "annotated_page_coverage_grouped": {"page": False},
+    }
+    assert _strict_failures(report) == ["annotated spreads were missed: page"]
+    report["annotated_page_coverage_grouped"]["page"] = True
+    assert _strict_failures(report) == []
 
 
 def test_real_benchmark_consensus_offsets_must_include_center_frame():

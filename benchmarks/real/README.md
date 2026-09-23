@@ -110,10 +110,16 @@ per-window high-fps recovery and the grouped implementation over the same low-re
 motion trace. The report records both recovery times, recovered/merged intervals,
 retention of formerly recovered turn windows, and coverage of the manually
 annotated spread timestamps in that window. The report is local-only at
-`benchmarks/real/reports/recovery_speed_latest.json`.
+`benchmarks/real/reports/recovery_speed_latest.json`; a second file named for
+the video, time window and order keeps each comparison available.
+It also reports low-resolution motion analysis separately; the benchmark does
+not include candidate scoring, rendering or PDF export.
 
 The timestamp checks are a limited page-loss guard, not a complete page inventory.
 Use more annotated windows before making a claim about all pages in a book.
+`--strict` fails if any annotated spread is missed or a window recovered by the
+legacy method disappears. The runner verifies the video's SHA-256 before timing.
+Use `--order grouped-first` on a second run to check for execution-order effects.
 
 ## Optional finger-repair benchmark
 
