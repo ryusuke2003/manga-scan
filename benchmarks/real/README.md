@@ -97,6 +97,24 @@ Debug images overlay:
 
 Use `--strict` when you intentionally want benchmark failures to return a non-zero exit code. The real-media benchmark is not part of normal CI because the source videos are private/local-only.
 
+## Short recovery speed and page-coverage benchmark
+
+Run a 30-second real-video window with annotated spread timestamps:
+
+```bash
+python scripts/run_recovery_speed_benchmark.py --strict
+```
+
+The default uses `desk-portrait-6479` from 30 to 60 seconds. It runs the former
+per-window high-fps recovery and the grouped implementation over the same low-res
+motion trace. The report records both recovery times, recovered/merged intervals,
+retention of formerly recovered turn windows, and coverage of the manually
+annotated spread timestamps in that window. The report is local-only at
+`benchmarks/real/reports/recovery_speed_latest.json`.
+
+The timestamp checks are a limited page-loss guard, not a complete page inventory.
+Use more annotated windows before making a claim about all pages in a book.
+
 ## Optional finger-repair benchmark
 
 Install the normal hand support and hand model first, then run:

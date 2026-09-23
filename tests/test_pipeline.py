@@ -447,6 +447,7 @@ def test_missing_page_high_fps_fallback_only_recovers_a_real_stable_run(
         samples,
         segments,
         10,
+        use_batch=False,
     )
 
     assert len(updated) == 3
@@ -456,6 +457,76 @@ def test_missing_page_high_fps_fallback_only_recovers_a_real_stable_run(
     assert recovered[0]["reason"] == "high_fps_stable_interval_recovered"
     assert recovered[0]["effective_fps"] == pytest.approx(25.0)
     assert recovered[0]["sample_count"] == 6
+
+
+def test_missing_window_groups_share_decode_and_keep_separate_motion(monkeypatch, tmp_path):
+    starts = []
+
+    def fake_frames(path, fps, size, hwaccel, start_time=0):
+        starts.append(start_time)
+        for index in range(1000):
+            yield index, start_time + index / fps, np.full((24, 32, 3), 120, np.uint8)
+
+    monkeypatch.setattr(pipeline, "sample_frames", fake_frames)
+    cfg = Config(hand_backend="none", finger_repair=False, analysis_width=32)
+    manifest = {"source": "unused", "roi": ROI, "analysis_fps": 10,
+                "metadata": {"fps": 30, "display_width": 32, "display_height": 24}}
+    missing = [{"window_start": a, "window_end": b}
+               for a, b in ((0.0, 0.4), (0.6, 1.0), (10.0, 10.4))]
+    result = list(pipeline._high_fps_missing_windows(tmp_path, manifest, cfg, missing))
+
+    assert starts == [0.0, 10.0]
+    assert [item[0] for item in result] == missing
+    assert all(item[1][0].motion == 1.0 for item in result)
+    assert all(item[1] and item[3] for item in result)
+
+
+def test_matching_short_recovery_retains_extra_candidates(monkeypatch, tmp_path):
+    values = [1.0, 0.006, 0.006, 0.006, 0.006, 0.006,
+              0.030, 0.050, 0.040, 0.017, 0.014, 0.016,
+              0.040, 0.050, 0.030, 0.006, 0.006, 0.006, 0.006, 0.006]
+    samples = [pipeline.Sample(index, index / 10, motion, 100)
+               for index, motion in enumerate(values)]
+    segments = [samples[1:6], samples[15:20]]
+    recovered = [pipeline.Sample(index, 0.90 + (index - 100) * 0.04, 0.005, 120)
+                 for index in range(100, 106)]
+    preview = np.tile(np.arange(64, dtype=np.uint8) * 3, (64, 1))
+
+    def fake_windows(project, manifest, cfg, missing):
+        yield missing[0], recovered, 25.0, {item.index: preview for item in recovered}
+
+    monkeypatch.setattr(pipeline, "_high_fps_missing_windows", fake_windows)
+    cfg = Config(hand_backend="none", finger_repair=False)
+    updated, analysis = pipeline._recover_missing_segments_high_fps(
+        tmp_path, {"analysis_fps": 10}, cfg, samples, segments, 10,
+        frame_previews={5: preview},
+    )
+
+    assert len(updated) == 2
+    assert not analysis["missing_candidates"]
+    assert not analysis["high_fps_fallback"]["recovered_candidates"]
+    merged = analysis["high_fps_fallback"]["merged_windows"]
+    assert len(merged) == 1
+    assert merged[0]["target_start"] == samples[1].time
+    assert len(merged[0]["candidates"]) == 3
+
+    intervals = pipeline._prepared_interval_records(updated, cfg, merged)
+    assert len(intervals) == 2
+    assert intervals[0]["end"] >= recovered[-1].time
+    assert {item["time"] for item in merged[0]["candidates"]}.issubset(
+        {item["time"] for item in intervals[0]["candidates"]}
+    )
+
+
+def test_short_recovery_does_not_merge_changed_page_half():
+    rng = np.random.default_rng(42)
+    original = rng.integers(20, 230, (64, 64), dtype=np.uint8)
+    changed = original.copy()
+    changed[:, 32:] = rng.integers(20, 230, (64, 32), dtype=np.uint8)
+    cfg = Config(hand_backend="none", finger_repair=False)
+
+    assert pipeline._same_page_preview(original, original, cfg)
+    assert not pipeline._same_page_preview(original, changed, cfg)
 
 
 def test_cancelled_processing_resumes_after_completed_spread(video, tmp_path, monkeypatch):

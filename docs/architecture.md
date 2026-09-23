@@ -102,8 +102,13 @@ accepted stable intervalが存在しない場合だけ候補化する。候補�
 新規解析ではこのpage-turn判定を使い、v2 metadataの無い旧projectだけ開始時刻gap heuristicへfallbackする。
 
 `auto_high_fps_fallback=true` では欠落候補の窓だけ `auto_high_fps_fallback_fps` で再サンプルする。
+近接する欠落窓は最大24秒のグループにまとめ、グループごとに1回だけFFmpegを起動する。
+各窓のmotion履歴は独立させ、窓の間にあるフレームは候補へ含めない。
 `auto_high_fps_min_stable_seconds` 以上、連続して `motion_threshold` 以下となるrunが確認できた場合だけ
 そのrunをstable intervalへ追加し、page-turn解析を再計算する。確認できない候補は自動追加せずReviewへ残す。
+短い復元区間が時間的に近い既存区間と低解像度画像の両半分で強く一致した場合は、
+別見開きとして重い補正を繰り返さず、復元区間から最大3候補を既存区間へ追加する。
+一致が不確かな区間は独立した見開きとして残す。
 また通常の見開きでも、全候補（per-page選択では片側の全候補）が
 low sharpness / hand overlap / glare overlap / high motion のいずれかで要確認の場合だけ、
 そのstable interval内を高fps再探索する。追加候補は既存のcandidate scoringへ合流し、

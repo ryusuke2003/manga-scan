@@ -15,7 +15,7 @@ import numpy as np
 
 from . import pipeline_render_helpers as render_helpers
 from .config import Config
-from .dedupe import compare
+from .dedupe import compare, dhash, ssim
 from .export import (
     contact_sheets,
     export_cbz,
@@ -1547,6 +1547,96 @@ def _high_fps_window_samples(manifest, cfg, start, end, requested_fps):
     return samples, effective_fps
 
 
+def _group_missing_windows(missing_candidates, max_gap=3.0, max_span=24.0):
+    """Keep seeks bounded while sharing one decode across nearby missing windows."""
+    groups = []
+    for missing in sorted(missing_candidates, key=lambda item: item["window_start"]):
+        start, end = float(missing["window_start"]), float(missing["window_end"])
+        if (groups and start - groups[-1][-1]["window_end"] <= max_gap
+                and end - groups[-1][0]["window_start"] <= max_span):
+            groups[-1].append(missing)
+        else:
+            groups.append([missing])
+    return groups
+
+
+def _high_fps_missing_windows(project, manifest, cfg, missing_candidates):
+    """Yield window samples and tiny previews with one FFmpeg stream per group."""
+    source_fps = float(manifest.get("metadata", {}).get("fps") or cfg.auto_high_fps_fallback_fps)
+    effective_fps = min(float(cfg.auto_high_fps_fallback_fps), source_fps)
+    analysis_fps = float(manifest.get("analysis_fps") or cfg.video_sample_fps)
+    if effective_fps <= analysis_fps + 1e-6:
+        for missing in missing_candidates:
+            yield missing, [], effective_fps, {}
+        return
+
+    height = int(manifest["metadata"]["display_height"])
+    width = int(manifest["metadata"]["display_width"])
+    analysis_width = min(cfg.analysis_width, width)
+    size = (analysis_width, max(2, round(height * analysis_width / width)))
+    for group in _group_missing_windows(missing_candidates):
+        states = [{"samples": [], "previews": {}, "previous": None} for _ in group]
+        start = float(group[0]["window_start"])
+        end = max(float(item["window_end"]) for item in group)
+        stream = sample_frames(manifest["source"], effective_fps, size, cfg.hwaccel,
+                               start_time=max(0.0, start))
+        try:
+            for _, timestamp, frame in stream:
+                if timestamp > end + 0.5 / effective_fps:
+                    break
+                raise_if_cancelled(project)
+                active = [index for index, item in enumerate(group)
+                          if item["window_start"] - 0.5 / effective_fps <= timestamp
+                          <= item["window_end"] + 0.5 / effective_fps]
+                if not active:
+                    continue
+                cropped = warp_roi(frame, manifest["roi"])
+                preview = cv2.resize(cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY),
+                                     (64, 64), interpolation=cv2.INTER_AREA)
+                focus = sharpness(cropped)
+                for index in active:
+                    state = states[index]
+                    previous = state["previous"]
+                    motion = motion_score(previous, cropped) if previous is not None else 1.0
+                    number = len(state["samples"])
+                    state["samples"].append(Sample(number, timestamp, motion, focus))
+                    state["previews"][number] = preview
+                    state["previous"] = cropped
+        finally:
+            stream.close()
+        for missing, state in zip(group, states):
+            yield missing, state["samples"], effective_fps, state["previews"]
+
+
+def _same_page_preview(a, b, cfg):
+    """Only fold a recovered window into a page when both halves clearly match."""
+    if a is None or b is None or min(float(a.std()), float(b.std())) < 8:
+        return False
+    if (dhash(a) ^ dhash(b)).bit_count() > cfg.duplicate_hash_distance:
+        return False
+    return min(ssim(a, b), ssim(a[:, :32], b[:, :32]),
+               ssim(a[:, 32:], b[:, 32:])) >= max(0.985, cfg.duplicate_ssim)
+
+
+def _prepared_interval_records(segments, cfg, merged_windows):
+    merged_by_start = {}
+    for merged in merged_windows:
+        merged_by_start.setdefault(merged["target_start"], []).append(merged)
+    records = []
+    for segment in segments:
+        extra = merged_by_start.get(segment[0].time, [])
+        records.append({
+            "start": min([segment[0].time] + [item["start"] for item in extra]),
+            "end": max([segment[-1].time] + [item["end"] for item in extra]),
+            "sample_count": len(segment),
+            "candidates": [asdict(sample) for sample in choose_candidates(
+                segment, cfg.candidates_per_spread)] + [
+                candidate for item in extra for candidate in item["candidates"]
+            ],
+        })
+    return records
+
+
 def _add_auto_high_fps_candidates(
     project,
     manifest,
@@ -1618,7 +1708,10 @@ def _add_auto_high_fps_candidates(
     return added, effective_fps
 
 
-def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, segments, fps, on_progress=None):
+def _recover_missing_segments_high_fps(
+    project, manifest, cfg, motion_samples, segments, fps, on_progress=None,
+    frame_previews=None, use_batch=True,
+):
     analysis = analyze_page_turns(
         motion_samples,
         segments,
@@ -1630,18 +1723,24 @@ def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, s
         return segments, analysis
 
     recovered = []
+    merged = []
     missing_candidates = list(analysis.get("missing_candidates", []))
-    for index, missing in enumerate(missing_candidates, 1):
+    if use_batch:
+        windows = _high_fps_missing_windows(project, manifest, cfg, missing_candidates)
+    else:
+        windows = (
+            (missing, *_high_fps_window_samples(
+                manifest, cfg, float(missing["window_start"]),
+                float(missing["window_end"]), cfg.auto_high_fps_fallback_fps,
+            ), {})
+            for missing in missing_candidates
+        )
+    existing_segments = list(segments)
+    recovered_previews = {}
+    for index, (missing, samples, effective_fps, previews) in enumerate(windows, 1):
         raise_if_cancelled(project)
         if on_progress is not None:
             on_progress(index, len(missing_candidates))
-        samples, effective_fps = _high_fps_window_samples(
-            manifest,
-            cfg,
-            float(missing["window_start"]),
-            float(missing["window_end"]),
-            cfg.auto_high_fps_fallback_fps,
-        )
         stable = best_low_motion_run(
             samples,
             cfg.motion_threshold,
@@ -1650,8 +1749,36 @@ def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, s
         )
         if not stable:
             continue
-        segments.append(stable)
         best = min(stable, key=lambda sample: sample.motion)
+        target = None
+        if frame_previews and previews and stable[-1].time - stable[0].time <= 0.8:
+            nearest = sorted(
+                existing_segments,
+                key=lambda segment: min(abs(best.time - segment[0].time),
+                                        abs(best.time - segment[-1].time)),
+            )[:3]
+            for segment in nearest:
+                edge = segment[-1] if segment[-1].time <= best.time else segment[0]
+                if abs(edge.time - best.time) > 2.0:
+                    continue
+                reference_preview = recovered_previews.get(id(segment))
+                if reference_preview is None:
+                    reference_preview = frame_previews.get(edge.index)
+                if _same_page_preview(previews.get(best.index), reference_preview, cfg):
+                    target = segment
+                    break
+        if target is not None:
+            merged.append({
+                "id": missing["id"],
+                "target_start": float(target[0].time),
+                "start": float(stable[0].time),
+                "end": float(stable[-1].time),
+                "candidates": [asdict(sample) for sample in choose_candidates(stable, 3)],
+            })
+            continue
+        segments.append(stable)
+        existing_segments.append(stable)
+        recovered_previews[id(stable)] = previews.get(best.index)
         recovered.append(
             {
                 "id": missing["id"],
@@ -1675,11 +1802,21 @@ def _recover_missing_segments_high_fps(project, manifest, cfg, motion_samples, s
             cfg.turn_threshold,
             fps,
         )
+    if merged:
+        merged_ids = {item["id"] for item in merged}
+        analysis["missing_candidates"] = [
+            item for item in analysis["missing_candidates"] if item["id"] not in merged_ids
+        ]
     analysis["high_fps_fallback"] = {
         "enabled": True,
         "requested_fps": float(cfg.auto_high_fps_fallback_fps),
         "min_stable_seconds": float(cfg.auto_high_fps_min_stable_seconds),
         "recovered_candidates": recovered,
+        "merged_windows": merged,
+        "decode_groups": (
+            len(_group_missing_windows(missing_candidates))
+            if use_batch else len(missing_candidates)
+        ),
     }
     return segments, analysis
 
@@ -1824,7 +1961,7 @@ def run(project, roi=None):
                     cfg.motion_threshold,
                     cfg.turn_threshold,
                 )
-                segments, previous, motion_samples = [], None, []
+                segments, previous, motion_samples, frame_previews = [], None, [], {}
                 with (project / "debug/motion.csv").open("w", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow(["index", "time", "motion", "sharpness", "state"])
@@ -1849,6 +1986,11 @@ def run(project, roi=None):
                             sharpness(cropped),
                         )
                         motion_samples.append(sample)
+                        if cfg.auto_high_fps_fallback:
+                            frame_previews[index] = cv2.resize(
+                                cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY),
+                                (64, 64), interpolation=cv2.INTER_AREA,
+                            )
                         complete = machine.push(sample)
                         if complete:
                             segments.append(complete)
@@ -1901,6 +2043,7 @@ def run(project, roi=None):
                     motion_samples,
                     segments,
                     fps,
+                    frame_previews=frame_previews,
                     on_progress=lambda current, total: update(
                         project,
                         manifest,
@@ -1908,23 +2051,14 @@ def run(project, roi=None):
                         f"取りこぼしを高fpsで再探索 {current} / {total} 区間",
                     ),
                 )
+                frame_previews.clear()
                 manifest["page_turn_analysis"] = page_turn_analysis
                 write_json(project / "debug/page_turns.json", page_turn_analysis)
-                interval_records = [
-                    {
-                        "start": segment[0].time,
-                        "end": segment[-1].time,
-                        "sample_count": len(segment),
-                        "candidates": [
-                            asdict(candidate_sample)
-                            for candidate_sample in choose_candidates(
-                                segment,
-                                cfg.candidates_per_spread,
-                            )
-                        ],
-                    }
-                    for segment in segments
-                ]
+                interval_records = _prepared_interval_records(
+                    segments,
+                    cfg,
+                    page_turn_analysis.get("high_fps_fallback", {}).get("merged_windows", []),
+                )
                 write_json(interval_path, interval_records)
                 _record_timing(timings, "motion_analysis", motion_started)
                 manifest["processing_checkpoint"] = {
