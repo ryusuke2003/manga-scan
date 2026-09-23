@@ -206,7 +206,7 @@ dewarp_strength = 0.15
 | 紙が黄ばみ/グレーに見える | `white_normalization=true` |
 | 黒ベタや網点が変わる | 照明・白背景・dewarpを弱める/無効化し、PNGを使う |
 | PDFが大きい | `image_format="jpeg"`、`jpeg_quality=90` 前後 |
-| decodeが遅い | macOSではVideoToolboxをデフォルト利用。失敗時はCPUへfallback |
+| decodeが遅い | VideoToolboxをデフォルト利用。初期化失敗時はMac上でCPUへfallback |
 
 `turn_threshold >= motion_threshold` は維持してください。
 
@@ -222,8 +222,8 @@ dewarp_strength = 0.15
 `processing_workers`（デフォルト3、最大4）で並列化し、
 分割出力の左右ページは最大2並列でrenderします。
 
-macOSではVideoToolboxをデフォルト利用し、初期化失敗時はCPUへ自動fallbackします。
-必要な場合だけ `hwaccel` を明示的に上書きしてください。
+対応MacではVideoToolboxをデフォルト利用し、初期化失敗時はCPUへ自動fallbackします。
+トラブルシュート目的でCPU decodeを明示したい場合だけ `hwaccel = "none"` を指定してください。
 
 ## 詳細な内部仕様
 

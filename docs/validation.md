@@ -54,7 +54,7 @@ ruff check src tests scripts
 
 PythonのUI統合テストは、Viteの`index.html`が参照するハッシュ付き`/static/assets/...`を実際にFlaskから取得できることを確認する。そのためpytest前にfrontend buildが必要。
 
-GitHub Actionsは、Ubuntu/Python 3.14のfast jobでNode 22のfrontend test/build、Ruff、軽量pytestを実行する。Ubuntu/Python 3.11のcompat-py311 jobではsource compileと、frontend buildが必要なUI統合テストおよびFFmpeg統合テストを除くPythonテストを実行し、`requires-python = ">=3.11"` の最低対応バージョンを継続確認する。pipeline jobではmacOS/Python 3.14でFFmpeg統合テストを実行する。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
+GitHub ActionsはすべてApple Silicon（arm64）のmacOS runnerで実行し、各jobの先頭でarchitectureを検証する。Python 3.14のfast jobでNode 22のfrontend test/build、Ruff、軽量pytestを実行し、Python 3.11のcompat-py311 jobではsource compileと、frontend buildが必要なUI統合テストおよびFFmpeg統合テストを除くPythonテストを実行して、`requires-python = ">=3.11"` の最低対応バージョンを確認する。pipeline jobではmacOS/Python 3.14でFFmpeg統合テストを実行する。Linux / Windowsはサポート・CI対象外とする。個々のCI実行結果はこの文書へ固定せず、GitHub Actions側を参照する。
 
 ## M5上のローカル実行
 
@@ -171,6 +171,6 @@ target mask外の変更が1つでもあれば不合格とする。coverageを下
 ## 未検証
 
 実写漫画の手検出率、ページ欠落率、4K長時間動画の処理時間・最大メモリ、
-HDR/Dolby Visionの色再現、端末ごとのcodec差、強い湾曲、macOS以外の実機UI、
+HDR/Dolby Visionの色再現、端末ごとのcodec差、強い湾曲、
 VideoToolboxの機種ごとの性能、パッケージ再配布物の完全なライセンス監査。
 

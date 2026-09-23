@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import platform
 import sys
 from pathlib import Path
 
@@ -8,6 +9,11 @@ from .config import Config
 from .ingest import create_project
 from .pipeline import edit, run
 from .video import probe
+
+
+def require_macos():
+    if sys.platform != "darwin" or platform.machine().lower() != "arm64":
+        raise RuntimeError("manga-scan supports Apple Silicon macOS only")
 
 
 def main(argv=None):
@@ -46,6 +52,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
+        require_macos()
         if args.command == "probe":
             print(json.dumps(probe(args.video), ensure_ascii=False, indent=2))
         elif args.command in ("init", "scan"):

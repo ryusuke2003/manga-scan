@@ -1,14 +1,14 @@
 # セットアップガイド
 
-Manga Scan LocalをMacで初めて起動するまでの手順です。
+Manga Scan LocalをApple Silicon搭載Macで初めて起動するまでの手順です。
 
 ## 対象環境
 
-主な対象環境は **Mac Apple Silicon / arm64** です。
+対応環境は **Apple Silicon搭載Mac（macOS / arm64）のみ** です。Linux / Windows / Intel Macはサポートしません。CLIも対応環境以外では起動時に明示的にエラーにします。
 
 | 必要なもの | 目安 | 用途 |
 |---|---|---|
-| macOS arm64 | Apple Silicon | 主な検証環境 |
+| macOS arm64 | Apple Silicon | 対応環境 |
 | Python | 3.11以上。推奨3.12〜3.14 | 画像処理・ローカルAPI |
 | FFmpeg / ffprobe | Homebrew版で可 | 動画解析 |
 | Node.js | 22.12以上 | React/Viteの初回ビルド |

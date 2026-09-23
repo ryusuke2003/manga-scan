@@ -6,6 +6,7 @@ Manga Scan Localは、撮影動画からレビューしやすい候補を抽出�
 
 ## 主な制約
 
+- 対応環境はApple Silicon搭載Mac（macOS / arm64）のみ。Linux / Windows / Intel Macはサポートしない
 - 通常解析は10fps。欠落候補や問題候補の一部だけ自動high-fps fallbackで再確認する
 - high-fpsでも十分な連続低motion区間を確認できない場合は自動復旧しない
 - 手で常に隠れている領域は復元できない

@@ -21,11 +21,11 @@ Macで撮影した漫画の動画やページ画像から、**見開き画像・
 
 ## クイックスタート
 
-主な対象環境は **Mac Apple Silicon** です。
+対応環境は **Apple Silicon搭載Mac（macOS）のみ** です。Linux / Windows / Intel Macはサポートしません。
 
 | 必要なもの | 目安 |
 |---|---|
-| macOS | Apple Silicon / arm64 |
+| macOS | Apple Silicon / arm64（対応環境） |
 | Python | 3.11以上、推奨3.12〜3.14 |
 | FFmpeg / ffprobe | Homebrew版で可 |
 | Node.js | 22.12以上 |

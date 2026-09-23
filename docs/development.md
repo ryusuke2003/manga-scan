@@ -95,8 +95,8 @@ python -m pytest -q
 
 PRではGitHub Actionsが以下を確認します。
 
-- Ubuntu / Python 3.14: フロントテスト、Vite build、Ruff、軽量Pythonテスト
-- Ubuntu / Python 3.12: UI以外のPythonテストとソース互換性
-- macOS / Python 3.14: FFmpegを使うパイプライン統合テスト
+- Apple Silicon macOS / Python 3.14: フロントテスト、Vite build、Ruff、軽量Pythonテスト
+- Apple Silicon macOS / Python 3.11: UI以外のPythonテストと最低対応Pythonのソース互換性
+- Apple Silicon macOS / Python 3.14: FFmpegを使うパイプライン統合テスト
 
 同じPRへ新しいcommitをpushした場合、古い実行は自動キャンセルされます。
