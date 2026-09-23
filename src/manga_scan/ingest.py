@@ -3,6 +3,7 @@ import shutil
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from .config import Config
 from .cover_detect import detect_cover_quad
