@@ -67,7 +67,7 @@ class Config:
     dewarp_max_strength: float = 0.25
     dewarp_min_confidence: float = 0.6
     pdf_dpi: int = 300
-    hwaccel: str = "none"
+    hwaccel: str = "videotoolbox"
     save_lowres: bool = False
     suspect_sharpness: float = 60.0
     suspect_hand_overlap: float = 0.015
