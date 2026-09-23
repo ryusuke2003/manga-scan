@@ -10,6 +10,11 @@ from .pipeline import edit, run
 from .video import probe
 
 
+def require_macos():
+    if sys.platform != "darwin":
+        raise RuntimeError("manga-scan supports macOS only")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Local manga video → page images, PDF, and CBZ (no OCR / no cloud)"
@@ -46,6 +51,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
+        require_macos()
         if args.command == "probe":
             print(json.dumps(probe(args.video), ensure_ascii=False, indent=2))
         elif args.command in ("init", "scan"):
