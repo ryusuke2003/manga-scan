@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 
 import cv2
@@ -160,7 +161,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.illumination_correction is True
     assert cfg.white_normalization is True
     assert cfg.auto_rotation is True
-    assert cfg.hwaccel in ("none", "videotoolbox")
+    assert cfg.hwaccel == ("videotoolbox" if sys.platform == "darwin" else "none")
     assert cfg.processing_workers == 3
 
     with pytest.raises(ValueError, match="processing_workers"):
