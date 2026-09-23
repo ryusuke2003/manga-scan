@@ -58,6 +58,18 @@ def test_repair_replaces_only_detected_finger_region():
     np.testing.assert_array_equal(repaired[target_mask == 0], target[target_mask == 0])
 
 
+def test_parallel_alignment_worker_validation():
+    clean = _page()
+    zero = np.zeros(clean.shape[:2], np.uint8)
+    with pytest.raises(ValueError, match="alignment_workers"):
+        repair_occluded_regions(
+            clean,
+            zero,
+            [],
+            alignment_workers=5,
+        )
+
+
 def test_repair_combines_multiple_donors_for_different_regions():
     clean = _page()
     target = clean.copy()
