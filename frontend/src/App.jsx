@@ -6,6 +6,13 @@ import RoiSelector from './components/RoiSelector.jsx';
 import Review from './components/Review.jsx';
 import { rotateNormalizedRoi } from './rotation.js';
 
+const EDGE_LABELS = {
+  top: '上辺',
+  right: '右辺',
+  bottom: '下辺',
+  left: '左辺',
+};
+
 export default function App() {
   const scanner = useScanner();
   const { manifest, project, server, busy, error, revision } = scanner;
@@ -19,6 +26,17 @@ export default function App() {
   // Version 1 projects did not have setup stages; keep their original first-frame flow.
   const referenceConfirmed = reference?.confirmed ?? true;
   const referenceDetected = Boolean(reference?.detection?.detected && manifest?.roi);
+  const referenceDetection = reference?.detection;
+  const uncertainEdges = referenceDetection?.uncertain_edges ?? [];
+  const boundaryNeedsConfirmation = Boolean(
+    referenceDetected
+      && referenceDetection?.requires_confirmation
+      && !referenceDetection?.ambiguous
+      && uncertainEdges.length,
+  );
+  const uncertainEdgeText = uncertainEdges
+    .map(edge => EDGE_LABELS[edge] ?? edge)
+    .join('・');
   const activeProjectJob = Boolean(server.job?.busy && server.job.project === project);
   const exportingBook = activeProjectJob && server.job.action === 'export';
   const cancellingProcess = activeProjectJob
@@ -105,15 +123,20 @@ export default function App() {
       onStart={scanner.start}
       step={`${coverHadManualCrop ? '05' : '04'} / 見開き外周`}
       title={referenceDetected
-        ? reference.detection?.ambiguous
+        ? referenceDetection?.ambiguous
           ? '候補が拮抗しています。見開き外周を確認'
-          : '見開き外周を自動検出しました'
+          : boundaryNeedsConfirmation
+            ? '外周の一部が不確かです。確認してください'
+            : '見開き外周を自動検出しました'
         : '見開きの外周を4点で指定'}
       description={referenceDetected
-        ? reference.detection?.ambiguous
-          ? `複数の外周候補が拮抗しています · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。黄色い外周を確認し、違う場合は「やり直す」から4点を指定してください。`
-          : `前後0.5秒を含む左右ページの整合性から外周を自動検出しました · 信頼度 ${Math.round((reference.detection?.confidence ?? 0) * 100)}%。ずれている場合だけ「やり直す」から4点を指定し直せます。`
+        ? referenceDetection?.ambiguous
+          ? `複数の外周候補が拮抗しています · 外周確信度 ${Math.round((referenceDetection?.confidence ?? 0) * 100)}%。外周を確認し、違う場合は「やり直す」から4点を指定してください。`
+          : boundaryNeedsConfirmation
+            ? `${uncertainEdgeText}の実エッジ証拠が弱いか、手で隠れています · 外周確信度 ${Math.round((referenceDetection?.confidence ?? 0) * 100)}%。赤い辺を重点的に確認してください。`
+            : `前後0.5秒の候補から手・動き・鮮明さも考慮して外周を検出しました · 外周確信度 ${Math.round((referenceDetection?.confidence ?? 0) * 100)}%。ずれている場合だけ「やり直す」から4点を指定し直せます。`
         : '外周を自動検出できませんでした。左上 → 右上 → 右下 → 左下 の順に4点を指定してください。'}
+      uncertainEdges={uncertainEdges}
       actionLabel={manifest.status === 'cancelled'
         ? (resumeReady ? '続きから再開 →' : '抽出を再開 →')
         : (referenceDetected ? 'この範囲で抽出開始 →' : '抽出を開始 →')}
