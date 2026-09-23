@@ -186,6 +186,31 @@ def test_reference_consensus_keeps_selected_frame_as_anchor_at_video_start(monke
     assert len(frames) == 3
 
 
+def test_reference_consensus_orders_neighbors_chronologically(monkeypatch):
+    selected = np.full((12, 20, 3), 100, np.uint8)
+    extracted_times = []
+
+    def fake_extract(_source, timestamp, **_kwargs):
+        extracted_times.append(timestamp)
+        value = int(round(timestamp * 10))
+        return np.full((12, 20, 3), value, np.uint8)
+
+    monkeypatch.setattr("manga_scan.ingest.extract_frame", fake_extract)
+
+    frames, anchor_index = _reference_consensus_frames(
+        "/tmp/book.mp4",
+        {"duration": 10.0},
+        5.0,
+        selected,
+        Config(rotation=0, auto_rotation=False),
+    )
+
+    assert extracted_times == [4.5, 4.75, 5.25, 5.5]
+    assert anchor_index == 2
+    np.testing.assert_array_equal(frames[anchor_index], selected)
+    assert [int(frame[0, 0, 0]) for frame in frames] == [45, 48, 100, 52, 55]
+
+
 def test_reference_search_frame_prefers_lower_hand_occlusion(monkeypatch):
     images = [
         np.full((120, 200, 3), 180, np.uint8),
