@@ -1,10 +1,10 @@
-import sys
 from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 
+import manga_scan.cli as cli_module
 import manga_scan.split as split_module
 from manga_scan.config import Config
 from manga_scan.dedupe import compare, dhash, ssim
@@ -143,6 +143,12 @@ def test_candidates_span_interval_including_late_hand_withdrawal():
     assert len({s.index for s in chosen}) == 7
 
 
+def test_cli_rejects_non_macos(monkeypatch):
+    monkeypatch.setattr(cli_module.sys, "platform", "linux")
+    with pytest.raises(RuntimeError, match="macOS only"):
+        cli_module.require_macos()
+
+
 def test_scan_style_defaults_and_hand_disabled_compatibility():
     cfg = Config().validate()
     assert cfg.reading_order == "rtl"
@@ -161,7 +167,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.illumination_correction is True
     assert cfg.white_normalization is True
     assert cfg.auto_rotation is True
-    assert cfg.hwaccel == ("videotoolbox" if sys.platform == "darwin" else "none")
+    assert cfg.hwaccel == "videotoolbox"
     assert cfg.processing_workers == 3
 
     with pytest.raises(ValueError, match="processing_workers"):
