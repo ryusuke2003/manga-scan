@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import platform
 import sys
 from pathlib import Path
 
@@ -11,8 +12,8 @@ from .video import probe
 
 
 def require_macos():
-    if sys.platform != "darwin":
-        raise RuntimeError("manga-scan supports macOS only")
+    if sys.platform != "darwin" or platform.machine().lower() != "arm64":
+        raise RuntimeError("manga-scan supports Apple Silicon macOS only")
 
 
 def main(argv=None):
