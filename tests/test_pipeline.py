@@ -101,6 +101,10 @@ def test_end_to_end_dedupe_review_pdf(video, tmp_path):
     assert (project / "debug/motion.csv").is_file()
     assert (project / "debug/scores.csv").is_file()
     assert (project / "debug/contact_sheet.jpg").is_file()
+    performance = json.loads((project / "debug/performance.json").read_text())
+    assert performance == manifest["performance"]
+    assert performance["candidate_decode"]["calls"] > 0
+    assert "PERF candidate_decode" in (project / "debug/process.log").read_text()
     assert not list((project / "frames_lowres").iterdir())
     page = manifest["pages"][0]["id"]
     manifest = edit(project, "toggle_page", page_id=page)
@@ -401,6 +405,10 @@ def test_batch_candidate_extraction_preserves_requested_order(video):
     assert len(frames) == 3
     assert all(frame.shape == (160, 240, 3) for frame in frames)
     assert cv2.norm(frames[0], frames[2], cv2.NORM_INF) == 0
+
+    individual = extract_frame(video, 1.8, 240, "none")
+    assert individual.shape == frames[0].shape
+    assert cv2.norm(frames[0], individual, cv2.NORM_INF) == 0
 
 
 def test_optional_cover_and_reference_time(video, tmp_path):
