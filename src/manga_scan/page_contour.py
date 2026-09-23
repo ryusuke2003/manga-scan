@@ -71,6 +71,92 @@ def _edge_support(edges, quad):
     return float(np.count_nonzero((outline > 0) & (dilated > 0)) / count)
 
 
+def quad_edge_evidence(image, quad, occlusion_mask=None):
+    """Measure real image-edge evidence for each side of a normalized quad.
+
+    Support is measured against the full side length, so a hand covering part
+    of an edge lowers confidence instead of making the remaining visible part
+    look artificially strong. Visible-only support is kept for diagnostics.
+    """
+
+    if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
+        raise ValueError("image must be a numpy image")
+    points = np.asarray(quad, dtype=np.float32)
+    if (
+        points.shape != (4, 2)
+        or not np.isfinite(points).all()
+        or (points < 0).any()
+        or (points > 1).any()
+    ):
+        raise ValueError("quad must contain four normalized finite [x,y] points")
+
+    height, width = image.shape[:2]
+    pixel_points = np.rint(points * [width - 1, height - 1]).astype(np.int32)
+    edges = _edge_map(image)
+    radius = max(2, round(min(height, width) * 0.004))
+    kernel = np.ones((2 * radius + 1, 2 * radius + 1), np.uint8)
+    nearby_edges = cv2.dilate(edges, kernel, iterations=1)
+
+    if occlusion_mask is None:
+        occluded = np.zeros((height, width), np.uint8)
+    else:
+        occluded = np.asarray(occlusion_mask)
+        if occluded.ndim != 2:
+            raise ValueError("occlusion_mask must be a grayscale mask")
+        if occluded.shape != (height, width):
+            occluded = cv2.resize(
+                occluded.astype(np.uint8),
+                (width, height),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        occluded = (occluded > 0).astype(np.uint8) * 255
+        occluded = cv2.dilate(occluded, np.ones((5, 5), np.uint8), iterations=1)
+
+    evidence = {}
+    edge_pairs = (
+        ("top", 0, 1),
+        ("right", 1, 2),
+        ("bottom", 2, 3),
+        ("left", 3, 0),
+    )
+    thickness = max(1, round(min(height, width) * 0.002))
+    for name, first, second in edge_pairs:
+        line = np.zeros((height, width), np.uint8)
+        cv2.line(
+            line,
+            tuple(pixel_points[first]),
+            tuple(pixel_points[second]),
+            255,
+            thickness,
+            cv2.LINE_AA,
+        )
+        line_pixels = line > 0
+        total = int(np.count_nonzero(line_pixels))
+        if total == 0:
+            evidence[name] = {
+                "support": 0.0,
+                "visible_support": 0.0,
+                "occlusion": 0.0,
+            }
+            continue
+        hidden = line_pixels & (occluded > 0)
+        visible = line_pixels & ~hidden
+        matched = visible & (nearby_edges > 0)
+        support = float(np.count_nonzero(matched) / total)
+        visible_count = int(np.count_nonzero(visible))
+        visible_support = float(np.count_nonzero(matched) / max(1, visible_count))
+        evidence[name] = {
+            "support": round(support, 4),
+            "visible_support": round(visible_support, 4),
+            "occlusion": round(float(np.count_nonzero(hidden) / total), 4),
+        }
+    evidence["minimum_support"] = round(
+        min(item["support"] for item in evidence.values() if isinstance(item, dict)),
+        4,
+    )
+    return evidence
+
+
 def _score_quad(quad, prior, edges):
     area = abs(float(cv2.contourArea(quad)))
     prior_area = abs(float(cv2.contourArea(prior)))
