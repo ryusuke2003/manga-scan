@@ -2001,7 +2001,8 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
         next_id = max((int(item["id"]) for item in spread.get("candidates", [])), default=-1) + 1
         detector = HandDetector(cfg)
         try:
-            for offset, sample in enumerate(picked):
+            frames = _decode_candidate_frames(manifest, cfg, picked)
+            for offset, (sample, image) in enumerate(zip(picked, frames)):
                 record = candidate(
                     project,
                     manifest,
@@ -2011,6 +2012,7 @@ def _rescan_page_candidates(project, manifest, cfg, page_id, radius=1.0, request
                     next_id + offset,
                     sample,
                     base_roi=spread.get("tracked_roi"),
+                    image=image,
                 )
                 record["rescan"] = {
                     "center_time": center,
