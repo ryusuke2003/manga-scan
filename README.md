@@ -427,7 +427,9 @@ dewarp_strength = 0.15
 | PDFが大きい | `image_format="jpeg"`, `jpeg_quality=90` 前後 |
 | decodeが遅い | macOSではVideoToolboxをデフォルト利用。初期化失敗時はCPUへ自動フォールバック |
 
-処理時間の内訳は `debug/performance.json` に保存され、`debug/process.log` にも `PERF` 行として記録されます。通常候補とhigh-fps再スキャン候補は、複数timestampを1回のFFmpegプロセスでまとめてdecodeします。 候補解析と指補修のdonor alignmentは `processing_workers`（デフォルト3、最大4）で並列化し、分割出力の左右ページは最大2並列でrenderします。候補画像・手/グレアmask・previewは同一処理中はメモリから再利用し、保存直後の不要なPNG再読込を避けます。\n\n候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
+処理時間の内訳は `debug/performance.json` に保存され、`debug/process.log` にも `PERF` 行として記録されます。通常候補とhigh-fps再スキャン候補は、複数timestampを1回のFFmpegプロセスでまとめてdecodeします。候補解析と指補修のdonor alignmentは `processing_workers`（デフォルト3、最大4）で並列化し、分割出力の左右ページは最大2並列でrenderします。候補画像・手/グレアmask・previewは同一処理中はメモリから再利用し、保存直後の不要なPNG再読込を避けます。
+
+候補選択はデフォルトで従来互換の `candidate_selection_mode="spread"` です。`"per_page"` では同じ候補群を左右ページごとに再採点し、鮮鋭度・手の重なり・露出などから別々の候補IDを選びます。レビュー画面から左右片側だけ差し替えられます。
 
 分割出力時の台形補正は、見開き全体を補正してから分割する `perspective_mode="spread"` がデフォルトです。この設定は出力形式の `output_layout` とは別です。見開き出力では左右ページの輪郭から外側4点を求めますが、左右を別々には射影変換しません。
 `"per_page"` を選ぶと元フレーム上で左右ページの外周を自動検出し、左右を別々の射影変換で補正します。
