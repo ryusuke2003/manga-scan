@@ -160,6 +160,7 @@ def test_scan_style_defaults_and_hand_disabled_compatibility():
     assert cfg.illumination_correction is True
     assert cfg.white_normalization is True
     assert cfg.auto_rotation is True
+    assert cfg.hwaccel in ("none", "videotoolbox")
 
     disabled = Config.from_dict({"hand_backend": "none"})
     assert disabled.hand_backend == "none"
